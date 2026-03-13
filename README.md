@@ -1,11 +1,27 @@
-# MementoFrame 🖼️
+<p align="center">
+  <img src="docs/logo.png" alt="MementoFrame logo" width="800"/>
+</p>
 
-A Raspberry Pi smart photo frame built into a store-bought wooden photo frame with a custom 3D-printed back. Displays a rotating slideshow of your photos alongside a live clock, calendar, weather, and Spotify playback — all in a clean full-screen kiosk interface.
+<h1 align="center">MementoFrame</h1>
 
-![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg)
-![Platform: Raspberry Pi 3B+](https://img.shields.io/badge/hardware-Raspberry%20Pi%203B%2B-red)
-![Python 3](https://img.shields.io/badge/python-3.x-blue)
+<p align="center">
+  A Raspberry Pi smart photo frame built into a store-bought wooden frame with a custom 3D-printed back.<br/>
+  Displays a rotating slideshow of your photos alongside a live clock, calendar, weather, and Spotify playback.
+</p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey.svg" alt="License: CC BY-NC 4.0"/>
+  <img src="https://img.shields.io/badge/hardware-Raspberry%20Pi%203B%2B-red" alt="Platform: Raspberry Pi 3B+"/>
+  <img src="https://img.shields.io/badge/python-3.x-blue" alt="Python 3"/>
+</p>
+
+
+---
+
+<p align="center">
+  <img src="docs/photo.jpg" alt="MementoFrame on a desk" width="49%"/>
+  <img src="docs/photo2.jpg" alt="MementoFrame on a desk" width="49%"/>
+</p>
 ---
 
 ## The Build
@@ -60,38 +76,56 @@ Two Flask services run simultaneously on the Pi, plus a background Wi-Fi daemon:
 | `ap_mode_manager.py` | — | Background daemon — monitors Wi-Fi, switches between client and AP mode |
 
 ```
-mementoframe/
-├── app.py                          # Admin dashboard (port 5000)
-├── api_service.py                  # Display API service (port 5001)
-├── ap_mode_manager.py              # Wi-Fi / AP mode daemon
-├── config.json                     # User settings (auto-created on first save)
-├── .env                            # Secrets — created once manually (see setup)
-├── resources/
-│   ├── userdata/
-│   │   ├── Photos/
-│   │   │   ├── full/               # Full-size WebP photos (max 1000px)
-│   │   │   ├── thumbs/             # Thumbnail WebP photos (max 250px)
-│   │   │   ├── photos.json         # Ordered photo list
-│   │   │   └── photos.js           # Same list as a JS global (window.photos)
-│   │   └── cache/
-│   │       └── .cache_spotify      # Spotify OAuth token (auto-created after auth)
-│   └── assets/                     # Static assets (icons, fonts)
-└── static/
-    └── js/
-        ├── main.js
-        ├── state.js
-        ├── constants.js
-        ├── utils.js
-        └── modules/
-            ├── clock.js
-            ├── config.js
-            ├── layout.js
-            ├── photoslideshow.js
-            ├── power.js
-            ├── qr.js
-            ├── spotify.js
-            ├── weather.js
-            └── wifi.js
+/                                   ← repo root
+├── README.md
+├── INSTALL.md
+├── docs/
+│   ├── logo.png                    # Project logo (used in README header)
+│   ├── photo.jpg                   # Project photo
+│   ├── wiring/                     # Wiring diagrams and reference photos
+│   │   ├── wiring-diagram.png      # Full wiring diagram
+│   │   └── wiring-photo.jpg        # Photo of the inside of the frame
+│   └── 3d-print/                   # Preview renders/photos of printed parts
+│       ├── back-panel.jpg
+│       └── leg.jpg
+├── 3d-print/                       ← 3D printable files
+│   ├── README.md                   # Print settings and assembly notes
+│   ├── back-panel.stl
+│   ├── leg.stl
+│   └── (other parts).stl
+└── mementoframe/                   ← all application code lives here
+    ├── app.py                      # Admin dashboard (port 5000)
+    ├── api_service.py              # Display API service (port 5001)
+    ├── ap_mode_manager.py          # Wi-Fi / AP mode daemon
+    ├── start_apps.sh               # Startup script (called by systemd)
+    ├── config.json                 # User settings (auto-created on first save)
+    ├── .env                        # Secrets — created once manually (see setup)
+    ├── resources/
+    │   ├── userdata/
+    │   │   ├── Photos/
+    │   │   │   ├── full/           # Full-size WebP photos (max 1000px)
+    │   │   │   ├── thumbs/         # Thumbnail WebP photos (max 250px)
+    │   │   │   ├── photos.json     # Ordered photo list
+    │   │   │   └── photos.js       # Same list as a JS global (window.photos)
+    │   │   └── cache/
+    │   │       └── .cache_spotify  # Spotify OAuth token (auto-created after auth)
+    │   └── assets/                 # Static assets (icons, fonts)
+    └── static/
+        └── js/
+            ├── main.js
+            ├── state.js
+            ├── constants.js
+            ├── utils.js
+            └── modules/
+                ├── clock.js
+                ├── config.js
+                ├── layout.js
+                ├── photoslideshow.js
+                ├── power.js
+                ├── qr.js
+                ├── spotify.js
+                ├── weather.js
+                └── wifi.js
 ```
 
 ---
@@ -105,6 +139,72 @@ mementoframe/
 | 26 | Step-down converter enable pin | Screen on / off |
 
 Pin 26 is forced HIGH (screen on) at boot via `gpio=26=op,dh` in `/boot/firmware/config.txt`, so the screen powers on even before the Python service starts.
+
+---
+
+## Wiring
+
+The wiring diagram below shows how all components inside the back panel connect together.
+
+<p align="center">
+  <img src="docs/wiring/wiring-diagram.png" alt="Wiring diagram" width="720"/>
+</p>
+
+<p align="center">
+  <img src="docs/wiring/wiring-photo.jpg" alt="Inside the frame" width="720"/>
+</p>
+
+### Summary
+
+**Power path:**
+- DC barrel jack → power filter board → two mini 560 Pro step-down converters (both set to 5V)
+  - Converter A → Raspberry Pi (via USB or GPIO 5V/GND pins)
+  - Converter B → GeekPi 7" screen (enable pin wired to GPIO 26)
+
+**Screen on/off:**
+- GPIO 26 → enable pin on screen's step-down converter
+- A physical bypass switch is wired in parallel between the enable pin and VIN so the screen can be kept always on during development (bypasses GPIO control entirely)
+
+**Screen brightness:**
+- GPIO 20 → OSC brightness-down pin on GeekPi screen PCB
+- GPIO 21 → OSC brightness-up pin on GeekPi screen PCB
+- The backend pulses each pin LOW for ~5.5 s in 0.5 s steps to ramp brightness up or down
+
+**RTC:**
+- DS3231 module → I2C bus (SDA / SCL on GPIO 2 / 3) + 3.3V + GND
+
+---
+
+## 3D Print
+
+The custom back panel replaces the original cardboard backing of the wooden frame. It is designed to fit snugly over the frame's rebate and holds all electronics in place without glue.
+
+The leg attaches to the back panel with a friction joint and has several angle positions for adjusting the viewing tilt.
+
+<p align="center">
+  <img src="docs/3d-print/back-panel.jpg" alt="3D printed back panel" width="480"/>
+  &nbsp;&nbsp;
+  <img src="docs/3d-print/leg.jpg" alt="3D printed leg" width="480"/>
+</p>
+
+### Files
+
+All STL files are in the [`3d-print/`](3d-print/) folder. A `README.md` inside that folder contains recommended print settings and assembly notes.
+
+| File | Description |
+|---|---|
+| `back-panel.stl` | Main back panel — houses Pi, screen, converters, RTC, and DC jack |
+| `leg.stl` | Desk leg with multi-angle adjustment joint |
+| *(more parts as needed)* | |
+
+### Recommended print settings
+
+> See [`3d-print/README.md`](3d-print/README.md) for full details.
+
+- **Material:** PLA or PETG
+- **Layer height:** 0.2 mm
+- **Infill:** 20–30%
+- **Supports:** required for the back panel (overhang around connector cutouts)
 
 ---
 
