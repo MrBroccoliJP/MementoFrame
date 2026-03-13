@@ -1,0 +1,222 @@
+<!--
+  MementoFrame - Raspberry Pi Smart Photo Frame
+  Copyright (c) 2026 João Fernandes
+
+  This work is licensed under the Creative Commons Attribution-NonCommercial
+  4.0 International License. To view a copy of this license, visit:
+  http://creativecommons.org/licenses/by-nc/4.0/
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>SmartFrame Configuration</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="static/backend.css">
+
+  <script>
+    function toggleClock2Region() {
+      const checkbox = document.querySelector("#enable_clock2");
+      const select = document.querySelector("#clock2_tz");
+      select.disabled = !checkbox.checked;
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      toggleClock2Region();
+      const now = new Date();
+      document.getElementById("manual_date")?.setAttribute("value", now.toISOString().split("T")[0]);
+      document.getElementById("manual_time")?.setAttribute("value", now.toTimeString().slice(0, 5));
+    });
+
+    function toggleSelectAll(masterCheckbox) {
+      const checkboxes = document.querySelectorAll('.photo-checkbox');
+      checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+    }
+  </script>
+</head>
+
+<body class="frame-theme">
+  <div class="container">
+    <h2>SmartFrame Configuration</h2>
+
+    <!-- Wi-Fi -->
+    <details open class="section">
+      <summary>📶 Wi-Fi Setup</summary>
+      <form method="POST">
+        <label>Network</label>
+        <select name="ssid">
+          {% for net in networks %}
+          <option value="{{ net }}">{{ net }}</option>
+          {% endfor %}
+        </select>
+        <label>Password</label>
+        <input type="password" name="psk" required>
+        <button type="submit">Connect</button>
+      </form>
+    </details>
+
+    <!-- Clock -->
+    <details class="section">
+      <summary>🕒 Clock Configuration</summary>
+      <form action="{{ url_for('save_clock_settings') }}" method="POST">
+
+        {% set tz_options = [ ("UTC (Coordinated Universal Time)", "UTC"), ("Europe/Lisbon (Portugal)",
+        "Europe/Lisbon"), ("Europe/London (United Kingdom)", "Europe/London"), ("Europe/Madrid (Spain)",
+        "Europe/Madrid"), ("Europe/Paris (France)", "Europe/Paris"), ("Europe/Berlin (Germany)", "Europe/Berlin"),
+        ("Europe/Rome (Italy)", "Europe/Rome"), ("Europe/Amsterdam (Netherlands)", "Europe/Amsterdam"), ("Europe/Zurich
+        (Switzerland)", "Europe/Zurich"), ("Europe/Oslo (Norway)", "Europe/Oslo"), ("Europe/Stockholm (Sweden)",
+        "Europe/Stockholm"), ("Europe/Helsinki (Finland)", "Europe/Helsinki"), ("Europe/Athens (Greece)",
+        "Europe/Athens"), ("Europe/Moscow (Russia)", "Europe/Moscow"), ("Africa/Casablanca (Morocco)",
+        "Africa/Casablanca"), ("Africa/Johannesburg (South Africa)", "Africa/Johannesburg"), ("Asia/Dubai (UAE)",
+        "Asia/Dubai"), ("Asia/Karachi (Pakistan)", "Asia/Karachi"), ("Asia/Kolkata (India)", "Asia/Kolkata"),
+        ("Asia/Dhaka (Bangladesh)", "Asia/Dhaka"), ("Asia/Bangkok (Thailand)", "Asia/Bangkok"), ("Asia/Singapore
+        (Singapore)", "Asia/Singapore"), ("Asia/Shanghai (China)", "Asia/Shanghai"), ("Asia/Tokyo (Japan)",
+        "Asia/Tokyo"), ("Asia/Seoul (South Korea)", "Asia/Seoul"), ("Australia/Sydney (Australia)", "Australia/Sydney"),
+        ("Pacific/Auckland (New Zealand)", "Pacific/Auckland"), ("America/St_Johns (Canada, Newfoundland)",
+        "America/St_Johns"), ("America/Toronto (Canada, Eastern)", "America/Toronto"), ("America/New_York (USA,
+        Eastern)", "America/New_York"), ("America/Chicago (USA, Central)", "America/Chicago"), ("America/Denver (USA,
+        Mountain)", "America/Denver"), ("America/Los_Angeles (USA, Pacific)", "America/Los_Angeles"),
+        ("America/Mexico_City (Mexico)", "America/Mexico_City"), ("America/Bogota (Colombia)", "America/Bogota"),
+        ("America/Lima (Peru)", "America/Lima"), ("America/Santiago (Chile)", "America/Santiago"),
+        ("America/Argentina/Buenos_Aires (Argentina)", "America/Argentina/Buenos_Aires"), ("America/Sao_Paulo (Brazil)",
+        "America/Sao_Paulo") ] %}
+
+        <label for="clock1_tz">Clock 1 Timezone</label>
+        <select id="clock1_tz" name="clock1_tz" required>
+          {% for label, tz in tz_options %}
+          <option value="{{ tz }}" {% if config.clock1.timezone==tz %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="clock1_label" placeholder="Label (e.g. Lisbon)"
+          value="{{ config.clock1.label or '' }}">
+
+        <div class="clock2-toggle">
+          <label>
+            <input type="checkbox" id="enable_clock2" name="enable_clock2" {% if config.clock2.enabled %}checked{% endif
+              %} onchange="toggleClock2Region()">
+            Enable Clock 2
+          </label>
+        </div>
+
+        <label for="clock2_tz">Clock 2 Timezone</label>
+        <select id="clock2_tz" name="clock2_tz">
+          {% for label, tz in tz_options %}
+          <option value="{{ tz }}" {% if config.clock2.timezone==tz %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="clock2_label" placeholder="Label (e.g. Shanghai)"
+          value="{{ config.clock2.label or '' }}">
+        <button type="submit">Save Clock Settings</button>
+      </form>
+    </details>
+
+    <!-- Display -->
+    <details class="section">
+      <summary>💡 Display Settings</summary>
+      <form action="/save_display_settings" method="POST">
+        <label for="brightness">Brightness: <span id="brightness_value">{{ config.brightness }}</span>%</label>
+        <input type="range" id="brightness" name="brightness" min="10" max="100" value="{{ config.brightness }}"
+          oninput="brightness_value.textContent=this.value">
+        <button type="submit">Set Brightness</button>
+      </form>
+
+      <form action="/save_auto_power" method="POST">
+        <label>
+          <input type="checkbox" name="auto_power_enabled" {% if config.auto_power.enabled %}checked{% endif %}>
+          Enable Auto Power Schedule
+        </label>
+
+        <div class="time-row">
+          <div>
+            <label>Turn Off at:</label>
+            <input type="time" name="off_time" value="{{ config.auto_power.off_time }}">
+          </div>
+          <div>
+            <label>Turn On at:</label>
+            <input type="time" name="on_time" value="{{ config.auto_power.on_time }}">
+          </div>
+        </div>
+
+        <button type="submit">Save Schedule</button>
+      </form>
+    </details>
+
+    <!-- Weather -->
+    <details class="section">
+      <summary>☁️ Weather Configuration</summary>
+      <form action="{{ url_for('save_weather_api') }}" method="POST">
+        <label>WeatherAPI.com Key</label>
+        <input type="password" name="weather_api_key" placeholder="Enter your API key"
+          value="{{ config.weather_api_key or '' }}">
+        <label>Region / City</label>
+        <input type="text" name="weather_region" placeholder="e.g. Lisbon, London, Shanghai"
+          value="{{ config.weather_region or '' }}">
+        {% if config.weather_region %}
+        <p class="current-setting">Currently set to: <strong>{{ config.weather_region }}</strong></p>
+        {% endif %}
+        <button type="submit">Save Weather Settings</button>
+      </form>
+    </details>
+
+    <!-- Photos -->
+    <details class="section">
+      <summary>🖼 Photo Manager</summary>
+      <form action="{{ url_for('upload_photo') }}" method="POST" enctype="multipart/form-data">
+        <input type="file" name="photos" accept="image/*" multiple required>
+        <button type="submit">Upload Selected Photos</button>
+      </form>
+
+      <form action="{{ url_for('delete_selected_photos') }}" method="POST">
+        <label class="select-all">
+          <input type="checkbox" id="select_all_photos" onclick="toggleSelectAll(this)">
+          Select All
+        </label>
+        <div class="photo-grid">
+          {% for photo in photos %}
+          <div class="photo-item">
+            <input type="checkbox" class="photo-checkbox" name="selected_photos" value="{{ photo }}">
+            <img src="{{ url_for('serve_thumb', filename=photo) }}" alt="{{ photo }}">
+          </div>
+          {% endfor %}
+        </div>
+        <button class="delete-selected-btn" type="submit">Delete Selected</button>
+      </form>
+    </details>
+
+    <!-- Spotify -->
+    <details class="section">
+      <summary>🎵 Spotify Integration</summary>
+      {% if spotify_msg %}
+      <div class="message">{{ spotify_msg }}</div>
+      {% endif %}
+      {% if spotify_user %}
+      <p>Connected as <strong>{{ spotify_user.display_name or spotify_user.id }}</strong></p>
+      <form action="{{ url_for('spotify_disconnect') }}" method="POST">
+        <button class="disconnect-btn">Disconnect</button>
+      </form>
+      {% else %}
+      <p>Not connected</p>
+      <ol>
+        <li>Click <strong>Connect to Spotify</strong>.</li>
+        <li>After login, copy the redirect URL (e.g. <code>https://httpbin.org/anything?code=...</code>).</li>
+        <li>Paste it below:</li>
+      </ol>
+      <form action="{{ url_for('spotify_manual') }}" method="POST">
+        <input type="text" name="spotify_url" placeholder="Paste the full redirect URL here" required>
+        <button type="submit">Submit URL</button>
+      </form>
+      <form action="{{ url_for('spotify_connect') }}" method="GET" style="margin-top:10px;">
+        <button>Connect to Spotify</button>
+      </form>
+      {% endif %}
+    </details>
+
+    <footer class="footer">
+      Mode: {{ mode.upper() }} | IP: <span>{{ ip }}</span>
+    </footer>
+  </div>
+</body>
+
+</html>

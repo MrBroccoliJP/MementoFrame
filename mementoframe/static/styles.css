@@ -1,0 +1,671 @@
+/*
+ * MementoFrame - Raspberry Pi Smart Photo Frame
+ * Copyright (c) 2026 João Fernandes
+ *
+ * This work is licensed under the Creative Commons Attribution-NonCommercial
+ * 4.0 International License. To view a copy of this license, visit:
+ * http://creativecommons.org/licenses/by-nc/4.0/
+ */
+
+/* Roboto Mono */
+@font-face {
+  font-family: 'Roboto Mono';
+  src: url('/assets/Fonts/Roboto_Mono/static/RobotoMono-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'Roboto Mono';
+  src: url('/assets/Fonts/Roboto_Mono/static/RobotoMono-Bold.ttf') format('truetype');
+  font-weight: 700;
+}
+
+/* Inter */
+@font-face {
+  font-family: 'Inter';
+  src: url('/assets/Fonts/Inter/static/Inter_18pt-Regular.ttf') format('truetype');
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/assets/Fonts/Inter/static/Inter_18pt-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+}
+
+html,
+body {
+  cursor: none;
+}
+
+:root {
+  --accent-color: #1DB954;
+  --accent-text: #f2f2f2;
+}
+
+
+.clock {
+  color: var(--accent-text);
+}
+
+.weather-temperature {
+  color: var(--accent-text);
+}
+
+.region {
+  color: var(--accent-text);
+}
+
+.day {
+  color: var(--accent-text);
+}
+
+#calendar th {
+  color: var(--accent-color);
+}
+
+#calendar td {
+  color: var(--accent-text);
+}
+
+
+body {
+  /* background-color: #121212; */
+  background-color: black;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  color: #f2f2f2;
+  /* background: #111; */
+  background: black;
+  position: relative;
+  overflow: hidden;
+}
+
+.left_panel {
+  position: relative;
+  overflow: hidden;
+  margin: 5px 0 5px 5px;
+  width: calc(100% - 10px);
+  height: calc(100% - 10px);
+  border-radius: 20px;
+  left: 0;
+  transform-origin: left center;
+  transform: scale(1);
+  transition: left 1.2s cubic-bezier(0.4, 0, 0.2, 1),
+    width 1.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.6s ease;
+}
+
+.left_panel img {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: inherit;
+}
+
+.right_panel {
+  position: fixed;
+  right: 0%;
+  width: 30%;
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+  padding-left: 10px;
+}
+
+
+
+.rounded-box {
+  border-radius: 20px;
+  background-color: #1c1c1c;
+  margin: 5px;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  transition: border-color 1s ease, border-width 0.3s ease;
+}
+
+.first-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  width: 100%;
+}
+
+
+.dual_clock-box {
+  background-color: #1c1c1c;
+  border-radius: 20px;
+  margin: 5px;
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 1s ease;
+  max-height: 80px;
+}
+
+.clock-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.clock {
+  margin-top: 5px;
+  font-size: 40px;
+  font-weight: bold;
+}
+
+.clock-box-left {
+  border-right: 1px solid white;
+  padding-bottom: 10px;
+  justify-content: center;
+  width: 50%;
+}
+
+.clock-box-right {
+  padding-bottom: 10px;
+  justify-content: center;
+  width: 50%;
+}
+
+
+.region {
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+.double_box {
+  display: flex;
+  flex-direction: row;
+}
+
+.second_row {
+  min-height: 90px;
+  max-height: 90px;
+  max-width: 100%;
+  overflow: hidden;
+  flex-shrink: 1;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.weather-box {
+  /* background-image: url('./resources/4_widget3.webp'); */
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-basis: 0;
+  min-width: 55%;
+}
+
+.weather-icon img {
+  width: 70px;
+  height: 70px;
+  margin-top: -8px;
+}
+
+.weather-temperature {
+  margin-top: -10px;
+  font-size: 30px;
+  font-weight: bold;
+  margin-right: 20px;
+}
+
+
+.spotify-box {
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  opacity: 1;
+  transition: opacity 0.5s ease, background 2s ease, transform 0.5s ease;
+}
+
+.track-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  width: 200px;
+}
+
+.track-name-wrapper {
+  width: 200px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.track-name,
+.track-artist {
+  white-space: nowrap;
+  display: inline-block;
+}
+
+
+.track-artist {
+  font-size: 0.7em;
+  font-weight: normal;
+  color: #aaa;
+  margin-bottom: 2px;
+}
+
+.album-art img,
+.track-info {
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+
+.album-art img.fade-out,
+.track-info.fade-out {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.album-art img.fade-in,
+.track-info.fade-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+
+
+
+/* scrolling animation for long track names or artist */
+@keyframes marquee {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.scroll {
+  animation: marquee 10s linear infinite;
+}
+
+/* Playback row: play/pause icon and progress bar side by side */
+.playback-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.play_pause-icon img {
+  width: 24px;
+  height: 24px;
+}
+
+.progress-container {
+  flex-grow: 1;
+  background: #333;
+  height: 6px;
+  /* Make it visible */
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: -3px;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent-color);
+  transition: width 0.5s linear;
+}
+
+
+
+
+.album-art {
+  position: relative;
+  display: inline-block;
+  align-items: center;
+  height: 233px;
+
+}
+
+.album-art img {
+  position: relative;
+  margin-top: 20px;
+  max-width: 70%;
+  border-radius: 10px;
+  transition: opacity 0.5s ease;
+}
+
+.like-icon {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  margin: 0;
+  bottom: 40px;
+  right: -210px;
+  opacity: 1;
+}
+
+.like-icon img {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.date-box {
+  font-family: 'Roboto Mono', monospace;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  padding-right: 10px;
+  flex: 1 1 0;
+  height: 80px;
+  padding-right: -10px;
+  min-width: 0;
+  flex-basis: 0;
+}
+
+.day {
+  padding-left: 10px;
+  padding-bottom: 8px;
+
+  font-size: 50px;
+  font-weight: bold;
+  margin-right: 5px;
+}
+
+.month-year {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.system-info-box {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin: 5px;
+  transition: flex-direction 0.8s ease, justify-content 0.8s ease;
+}
+
+.wifi-info {
+  margin-right: 10px;
+  transition: margin 0.8s ease;
+}
+
+.wifistatus {
+  width: 40px;
+  /* smaller container */
+  height: 40px;
+  border-radius: 50%;
+  background-color: #1c1c1c;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.wifistatus img {
+  width: 24px;
+  /* smaller icon */
+  height: 24px;
+  filter: invert(1);
+  padding: 0;
+  /* remove large padding */
+}
+
+/* States */
+.wifi-green img {
+  filter: invert(55%) sepia(92%) saturate(471%) hue-rotate(89deg) brightness(95%) contrast(95%);
+}
+
+.wifi-red img {
+  filter: invert(21%) sepia(96%) saturate(6379%) hue-rotate(357deg) brightness(87%) contrast(113%);
+}
+
+.wifi-yellow img {
+  filter: invert(75%) sepia(88%) saturate(526%) hue-rotate(18deg) brightness(97%) contrast(93%);
+}
+
+.wifi-blue img {
+  filter: invert(43%) sepia(99%) saturate(1676%) hue-rotate(183deg) brightness(94%) contrast(98%);
+}
+
+.wifi-label {
+  font-size: 12px;
+  color: #aaa;
+  margin-top: 4px;
+}
+
+.qrcode_icon {
+  flex-grow: 0;
+  padding-left: 10px;
+  padding-right: 10px;
+  margin: 10px;
+  height: 100%;
+  max-height: 100%;
+  margin-left: -0px;
+  transition: padding 0.8s ease, margin 0.8s ease;
+}
+
+.photo {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 20px;
+}
+
+.photo img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transform: scale(1);
+  transition: opacity 2s ease-in-out, transform 15s ease-in-out;
+  will-change: opacity, transform;
+  backface-visibility: hidden;
+
+}
+
+.photo img.active {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.photo img.horizontal {
+  object-fit: cover;
+}
+
+.photo img.vertical {
+  object-fit: contain;
+}
+
+
+/* Calendar box  */
+.right_panel {
+  position: fixed;
+  right: auto;
+  left: 70%;
+  width: 30%;
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+  padding-left: 0;
+  padding-right: 10px;
+  transform-origin: right center;
+  transform: scale(1);
+  transition: left 1.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.6s ease;
+}
+
+/* Calendar table */
+#calendar table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 5px;
+  table-layout: fixed;
+}
+
+#calendar th {
+  text-align: center;
+  color: #1DB954;
+  padding: 5px 0;
+  font-weight: 600;
+}
+
+#calendar td {
+  text-align: center;
+  padding: 10px 0;
+  background-color: #2c2c2c;
+  border-radius: 10px;
+  transition: background 0.3s;
+
+}
+
+/* Highlight today */
+#calendar td.today {
+  background-color: var(--accent-color);
+  color: #111;
+  font-weight: bold;
+  transition: background-color 1s ease;
+}
+
+/* Common hidden state */
+.hidden {
+  display: none !important;
+  opacity: 0;
+  pointer-events: none;
+  /* so it's not clickable */
+  transition: opacity 1s ease;
+}
+
+/* Visible state */
+.visible {
+  opacity: 1;
+  transition: opacity 1s ease;
+  display: flex !important;
+  /* or block depending on your box layout */
+}
+
+
+.background {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+}
+
+@keyframes floatUp {
+  0% {
+    transform: translateY(200vh);
+    opacity: 0;
+  }
+
+  20% {
+    opacity: 1;
+  }
+
+  80% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(-100vh);
+    opacity: 0;
+  }
+}
+
+.floating-photo {
+  position: absolute;
+  object-fit: cover;
+  border-radius: 3px;
+  animation: floatUp 6s linear forwards;
+  pointer-events: none;
+  height: auto;
+  max-height: 120px;
+  bottom: -150px;
+  /* start below the screen */
+}
+
+
+/* ============ CLOCK REFINEMENTS ============ */
+/* --- Single Clock Mode Layout --- */
+.dual_clock-box.single-clock {
+  align-items: center;
+  padding: 0 20px;
+}
+
+/* Hide border when only one clock */
+.clock-box-left.no-border {
+  border-right: none !important;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+/* Move date box into first row */
+.first-row .date-box {
+  margin-left: auto;
+  background-color: #1c1c1c;
+  border-radius: 20px;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: auto;
+  flex: 1;
+  box-sizing: border-box;
+  max-height: 80px;
+}
+
+.first-row .clock-box-left .region {
+  width: 200%;
+}
+
+.first-row .date-box .month-year {
+  font-size: 14px;
+  margin-left: 8px;
+}
+
+.first-row>* {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  height: 100%;
+}
+
+
+
+.clock,
+.weather-temperature,
+.weather-condition,
+.region,
+.day,
+.month-year {
+  color: var(--accent-text);
+}
