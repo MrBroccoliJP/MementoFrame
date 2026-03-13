@@ -19,8 +19,8 @@
 ---
 
 <p align="center">
-  <img src="docs/photo.jpg" alt="MementoFrame on a desk" width="49%"/>
-  <img src="docs/photo2.jpg" alt="MementoFrame on a desk" width="49%"/>
+  <img src="docs/Photo.jpg" alt="MementoFrame on a desk" width="49%"/>
+  <img src="docs/Photo2.jpg" alt="MementoFrame on a desk" width="49%"/>
 </p>
 ---
 
