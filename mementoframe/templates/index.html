@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+</head>
+
+<title>MementoFrame MainPage</title>
+
+<body>
+  <div class="background">
+    <div class="left_panel">
+      <div id="photo" class="photo"></div>
+    </div>
+  </div>
+
+  <div class="right_panel">
+    <div class="first-row">
+      <div class="dual_clock-box">
+        <div class="clock-box clock-box-left">
+          <div id="clock" class="clock">10:32</div>
+          <div class="region">Chengdu, China</div>
+        </div>
+        <div class="clock-box clock-box-right">
+          <div id="clock2" class="clock">10:32</div>
+          <div class="region">Chengdu, China</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="double_box second_row">
+      <div class="rounded-box date-box">
+        <div id="day-number" class="day">2</div>
+        <div id="month-year" class="month-year">09, 2026</div>
+      </div>
+      <div class="rounded-box weather-box">
+        <div class="weather-icon">
+          <img id="weather-icon" src="/assets/Icons/nocloud.svg" alt="Weather Icon" />
+        </div>
+        <div class="weather-info">
+          <div class="weather-temperature">25°C</div>
+          <div class="weather-condition">Sunny</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="spotify-box" class="rounded-box spotify-box hidden"
+      style="opacity: 1; transition: opacity 1s, transform 0.5s">
+      <div class="album-art">
+        <img id="album-cover" src="/assets/Icons/album.webp" alt="Album Art" />
+        <div id="track-liked" class="like-icon">
+          <img src="assets/Icons/heart.svg" alt="Liked Song" />
+        </div>
+      </div>
+
+      <div class="track-info">
+        <div class="track-name-wrapper">
+          <div id="track-name" class="track-name">Track Name</div>
+          <div id="track-artist" class="track-artist">Artist Name</div>
+        </div>
+
+        <div class="playback-row">
+          <div id="track-status" class="play_pause-icon"></div>
+          <div class="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="calendar-box" class="rounded-box calendar-box visible">
+      <div id="calendar"></div>
+    </div>
+
+    <div class="system-info-box">
+      <div class="wifi-info">
+        <div class="wifistatus" id="wifi-status">
+          <img id="wifi-icon" src="/assets/Icons/wifi.svg" alt="WiFi Status" />
+        </div>
+      </div>
+      <div class="rounded-box qrcode_icon">
+        <img src="resources/qrcode.png" alt="QR Code Icon" />
+      </div>
+    </div>
+  </div>
+</body>
+<script src="/assets/qrcode.min.js"></script>
+<script src="/userdata/Photos/photos.js"></script>
+<script type="module" src="/static/js/main.js"></script>
+
+</html>

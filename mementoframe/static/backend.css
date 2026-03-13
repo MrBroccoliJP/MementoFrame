@@ -1,0 +1,223 @@
+@font-face {
+  font-family: 'Roboto Mono';
+  src: url('Fonts/Roboto_Mono/static/RobotoMono-Regular.ttf') format('truetype');
+}
+
+/* Base theme */
+body.frame-theme {
+  background: #0f0f0f;
+  color: #e0e0e0;
+  font-family: 'Roboto Mono', monospace;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  scroll-behavior: smooth;
+}
+
+.container {
+  width: 100%;
+  max-width: 900px;
+  background: #1a1a1a;
+  margin: 0;
+  border-radius: 0;
+  padding: 1.5rem;
+  box-shadow: none;
+}
+
+h2 {
+  text-align: center;
+  font-size: 1.8rem;
+  color: #fff;
+  margin-bottom: 1.2rem;
+}
+
+/* Collapsible Sections */
+details {
+  background: #151515;
+  border: 1px solid #333;
+  border-radius: 12px;
+  margin-top: 1rem;
+  padding: 1rem 1.2rem;
+}
+
+details summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #1DB954;
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+details[open] summary {
+  color: #fff;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+label {
+  font-size: 0.95rem;
+  color: #bbb;
+  text-transform: uppercase;
+}
+
+input, select, button {
+  background: #111;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 1rem;
+  font-family: inherit;
+  font-size: 1.05rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+button {
+  background: #1DB954;
+  border: none;
+  color: #000;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+button:hover {
+  background: #1ed760;
+}
+
+.time-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.time-row > div {
+  flex: 1;
+}
+
+/* Photo Grid */
+.photo-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+}
+
+.photo-item {
+  position: relative;
+  background: #111;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.photo-item img {
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+}
+
+.photo-checkbox {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  transform: scale(1.3);
+}
+
+.delete-selected-btn {
+  margin-top: 1rem;
+  background: #c0392b;
+  width: 100%;
+}
+
+.delete-selected-btn:hover {
+  background: #e74c3c;
+}
+
+/* Info boxes and messages */
+.message {
+  background: #1DB954;
+  color: #000;
+  padding: 0.8rem;
+  text-align: center;
+  border-radius: 10px;
+  font-size: 1rem;
+}
+
+.disconnect-btn {
+  background: #d42f2f;
+}
+
+.disconnect-btn:hover {
+  background: #ff4747;
+}
+
+.footer {
+  margin-top: 2rem;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #aaa;
+  opacity: 0.8;
+  padding-bottom: 1.5rem;
+}
+
+.footer span {
+  color: #1DB954;
+}
+
+/* --- Mobile Tweaks --- */
+@media (max-width: 900px) {
+  .container {
+    width: 100%;
+    border-radius: 0;
+    padding: 1.2rem;
+  }
+
+  h2 {
+    font-size: 1.6rem;
+    text-align: left;
+    margin-left: 0.5rem;
+  }
+
+  details {
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  input, select, button {
+    font-size: 1.1rem;
+    padding: 1.1rem;
+  }
+
+  .time-row {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 0.9rem;
+  }
+}
+
+/* Ultra small phones */
+@media (max-width: 480px) {
+  input, select, button {
+    font-size: 1.15rem;
+    padding: 1.2rem;
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  }
+
+  details summary {
+    font-size: 1.1rem;
+  }
+}
