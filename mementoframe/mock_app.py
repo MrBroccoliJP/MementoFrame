@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
+
+# MementoFrame - Raspberry Pi Smart Photo Frame
+# Copyright (c) 2026 João Fernandes
+#
+# This work is licensed under the Creative Commons Attribution-NonCommercial
+# 4.0 International License. To view a copy of this license, visit:
+# http://creativecommons.org/licenses/by-nc/4.0/
+
 """
 MementoFrame Mock — app.py replacement (port 5000)
 Real photo upload/delete/resize pipeline. No GPIO, no nmcli, no Spotify OAuth.
 Run with: pip install flask flask-cors pillow python-dotenv werkzeug && python mock_app.py
 """
+
+
 
 from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory
 from flask_cors import CORS

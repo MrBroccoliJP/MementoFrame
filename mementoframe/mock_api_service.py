@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+
+# MementoFrame - Raspberry Pi Smart Photo Frame
+# Copyright (c) 2026 João Fernandes
+#
+# This work is licensed under the Creative Commons Attribution-NonCommercial
+# 4.0 International License. To view a copy of this license, visit:
+# http://creativecommons.org/licenses/by-nc/4.0/
+
 """
 MementoFrame Mock — api_service.py replacement (port 5001)
 Display frontend: Spotify, weather, SSE stream, screen control.
