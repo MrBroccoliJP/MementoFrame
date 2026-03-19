@@ -7,6 +7,8 @@
 <p align="center">
   A Raspberry Pi smart photo frame built into a store-bought wooden frame with a custom 3D-printed back.<br/>
   Displays a rotating slideshow of your photos alongside a live clock, calendar, weather, and Spotify playback.
+  
+  [Work in progress]
 </p>
 
 <p align="center">
