@@ -33,8 +33,19 @@ Dependencies:
   - NetworkManager (nmcli)
   - hostapd
   - dnsmasq
-  - iwgetid (wireless-tools)
   - iproute2 (ip)
+
+Changes from original:
+  - [BUG FIX] nm_set_managed(): "managed true/false" was passed as a single
+    argument, causing nmcli to fail silently. Now passed as separate args,
+    and uses "yes"/"no" which nmcli actually accepts.
+  - [BUG FIX] stop_ap(): removed `nmcli device disconnect` which was
+    actively killing the interface right before NM could reclaim it.
+  - [BUG FIX] probe_reconnect(): replaced `device connect` (unreliable) with
+    `device up` + autoconnect, and added a scan settling delay.
+  - [IMPROVEMENT] run(): now logs failures instead of swallowing them silently.
+  - [IMPROVEMENT] wifi_connected(): now queries NetworkManager directly instead
+    of iwgetid, which can return stale/false SSIDs (e.g. the AP's own SSID).
 """
 
 import subprocess
@@ -44,25 +55,25 @@ import time
 # Configuration
 # ---------------------------------------------------------------------------
 
-AP_INTERFACE   = "wlan0"           # Wireless interface used for both modes
-AP_SERVICES    = ["hostapd",       # Services started in AP mode (order matters
-                  "dnsmasq"]       # for startup; reversed on shutdown)
+AP_INTERFACE    = "wlan0"           # Wireless interface used for both modes
+AP_SERVICES     = ["hostapd",       # Services started in AP mode (order matters
+                   "dnsmasq"]       # for startup; reversed on shutdown)
 
-CHECK_INTERVAL = 30                # Seconds between each main-loop iteration
-PROBE_EVERY    = 120               # Seconds between reconnect attempts while AP
-                                   # is active (only runs if no client connected)
-PROBE_TIMEOUT  = 20                # Seconds to wait for NM to establish a
-                                   # connection during a probe attempt
-MAX_AP_DURATION = 600              # Seconds of continuous AP uptime before a
-                                   # forced reconnect is triggered regardless of
-                                   # whether a client device is connected
+CHECK_INTERVAL  = 30                # Seconds between each main-loop iteration
+PROBE_EVERY     = 120               # Seconds between reconnect attempts while AP
+                                    # is active (only runs if no client connected)
+PROBE_TIMEOUT   = 30                # Seconds to wait for NM to establish a
+                                    # connection during a probe attempt
+MAX_AP_DURATION = 600               # Seconds of continuous AP uptime before a
+                                    # forced reconnect is triggered regardless of
+                                    # whether a client device is connected
 
 # ---------------------------------------------------------------------------
 # Global state
 # ---------------------------------------------------------------------------
 
-AP_RUNNING    = False   # True while hostapd/dnsmasq are running
-_last_probe   = 0       # Timestamp of the last reconnect probe
+AP_RUNNING     = False  # True while hostapd/dnsmasq are running
+_last_probe    = 0      # Timestamp of the last reconnect probe
 _ap_start_time = 0      # Timestamp when AP mode was last started
 
 
@@ -72,10 +83,23 @@ _ap_start_time = 0      # Timestamp when AP mode was last started
 
 def run(cmd):
     """
-    Run a shell command, silently discarding all output.
-    Used for fire-and-forget system calls (nmcli, ip, systemctl).
+    Run a shell command and log any failures to stdout.
+
+    Previously this silently discarded all output, which hid real errors
+    (notably the broken nmcli managed= call). Now failures are visible
+    in the service log (journalctl -u <service>).
+
+    Returns:
+        subprocess.CompletedProcess: the result object (returncode, stdout, stderr).
     """
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(f"❌ Command failed: {' '.join(cmd)}")
+        if proc.stdout.strip():
+            print(f"   stdout: {proc.stdout.strip()}")
+        if proc.stderr.strip():
+            print(f"   stderr: {proc.stderr.strip()}")
+    return proc
 
 
 def sh(cmd):
@@ -88,17 +112,26 @@ def sh(cmd):
 
 def wifi_connected():
     """
-    Check whether wlan0 is currently associated with a Wi-Fi network.
+    Check whether wlan0 is currently connected to a Wi-Fi network,
+    according to NetworkManager.
 
-    Uses iwgetid to read the current SSID. Returns True if an SSID is
-    present (i.e. we are connected), False otherwise.
+    Previously used iwgetid, which can return the AP's own SSID when
+    hostapd is running, producing false positives. Querying NM directly
+    is more reliable — it only reports "connected" once DHCP has completed
+    and the link is fully up.
 
     Returns:
-        bool: True if connected to a Wi-Fi network, False if not.
+        bool: True if NM reports wlan0 as connected, False otherwise.
     """
     try:
-        ssid = sh(["iwgetid", "-r"])
-        return bool(ssid)
+        out = sh(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"])
+        for line in out.splitlines():
+            parts = line.split(":")
+            if len(parts) >= 3:
+                dev, dev_type, state = parts[0], parts[1], parts[2]
+                if dev == AP_INTERFACE and dev_type == "wifi" and state == "connected":
+                    return True
+        return False
     except subprocess.CalledProcessError:
         return False
 
@@ -107,16 +140,16 @@ def nm_set_managed(managed: bool):
     """
     Tell NetworkManager whether it should manage the AP interface.
 
-    In AP mode, NM must relinquish control of wlan0 so that hostapd can
-    drive it. When returning to client mode, NM is given back control so
-    it can reconnect to saved networks.
+    FIX: Original code passed "managed true" as a single argument, which
+    nmcli does not parse correctly and fails silently. The correct form is
+    two separate arguments, and nmcli requires "yes"/"no" not "true"/"false".
 
     Args:
         managed (bool): True to hand control to NM, False to release it.
     """
-    state = "true" if managed else "false"
+    state = "yes" if managed else "no"
     print(f"🔧 NetworkManager managed={state} on {AP_INTERFACE}")
-    run(["sudo", "nmcli", "device", "set", AP_INTERFACE, f"managed {state}"])
+    run(["sudo", "nmcli", "device", "set", AP_INTERFACE, "managed", state])
 
 
 def set_ap_ip():
@@ -190,14 +223,14 @@ def start_ap():
     if AP_RUNNING:
         return
 
-    print("Starting Access Point (192.168.4.1)…")
+    print("📡 Starting Access Point (192.168.4.1)…")
 
     # Only release NM if we are not mid-connection; avoids a race condition
     # where stopping NM management drops a Wi-Fi link that just came up.
     if not wifi_connected():
         nm_set_managed(False)
     else:
-        print("⚠️ Wi-Fi still connected, not disabling NetworkManager yet.")
+        print("⚠️  Wi-Fi still connected — not disabling NetworkManager yet.")
 
     set_ap_ip()
 
@@ -206,6 +239,7 @@ def start_ap():
 
     _ap_start_time = time.time()
     AP_RUNNING = True
+    print("📡 Access Point is up.")
 
 
 def stop_ap():
@@ -216,7 +250,11 @@ def stop_ap():
       1. Guard — does nothing if AP is not running.
       2. Stops dnsmasq then hostapd (reverse startup order).
       3. Flushes the static IP.
-      4. Returns wlan0 to NetworkManager control and triggers a reconnect.
+      4. Returns wlan0 to NetworkManager control.
+
+    FIX: Removed `nmcli device disconnect` which was actively dropping the
+    interface immediately after handing it back to NM, preventing auto-
+    reconnect. NM will handle reconnection on its own once it has control.
 
     Globals modified:
         AP_RUNNING (bool): Set to False.
@@ -225,16 +263,17 @@ def stop_ap():
     if not AP_RUNNING:
         return
 
-    print("Stopping Access Point, returning control to NetworkManager")
+    print("🔌 Stopping Access Point, returning control to NetworkManager…")
 
-    # Stop services in reverse order (dnsmasq before hostapd)
     for s in reversed(AP_SERVICES):
         run(["sudo", "systemctl", "stop", s])
 
     clear_ip()
     nm_set_managed(True)
     run(["sudo", "nmcli", "radio", "wifi", "on"])
-    run(["sudo", "nmcli", "device", "disconnect", AP_INTERFACE])
+    run(["sudo", "ip", "link", "set", AP_INTERFACE, "up"])
+    # NOTE: Do NOT call `nmcli device disconnect` here. That would drop
+    # the interface and break NM's ability to auto-reconnect.
 
     AP_RUNNING = False
 
@@ -251,9 +290,15 @@ def probe_reconnect(force=False):
     running longer than MAX_AP_DURATION. The probe:
       1. Optionally skips if a client is actively connected (unless forced).
       2. Stops AP mode and hands control back to NetworkManager.
-      3. Triggers a Wi-Fi rescan and connection attempt.
-      4. Polls for up to (PROBE_TIMEOUT + 5) seconds for a successful link.
+      3. Triggers a Wi-Fi rescan, waits for results to settle, then asks NM
+         to bring the interface up (which triggers autoconnect).
+      4. Polls for up to PROBE_TIMEOUT seconds for a successful link.
       5. If no link is established, restarts AP mode and returns False.
+
+    FIX: Replaced `nmcli device connect <iface>` with a rescan + settle
+    delay + `nmcli device up`, which is more reliable for reconnecting to
+    saved networks. Also added `autoconnect yes` to ensure NM will pick up
+    a saved profile automatically.
 
     Args:
         force (bool): If True, skips the client-connected check and always
@@ -263,28 +308,39 @@ def probe_reconnect(force=False):
         bool: True if Wi-Fi was successfully re-established, False otherwise.
     """
     if not force and clients_connected():
-        print("🛠 User connected — skipping reconnect probe for now.")
+        print("🛠  User connected to AP — skipping reconnect probe.")
         return False
 
-    print("🔎 Probe: trying to reconnect to saved Wi-Fi…")
+    print("🔎 Probe: attempting to reconnect to saved Wi-Fi…")
     stop_ap()
 
-    # Hand control back to NM and request a scan + connect
+    # Ensure NM has full control and the interface is ready
     nm_set_managed(True)
     run(["sudo", "nmcli", "radio", "wifi", "on"])
+    run(["sudo", "ip", "link", "set", AP_INTERFACE, "up"])
+
+    # Re-enable autoconnect on this device in case it was cleared
+    run(["sudo", "nmcli", "device", "set", AP_INTERFACE, "autoconnect", "yes"])
+
+    # Rescan and give NM a moment for results to settle before connecting
     run(["sudo", "nmcli", "device", "wifi", "rescan"])
-    run(["sudo", "nmcli", "device", "connect", AP_INTERFACE])
+    time.sleep(5)
+
+    # `device up` triggers NM's autoconnect logic — more reliable than
+    # `device connect` which tries to connect to a specific device rather
+    # than picking the best saved network profile.
+    run(["sudo", "nmcli", "device", "up", AP_INTERFACE])
 
     # Poll until connected or timeout expires
     t0 = time.time()
-    while time.time() - t0 < PROBE_TIMEOUT + 5:
+    while time.time() - t0 < PROBE_TIMEOUT:
         if wifi_connected():
-            print("✅ Reconnected to Wi-Fi successfully")
+            print("✅ Reconnected to Wi-Fi successfully.")
             return True
         time.sleep(2)
 
     # Reconnect failed — restore AP so the user can still reach the dashboard
-    print("⏳ Probe failed — restoring AP")
+    print("⏳ Probe timed out — restoring AP mode.")
     start_ap()
     return False
 
@@ -309,28 +365,28 @@ def main():
         _last_probe (float): Updated after each probe attempt.
     """
     global _last_probe
-    print("SmartFrame AP Mode Manager started (NetworkManager mode)")
+    print("🖼  MementoFrame AP Mode Manager started.")
 
     while True:
         connected = wifi_connected()
 
         if connected:
             if AP_RUNNING:
-                print("✅ Wi-Fi detected — stopping AP mode")
+                print("✅ Wi-Fi detected — stopping AP mode.")
                 stop_ap()
             else:
                 print("📶 Connected to Wi-Fi — monitoring…")
 
         else:
             if not AP_RUNNING:
-                print("No Wi-Fi — starting AP mode")
+                print("⚠️  No Wi-Fi — starting AP mode.")
                 start_ap()
                 _last_probe = time.time()
             else:
                 uptime = time.time() - _ap_start_time
 
                 if uptime > MAX_AP_DURATION:
-                    print(f"AP running {uptime:.0f}s — forcing reconnect attempt")
+                    print(f"⏰ AP running for {uptime:.0f}s — forcing reconnect attempt.")
                     probe_reconnect(force=True)
                     _last_probe = time.time()
 

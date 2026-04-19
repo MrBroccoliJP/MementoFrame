@@ -20,6 +20,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps
 import os, json, uuid
+from version_info import VERSIONS
 
 # ---------- All paths anchored to the script's own directory ----------
 # This ensures folders are created in the right place regardless of
@@ -298,6 +299,10 @@ def spotify_manual():
 @app.route("/spotify/disconnect", methods=["POST"])
 def spotify_disconnect():
     return redirect(url_for("dashboard", msg="Spotify disconnected."))
+
+@app.route("/versions")
+def versions():
+    return jsonify(VERSIONS)
 
 # ---------- Run ----------
 if __name__ == "__main__":

@@ -56,6 +56,7 @@ from PIL import Image, ImageOps
 import RPi.GPIO as GPIO
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+from version_info import VERSIONS
 
 # ---------------------------------------------------------------------------
 # Initialization
@@ -835,6 +836,9 @@ def spotify_disconnect():
         os.remove(SPOTIFY_CACHE)
     return redirect(url_for("dashboard", msg="Spotify disconnected."))
 
+@app.route("/versions")
+def versions():
+    return jsonify(VERSIONS)
 
 # ---------------------------------------------------------------------------
 # Entry point
