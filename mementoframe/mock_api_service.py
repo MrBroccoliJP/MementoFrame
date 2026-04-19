@@ -16,6 +16,7 @@ Run with: python mock_api_service.py
 from flask import Flask, jsonify, render_template, send_from_directory, Response, request
 from flask_cors import CORS
 import os, json, time, random
+from version_info import VERSIONS
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 CORS(app)
@@ -222,6 +223,10 @@ def next_track():
 @app.route("/dev/state")
 def dev_state():
     return jsonify(state)
+
+@app.route("/versions")
+def versions():
+    return jsonify(VERSIONS)
 
 # ---------- Run ----------
 if __name__ == "__main__":
