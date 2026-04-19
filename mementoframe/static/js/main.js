@@ -51,16 +51,18 @@ import { initWiFi } from "./modules/wifi.js";
 import { swapPanels, checkHourlyCalendarDisplay, setCalendarOpacity } from "./modules/layout.js";
 import { initPower } from "./modules/power.js";
 import { initQR } from "./modules/qr.js";
+import { loadVersions, hideLoadingScreen, setLoadingStatus, delay } from "./modules/loading.js";
 
 window.addEventListener("DOMContentLoaded", async () => {
-  // Set ambient calendar opacity before config loads to avoid a bright flash
   setCalendarOpacity(0.75);
 
-  // Load config first — populates state.clocks and state.config
-  // which are read by initClocks() and initPower()
+  setLoadingStatus("Loading config");
   await loadConfig();
 
-  // Initialise all feature modules
+  setLoadingStatus("Loading versions");
+  await loadVersions();
+
+  setLoadingStatus("Starting modules");
   initClocks();
   initPhotos();
   initSpotify();
@@ -69,22 +71,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   initPower();
   initQR();
 
-  // Global recurring behaviours
   setInterval(checkHourlyCalendarDisplay, INTERVALS.HOURLY_CHECK);
   setInterval(swapPanels, INTERVALS.SWAP_PANELS);
-
-  // Open SSE stream — reloads page when config.json or photos.json changes
   setupConfigWatcher();
+
+  await delay(2000);
+  hideLoadingScreen();
 });
 
-// ---------------------------------------------------------------------------
-// Dev helpers — exposed on window for in-browser console debugging
-// ---------------------------------------------------------------------------
-window.swapPanels  = swapPanels;
+window.swapPanels = swapPanels;
 window.burstPhotos = burstPhotos;
-window.state       = state;
-
-console.log("🧩 Dev helpers available in console:");
-console.log("- swapPanels()");
-console.log("- burstPhotos()");
-console.log("- state");
+window.state = state;

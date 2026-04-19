@@ -19,6 +19,34 @@
 <title>MementoFrame MainPage</title>
 
 <body>
+<div id="loading-screen" class="mf-loading">
+  <div class="mf-loading__inner">
+    <div class="mf-loading__logo" aria-hidden="true">
+      <div class="mf-loading__frame mf-loading__frame--back"></div>
+      <div class="mf-loading__frame mf-loading__frame--mid"></div>
+      <div class="mf-loading__frame mf-loading__frame--front"></div>
+      <div class="mf-loading__dot mf-loading__dot--lg"></div>
+      <div class="mf-loading__dot mf-loading__dot--sm"></div>
+    </div>
+
+    <div class="mf-loading__wordmark">
+      <span>MEMENTO</span>
+      <span>FRAME</span>
+    </div>
+  </div>
+
+  <div class="mf-loading__footer">
+    <!-- <div class="mf-loading__status" id="statusText">Loading display</div> -->
+    <div class="mf-loading__progress" aria-hidden="true"></div>
+    <div class="mf-loading__versions" id="versions">
+      <span>Frontend 1.0.0</span>
+      <span>App 1.0.1</span>
+      <span>API 1.0.0</span>
+      <span>App Manager 1.0.1</span>
+    </div>
+  </div>
+</div>
+
   <div class="background">
     <div class="left_panel">
       <div id="photo" class="photo"></div>

@@ -49,6 +49,7 @@ from dotenv import load_dotenv
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import RPi.GPIO as GPIO
+from version_info import VERSIONS
 
 # ---------------------------------------------------------------------------
 # Hardware — Screen control
@@ -516,6 +517,9 @@ def screen_off():
     Thread(target=do_off, daemon=True).start()
     return jsonify({"status": "off"})
 
+@app.route("/versions")
+def versions():
+    return jsonify(VERSIONS)
 
 # ---------------------------------------------------------------------------
 # Entry point
