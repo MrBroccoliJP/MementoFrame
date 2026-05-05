@@ -8,389 +8,469 @@
 #!/usr/bin/env python3
 """
 ap_mode_manager.py — Wi-Fi / Access Point Mode Manager
+Raspberry Pi OS Bookworm (NetworkManager) edition
 
-Monitors Wi-Fi connectivity on the Raspberry Pi and automatically switches
-between two network modes:
+On first run, this script automatically creates the MementoAP NetworkManager
+profile and patches saved client profiles. No manual setup step required.
 
-  CLIENT MODE  — wlan0 is connected to a home/external Wi-Fi network.
-                 NetworkManager manages the interface normally.
+Architecture
+────────────
+Two persistent NetworkManager profiles are managed:
 
-  AP MODE      — No Wi-Fi is available. wlan0 becomes a hotspot (192.168.4.1)
-                 powered by hostapd + dnsmasq, so the user can connect directly
-                 to the frame and configure it via the web dashboard.
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Profile: <your home SSID>   (created by raspi-config/nmtui) │
+  │  autoconnect-retries: 0  ← patched on first run (was 4)      │
+  └──────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Profile: MementoAP          (created on first run)          │
+  │  ipv4.method: shared  ← NM handles DHCP/dnsmasq internally   │
+  │  powersave: 2         ← off, required for AP stability        │
+  └──────────────────────────────────────────────────────────────┘
 
 State machine (runs every CHECK_INTERVAL seconds):
-  ┌─────────────┐   Wi-Fi lost       ┌──────────┐
-  │ CLIENT MODE │ ─────────────────► │  AP MODE │
-  │             │ ◄───────────────── │          │
-  └─────────────┘   Wi-Fi found      └──────────┘
-                                         │
-                              Every PROBE_EVERY seconds (or after
-                              MAX_AP_DURATION), attempts to reconnect.
-                              Skipped if a client device is connected.
+  ┌─────────────────┐   no known SSID in range  ┌──────────┐
+  │   CLIENT MODE   │ ────────────────────────► │  AP MODE │
+  │  (NM connected) │ ◄──────────────────────── │          │
+  └─────────────────┘   known SSID found        └──────────┘
+                                                     │
+                            Every PROBE_EVERY s, AP scans for known
+                            SSIDs. If found → stop AP, reconnect.
+                            Skipped if a client device is connected.
+                            Forced after MAX_AP_DURATION regardless.
 
-Dependencies:
-  - NetworkManager (nmcli)
-  - hostapd
-  - dnsmasq
-  - iproute2 (ip)
+Why NOT hostapd/dnsmasq?
+────────────────────────
+Bookworm's NetworkManager runs its own internal dnsmasq when using
+ipv4.method=shared. A separately running hostapd or dnsmasq.service
+WILL conflict with NM and silently break AP mode. If either is
+installed, this script will warn and exit. Disable them with:
+  sudo systemctl stop hostapd dnsmasq
+  sudo systemctl disable hostapd dnsmasq
 
-Changes from original:
-  - [BUG FIX] nm_set_managed(): "managed true/false" was passed as a single
-    argument, causing nmcli to fail silently. Now passed as separate args,
-    and uses "yes"/"no" which nmcli actually accepts.
-  - [BUG FIX] stop_ap(): removed `nmcli device disconnect` which was
-    actively killing the interface right before NM could reclaim it.
-  - [BUG FIX] probe_reconnect(): replaced `device connect` (unreliable) with
-    `device up` + autoconnect, and added a scan settling delay.
-  - [IMPROVEMENT] run(): now logs failures instead of swallowing them silently.
-  - [IMPROVEMENT] wifi_connected(): now queries NetworkManager directly instead
-    of iwgetid, which can return stale/false SSIDs (e.g. the AP's own SSID).
+Usage:
+  sudo python3 ap_mode_manager.py
+
+Logs (when running as a systemd service):
+  journalctl -u mementoframe-ap -f
 """
 
 import subprocess
 import time
+import sys
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Configuration
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
-AP_INTERFACE    = "wlan0"           # Wireless interface used for both modes
-AP_SERVICES     = ["hostapd",       # Services started in AP mode (order matters
-                   "dnsmasq"]       # for startup; reversed on shutdown)
+AP_INTERFACE    = "wlan0"           # Wireless interface name
+AP_CON_NAME     = "MementoAP"      # NM connection profile name for AP mode
+AP_SSID         = "MementoFrame"   # SSID broadcast in AP mode
+AP_PASSWORD     = "mementoframe"   # WPA2 password (min 8 chars)
+AP_IP           = "192.168.4.1"    # Gateway IP served to AP clients
+AP_CHANNEL      = "6"              # 2.4 GHz channel (1, 6, or 11 recommended)
 
-CHECK_INTERVAL  = 30                # Seconds between each main-loop iteration
-PROBE_EVERY     = 120               # Seconds between reconnect attempts while AP
-                                    # is active (only runs if no client connected)
-PROBE_TIMEOUT   = 30                # Seconds to wait for NM to establish a
-                                    # connection during a probe attempt
-MAX_AP_DURATION = 600               # Seconds of continuous AP uptime before a
-                                    # forced reconnect is triggered regardless of
-                                    # whether a client device is connected
+CHECK_INTERVAL  = 30               # Seconds between main-loop iterations
+PROBE_EVERY     = 120              # Seconds between reconnect probes in AP mode
+PROBE_TIMEOUT   = 30               # Seconds to wait for NM to reconnect
+MAX_AP_DURATION = 600              # Force a probe after this many AP-mode seconds
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Global state
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
-AP_RUNNING     = False  # True while hostapd/dnsmasq are running
-_last_probe    = 0      # Timestamp of the last reconnect probe
-_ap_start_time = 0      # Timestamp when AP mode was last started
+AP_RUNNING      = False
+_ap_start_time  = 0.0
+_last_probe     = 0.0
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# Shell helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
-def run(cmd):
-    """
-    Run a shell command and log any failures to stdout.
-
-    Previously this silently discarded all output, which hid real errors
-    (notably the broken nmcli managed= call). Now failures are visible
-    in the service log (journalctl -u <service>).
-
-    Returns:
-        subprocess.CompletedProcess: the result object (returncode, stdout, stderr).
-    """
+def run(cmd, label=None):
+    """Run a command, log any failures. Never raises."""
+    tag = label or " ".join(str(c) for c in cmd)
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        print(f"❌ Command failed: {' '.join(cmd)}")
+        print(f"  ❌ FAILED [{tag}]")
         if proc.stdout.strip():
-            print(f"   stdout: {proc.stdout.strip()}")
+            print(f"     stdout: {proc.stdout.strip()}")
         if proc.stderr.strip():
-            print(f"   stderr: {proc.stderr.strip()}")
+            print(f"     stderr: {proc.stderr.strip()}")
     return proc
 
 
 def sh(cmd):
-    """
-    Run a shell command and return its stdout as a stripped string.
-    Raises subprocess.CalledProcessError if the command exits non-zero.
-    """
+    """Run a command, return stripped stdout. Raises CalledProcessError on failure."""
     return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
 
 
+def nmcli(*args):
+    """Convenience: sudo nmcli <args>."""
+    return run(["sudo", "nmcli"] + list(args))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Network state queries
+# ─────────────────────────────────────────────────────────────────────────────
+
 def wifi_connected():
     """
-    Check whether wlan0 is currently connected to a Wi-Fi network,
-    according to NetworkManager.
-
-    Previously used iwgetid, which can return the AP's own SSID when
-    hostapd is running, producing false positives. Querying NM directly
-    is more reliable — it only reports "connected" once DHCP has completed
-    and the link is fully up.
-
-    Returns:
-        bool: True if NM reports wlan0 as connected, False otherwise.
+    Ask NetworkManager if wlan0 is fully connected in client (infrastructure) mode.
+    NM only reports 'connected' (not 'connected:local') after DHCP completes.
+    Never returns True while the interface is in AP mode.
     """
     try:
         out = sh(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "device", "status"])
         for line in out.splitlines():
             parts = line.split(":")
-            if len(parts) >= 3:
-                dev, dev_type, state = parts[0], parts[1], parts[2]
-                if dev == AP_INTERFACE and dev_type == "wifi" and state == "connected":
-                    return True
+            if len(parts) >= 3 and parts[0] == AP_INTERFACE and parts[1] == "wifi":
+                return parts[2] == "connected"
         return False
     except subprocess.CalledProcessError:
         return False
 
 
-def nm_set_managed(managed: bool):
+def known_ssids_in_range():
     """
-    Tell NetworkManager whether it should manage the AP interface.
+    Perform a live scan and return True if any saved client profile's SSID
+    is currently visible.
 
-    FIX: Original code passed "managed true" as a single argument, which
-    nmcli does not parse correctly and fails silently. The correct form is
-    two separate arguments, and nmcli requires "yes"/"no" not "true"/"false".
-
-    Args:
-        managed (bool): True to hand control to NM, False to release it.
+    Uses `iw dev scan` rather than `nmcli device wifi list` because iw
+    always performs a fresh scan while nmcli can return stale cached results,
+    especially when the interface has recently been in AP mode.
     """
-    state = "yes" if managed else "no"
-    print(f"🔧 NetworkManager managed={state} on {AP_INTERFACE}")
-    run(["sudo", "nmcli", "device", "set", AP_INTERFACE, "managed", state])
+    # Collect SSIDs from all saved client (non-AP) wifi profiles
+    try:
+        profiles_out = sh(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"])
+    except subprocess.CalledProcessError:
+        return False
+
+    saved_ssids = set()
+    for line in profiles_out.splitlines():
+        parts = line.split(":", 1)
+        if len(parts) == 2 and parts[1] == "802-11-wireless":
+            name = parts[0]
+            if name == AP_CON_NAME:
+                continue
+            try:
+                raw = sh(["nmcli", "-t", "-f", "802-11-wireless.ssid",
+                          "connection", "show", name])
+                ssid = raw.split(":", 1)[-1].strip()
+                if ssid:
+                    saved_ssids.add(ssid)
+            except subprocess.CalledProcessError:
+                pass
+
+    if not saved_ssids:
+        return False
+
+    # Live scan
+    try:
+        scan_out = sh(["sudo", "iw", "dev", AP_INTERFACE, "scan"])
+        for line in scan_out.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("SSID:"):
+                visible_ssid = stripped[5:].strip()
+                if visible_ssid in saved_ssids:
+                    print(f"  📶 Known SSID in range: {visible_ssid!r}")
+                    return True
+    except subprocess.CalledProcessError:
+        print("  ⚠️  iw scan failed (interface busy?) — assuming no SSIDs in range.")
+
+    return False
 
 
-def set_ap_ip():
-    """
-    Assign the static IP address required for AP mode.
-
-    Flushes any existing addresses from the interface, then assigns
-    192.168.4.1/24 — the gateway address that dnsmasq will hand out
-    to connecting clients. Brings the interface up afterwards.
-    """
-    run(["sudo", "ip", "addr", "flush", "dev", AP_INTERFACE])
-    run(["sudo", "ip", "addr", "add", "192.168.4.1/24", "dev", AP_INTERFACE])
-    run(["sudo", "ip", "link", "set", AP_INTERFACE, "up"])
-
-
-def clear_ip():
-    """
-    Remove the static IP from the interface when leaving AP mode.
-
-    Flushes all addresses so NetworkManager can assign a DHCP address
-    from the home network once it takes control back.
-    """
-    run(["sudo", "ip", "addr", "flush", "dev", AP_INTERFACE])
-    run(["sudo", "ip", "link", "set", AP_INTERFACE, "up"])
+def ap_profile_exists():
+    """Return True if the MementoAP NM connection profile exists."""
+    try:
+        out = sh(["nmcli", "-t", "-f", "NAME", "connection", "show"])
+        return AP_CON_NAME in out.splitlines()
+    except subprocess.CalledProcessError:
+        return False
 
 
 def clients_connected():
     """
-    Check whether any device is currently connected to the AP.
-
-    Queries hostapd_cli for a list of associated stations. A non-empty
-    response means at least one client is connected.
-
-    This is used to avoid interrupting a user who is actively configuring
-    the frame through the web dashboard.
-
-    Returns:
-        bool: True if one or more clients are connected, False otherwise.
+    Return True if any Wi-Fi station is associated with our AP.
+    Uses `iw dev station dump` — no hostapd_cli required.
     """
     try:
-        out = subprocess.check_output(
-            ["sudo", "hostapd_cli", "-i", AP_INTERFACE, "all_sta"],
-            stderr=subprocess.DEVNULL,
-        ).decode()
-        return bool(out.strip())
+        out = sh(["sudo", "iw", "dev", AP_INTERFACE, "station", "dump"])
+        return "Station" in out
     except subprocess.CalledProcessError:
         return False
 
 
-# ---------------------------------------------------------------------------
-# Mode control
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+# First-run setup (idempotent — safe to call on every boot)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_for_conflicts():
+    """
+    Warn and exit if hostapd or dnsmasq.service are active.
+    Both conflict with NM's internal AP/DHCP stack on Bookworm.
+    """
+    conflicts = []
+    for service in ["hostapd", "dnsmasq"]:
+        try:
+            if sh(["systemctl", "is-active", service]) == "active":
+                conflicts.append(service)
+        except subprocess.CalledProcessError:
+            pass  # Not installed — fine
+
+    if conflicts:
+        print("❌ Conflicting services are running:")
+        for s in conflicts:
+            print(f"   - {s}")
+        print()
+        print("These conflict with NetworkManager's AP mode on Bookworm.")
+        print("Disable them before running this script:")
+        for s in conflicts:
+            print(f"   sudo systemctl stop {s} && sudo systemctl disable {s}")
+        sys.exit(1)
+
+
+def ensure_ap_profile():
+    """
+    Create the MementoAP NM connection profile if it doesn't already exist.
+    Idempotent: exits immediately if the profile is already present.
+
+    Key settings:
+      802-11-wireless.mode ap     — AP (not client) mode
+      ipv4.method shared          — NM runs DHCP/NAT internally via dnsmasq-base
+      wifi-sec.proto rsn          — WPA2 only, no WPA1
+      wifi-sec.group/pairwise ccmp — CCMP only, no TKIP
+      connection.autoconnect no   — script controls activation manually
+      powersave=2                 — power save OFF; required for AP stability on
+                                   Bookworm (NM started enforcing this Oct 2024)
+    """
+    if ap_profile_exists():
+        return  # Nothing to do
+
+    print(f"🔧 First run: creating AP profile '{AP_CON_NAME}'…")
+
+    # Clean up any broken remnant with the same name
+    run(["sudo", "nmcli", "connection", "delete", AP_CON_NAME],
+        label=f"cleanup stale {AP_CON_NAME}")
+
+    commands = [
+        ["sudo", "nmcli", "connection", "add",
+         "type", "wifi", "ifname", AP_INTERFACE,
+         "con-name", AP_CON_NAME, "autoconnect", "no", "ssid", AP_SSID],
+
+        ["sudo", "nmcli", "connection", "modify", AP_CON_NAME,
+         "802-11-wireless.mode", "ap",
+         "802-11-wireless.band", "bg",
+         "802-11-wireless.channel", AP_CHANNEL],
+
+        ["sudo", "nmcli", "connection", "modify", AP_CON_NAME,
+         "ipv4.method", "shared",
+         "ipv4.address", f"{AP_IP}/24"],
+
+        ["sudo", "nmcli", "connection", "modify", AP_CON_NAME,
+         "ipv6.method", "disabled"],
+
+        ["sudo", "nmcli", "connection", "modify", AP_CON_NAME,
+         "wifi-sec.key-mgmt", "wpa-psk",
+         "wifi-sec.proto", "rsn",
+         "wifi-sec.group", "ccmp",
+         "wifi-sec.pairwise", "ccmp",
+         "wifi-sec.psk", AP_PASSWORD],
+    ]
+
+    for cmd in commands:
+        if run(cmd).returncode != 0:
+            print("❌ AP profile creation failed. See errors above.")
+            sys.exit(1)
+
+    # Write powersave=2 into the .nmconnection file directly —
+    # nmcli has no CLI flag for this setting.
+    conn_file = (f"/etc/NetworkManager/system-connections/"
+                 f"{AP_CON_NAME}.nmconnection")
+    try:
+        with open(conn_file, "r") as f:
+            content = f.read()
+        if "powersave=" not in content:
+            content = content.replace("[wifi]\n", "[wifi]\npowersave=2\n")
+            with open(conn_file, "w") as f:
+                f.write(content)
+        run(["sudo", "nmcli", "connection", "reload"])
+    except (FileNotFoundError, PermissionError) as e:
+        print(f"  ⚠️  Could not write powersave setting: {e}")
+        print("     AP may drop clients after extended idle. Try running as root.")
+
+    print(f"  ✅ AP profile created — SSID: {AP_SSID}  |  Password: {AP_PASSWORD}  |  IP: {AP_IP}")
+
+
+def ensure_client_profiles_patched():
+    """
+    Patch all saved client Wi-Fi profiles to use autoconnect-retries=0.
+    Idempotent: skips profiles already set correctly.
+
+    NM's default of -1 means only ~4 reconnect attempts before giving up
+    forever until reboot. Setting 0 means retry indefinitely — essential
+    for a headless device that must recover from temporary signal loss.
+    """
+    try:
+        profiles_out = sh(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"])
+    except subprocess.CalledProcessError:
+        return
+
+    for line in profiles_out.splitlines():
+        parts = line.split(":", 1)
+        if len(parts) == 2 and parts[1] == "802-11-wireless":
+            name = parts[0]
+            if name == AP_CON_NAME:
+                continue
+            try:
+                current = sh(["nmcli", "-t", "-f", "connection.autoconnect-retries",
+                               "connection", "show", name])
+                value = current.split(":")[-1].strip()
+                if value == "0":
+                    continue  # Already patched
+            except subprocess.CalledProcessError:
+                pass
+            print(f"🔧 Patching client profile '{name}': autoconnect-retries → 0")
+            run(["sudo", "nmcli", "connection", "modify", name,
+                 "connection.autoconnect-retries", "0"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mode switching
+# ─────────────────────────────────────────────────────────────────────────────
 
 def start_ap():
     """
-    Transition the device into Access Point mode.
-
-    Steps:
-      1. Guard — does nothing if AP is already running.
-      2. Releases NM control of wlan0 (only if Wi-Fi is not currently
-         connected, to avoid dropping an active connection prematurely).
-      3. Assigns the static gateway IP (192.168.4.1/24).
-      4. Starts hostapd then dnsmasq via systemctl.
-      5. Records the start timestamp for MAX_AP_DURATION enforcement.
-
-    Globals modified:
-        AP_RUNNING (bool): Set to True.
-        _ap_start_time (float): Set to current time.
+    Activate the MementoAP NM profile.
+    NM handles the AP beacon, WPA2, DHCP, and routing internally.
     """
     global AP_RUNNING, _ap_start_time
     if AP_RUNNING:
         return
 
-    print("📡 Starting Access Point (192.168.4.1)…")
+    print("📡 Activating AP mode…")
+    result = nmcli("connection", "up", AP_CON_NAME)
+    if result.returncode != 0:
+        print("  ❌ AP activation failed.")
+        return
 
-    # Only release NM if we are not mid-connection; avoids a race condition
-    # where stopping NM management drops a Wi-Fi link that just came up.
-    if not wifi_connected():
-        nm_set_managed(False)
-    else:
-        print("⚠️  Wi-Fi still connected — not disabling NetworkManager yet.")
-
-    set_ap_ip()
-
-    for s in AP_SERVICES:
-        run(["sudo", "systemctl", "start", s])
-
+    time.sleep(3)  # Let NM fully bring the profile up before we poll it
     _ap_start_time = time.time()
     AP_RUNNING = True
-    print("📡 Access Point is up.")
+    print(f"  ✅ AP '{AP_SSID}' live at {AP_IP}")
 
 
 def stop_ap():
     """
-    Transition the device out of Access Point mode.
-
-    Steps:
-      1. Guard — does nothing if AP is not running.
-      2. Stops dnsmasq then hostapd (reverse startup order).
-      3. Flushes the static IP.
-      4. Returns wlan0 to NetworkManager control.
-
-    FIX: Removed `nmcli device disconnect` which was actively dropping the
-    interface immediately after handing it back to NM, preventing auto-
-    reconnect. NM will handle reconnection on its own once it has control.
-
-    Globals modified:
-        AP_RUNNING (bool): Set to False.
+    Deactivate the MementoAP NM profile.
+    NM's autoconnect will then try to associate wlan0 with saved client
+    profiles — we do not need to trigger this manually.
     """
     global AP_RUNNING
     if not AP_RUNNING:
         return
 
-    print("🔌 Stopping Access Point, returning control to NetworkManager…")
-
-    for s in reversed(AP_SERVICES):
-        run(["sudo", "systemctl", "stop", s])
-
-    clear_ip()
-    nm_set_managed(True)
-    run(["sudo", "nmcli", "radio", "wifi", "on"])
-    run(["sudo", "ip", "link", "set", AP_INTERFACE, "up"])
-    # NOTE: Do NOT call `nmcli device disconnect` here. That would drop
-    # the interface and break NM's ability to auto-reconnect.
+    print("🔌 Deactivating AP mode…")
+    result = nmcli("connection", "down", AP_CON_NAME)
+    if result.returncode != 0:
+        run(["sudo", "nmcli", "device", "disconnect", AP_INTERFACE],
+            label="device disconnect (fallback)")
 
     AP_RUNNING = False
+    print("  AP stopped — NM will now attempt to reconnect to saved networks.")
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Reconnect probe
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def probe_reconnect(force=False):
     """
-    Attempt to reconnect to a saved Wi-Fi network while AP mode is active.
+    While in AP mode: scan for known networks and attempt to reconnect.
 
-    Called periodically (every PROBE_EVERY seconds) or when the AP has been
-    running longer than MAX_AP_DURATION. The probe:
-      1. Optionally skips if a client is actively connected (unless forced).
-      2. Stops AP mode and hands control back to NetworkManager.
-      3. Triggers a Wi-Fi rescan, waits for results to settle, then asks NM
-         to bring the interface up (which triggers autoconnect).
-      4. Polls for up to PROBE_TIMEOUT seconds for a successful link.
-      5. If no link is established, restarts AP mode and returns False.
-
-    FIX: Replaced `nmcli device connect <iface>` with a rescan + settle
-    delay + `nmcli device up`, which is more reliable for reconnecting to
-    saved networks. Also added `autoconnect yes` to ensure NM will pick up
-    a saved profile automatically.
+      1. Skip if a client device is connected (unless forced).
+      2. Live-scan for known SSIDs.
+      3. If none visible: stay in AP mode.
+      4. Stop AP — NM autoconnect takes over.
+      5. Poll for PROBE_TIMEOUT seconds.
+      6. Success → return True. Timeout → restart AP, return False.
 
     Args:
-        force (bool): If True, skips the client-connected check and always
-                      attempts reconnection. Used after MAX_AP_DURATION.
-
-    Returns:
-        bool: True if Wi-Fi was successfully re-established, False otherwise.
+        force: Ignore connected clients; used when MAX_AP_DURATION is exceeded.
     """
     if not force and clients_connected():
-        print("🛠  User connected to AP — skipping reconnect probe.")
+        print("🛠  Client connected to AP — skipping probe.")
         return False
 
-    print("🔎 Probe: attempting to reconnect to saved Wi-Fi…")
+    print("🔎 Scanning for known Wi-Fi networks…")
+
+    if not known_ssids_in_range():
+        print("  No known networks visible — staying in AP mode.")
+        return False
+
+    print("  Known network found — attempting reconnect.")
     stop_ap()
+    time.sleep(5)  # Give NM time to begin association
 
-    # Ensure NM has full control and the interface is ready
-    nm_set_managed(True)
-    run(["sudo", "nmcli", "radio", "wifi", "on"])
-    run(["sudo", "ip", "link", "set", AP_INTERFACE, "up"])
-
-    # Re-enable autoconnect on this device in case it was cleared
-    run(["sudo", "nmcli", "device", "set", AP_INTERFACE, "autoconnect", "yes"])
-
-    # Rescan and give NM a moment for results to settle before connecting
-    run(["sudo", "nmcli", "device", "wifi", "rescan"])
-    time.sleep(5)
-
-    # `device up` triggers NM's autoconnect logic — more reliable than
-    # `device connect` which tries to connect to a specific device rather
-    # than picking the best saved network profile.
-    run(["sudo", "nmcli", "device", "up", AP_INTERFACE])
-
-    # Poll until connected or timeout expires
     t0 = time.time()
     while time.time() - t0 < PROBE_TIMEOUT:
         if wifi_connected():
-            print("✅ Reconnected to Wi-Fi successfully.")
+            print("  ✅ Reconnected to Wi-Fi.")
             return True
         time.sleep(2)
 
-    # Reconnect failed — restore AP so the user can still reach the dashboard
-    print("⏳ Probe timed out — restoring AP mode.")
+    print("  ⏳ Reconnect timed out — restoring AP.")
     start_ap()
     return False
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Main loop
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    """
-    Entry point — runs the AP/client state machine indefinitely.
-
-    Each iteration (every CHECK_INTERVAL seconds):
-      - If Wi-Fi is connected and AP is running  → stop AP (we're back online).
-      - If Wi-Fi is connected and AP is not running → log and continue.
-      - If Wi-Fi is not connected and AP is not running → start AP.
-      - If Wi-Fi is not connected and AP is running:
-          - If AP uptime > MAX_AP_DURATION → force a reconnect probe.
-          - If PROBE_EVERY seconds have elapsed → attempt a normal probe.
-
-    Globals modified:
-        _last_probe (float): Updated after each probe attempt.
-    """
     global _last_probe
-    print("🖼  MementoFrame AP Mode Manager started.")
+
+    # ── First-run setup (idempotent — fast no-ops after first boot) ──────────
+    check_for_conflicts()
+    ensure_ap_profile()
+    ensure_client_profiles_patched()
+    # ─────────────────────────────────────────────────────────────────────────
+
+    print()
+    print("🖼  MementoFrame AP Mode Manager")
+    print(f"   Interface : {AP_INTERFACE}")
+    print(f"   AP SSID   : {AP_SSID}  |  Gateway: {AP_IP}")
+    print(f"   Loop      : every {CHECK_INTERVAL}s  |  Probe: every {PROBE_EVERY}s")
+    print()
 
     while True:
         connected = wifi_connected()
 
         if connected:
             if AP_RUNNING:
-                print("✅ Wi-Fi detected — stopping AP mode.")
+                print("✅ Wi-Fi client connection detected — stopping AP.")
                 stop_ap()
             else:
                 print("📶 Connected to Wi-Fi — monitoring…")
 
         else:
             if not AP_RUNNING:
-                print("⚠️  No Wi-Fi — starting AP mode.")
+                print("⚠️  No Wi-Fi — entering AP mode.")
                 start_ap()
                 _last_probe = time.time()
+
             else:
                 uptime = time.time() - _ap_start_time
+                since_probe = time.time() - _last_probe
 
                 if uptime > MAX_AP_DURATION:
-                    print(f"⏰ AP running for {uptime:.0f}s — forcing reconnect attempt.")
+                    print(f"⏰ AP up {uptime:.0f}s — forcing reconnect probe.")
                     probe_reconnect(force=True)
                     _last_probe = time.time()
 
-                elif time.time() - _last_probe >= PROBE_EVERY:
+                elif since_probe >= PROBE_EVERY:
                     _last_probe = time.time()
                     probe_reconnect()
 
