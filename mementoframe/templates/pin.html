@@ -1,0 +1,54 @@
+<!--
+  MementoFrame - Raspberry Pi Smart Photo Frame
+  Copyright (c) 2026 João Fernandes
+
+  This work is licensed under the Creative Commons Attribution-NonCommercial
+  4.0 International License. To view a copy of this license, visit:
+  http://creativecommons.org/licenses/by-nc/4.0/
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MementoFrame — Enter PIN</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='backend.css') }}">
+</head>
+<body class="frame-theme">
+  <div class="container container--narrow">
+
+    <div class="pin-card">
+      <div class="pin-card__icon">🖼️</div>
+      <h2 class="pin-card__title">MementoFrame</h2>
+      <p class="pin-card__subtitle">
+        Your frame is in setup mode.<br>
+        Enter the PIN shown on the display.
+      </p>
+
+      {% if error %}
+      <div class="pin-card__error">{{ error }}</div>
+      {% endif %}
+
+      <form method="POST" action="{{ url_for('config_portal_pin_submit') }}" class="pin-form">
+        <input
+          class="pin-form__input"
+          type="text"
+          name="pin"
+          maxlength="6"
+          inputmode="numeric"
+          pattern="[0-9]{6}"
+          placeholder="000000"
+          autofocus
+          autocomplete="off"
+          required
+        >
+        <button class="pin-form__btn" type="submit">Unlock</button>
+      </form>
+
+      <p class="pin-card__hint">The PIN is shown on the frame's screen.</p>
+    </div>
+
+  </div>
+</body>
+</html>

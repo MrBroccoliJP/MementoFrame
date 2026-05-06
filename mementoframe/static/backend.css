@@ -230,3 +230,104 @@ button:hover {
     font-size: 1.1rem;
   }
 }
+
+
+/* Narrower container variant used by pin.html */
+.container--narrow {
+  max-width: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.pin-card {
+  width: 100%;
+  background: #151515;
+  border: 1px solid #333;
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+  text-align: center;
+}
+
+.pin-card__icon {
+  font-size: 3rem;
+  margin-bottom: 0.8rem;
+}
+
+.pin-card__title {
+  font-size: 1.4rem;
+  color: #fff;
+  margin-bottom: 0.5rem;
+}
+
+.pin-card__subtitle {
+  font-size: 0.9rem;
+  color: #888;
+  line-height: 1.6;
+  margin-bottom: 1.8rem;
+  text-transform: none;
+}
+
+.pin-card__error {
+  background: #2d1515;
+  border: 1px solid #c0392b;
+  border-radius: 8px;
+  color: #e74c3c;
+  font-size: 0.9rem;
+  padding: 0.7rem 1rem;
+  margin-bottom: 1.2rem;
+  text-align: left;
+}
+
+.pin-card__hint {
+  margin-top: 1.5rem;
+  font-size: 0.8rem;
+  color: #444;
+  text-transform: none;
+}
+
+/* PIN form */
+.pin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.pin-form__input {
+  font-size: 2.2rem;
+  letter-spacing: 0.5em;
+  text-align: center;
+  padding: 1rem;
+  border-radius: 10px;
+  background: #111;
+  border: 1px solid #333;
+  color: #fff;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.pin-form__input:focus {
+  outline: none;
+  border-color: #1DB954;
+}
+
+.pin-form__btn {
+  background: #1DB954;
+  border: none;
+  border-radius: 10px;
+  color: #000;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 1rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.2s;
+}
+
+.pin-form__btn:hover {
+  background: #1ed760;
+}
+
+

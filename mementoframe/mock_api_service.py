@@ -18,13 +18,22 @@ from flask_cors import CORS
 import os, json, time, random
 from version_info import VERSIONS
 
+# ---------- All paths anchored to this script's directory ----------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def p(*parts):
+    return os.path.join(BASE_DIR, *parts)
+
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 CORS(app)
 
 # ---------- Paths ----------
-CONFIG_FILE = "config.json"
-USERDATA_DIR = "resources/userdata"
-ASSETS_DIR = "resources/assets"
+CONFIG_FILE = p("config.json")
+USERDATA_DIR = p("resources", "userdata")
+ASSETS_DIR = p("resources", "assets")
+RUNTIME_DIR = p("runtime")
+CONFIG_PIN_FILE = p("runtime", "config_pin.txt")
+os.makedirs(RUNTIME_DIR, exist_ok=True)
 
 # ---------- Mock state ----------
 state = {
@@ -92,6 +101,7 @@ def home():
       <li><a href="/health">/health</a></li>
       <li><a href="/get_ip">/get_ip</a></li>
       <li><a href="/config.json">/config.json</a></li>
+      <li><a href="/config_pin.json">/config_pin.json</a></li>
     </ul>
     <hr>
     <h3>Dev toggles (POST)</h3>
@@ -141,6 +151,36 @@ def weather_status():
         "windSpeed": 14.4,
         "city": "Porto",
     })
+
+
+# ---------- Config PIN ----------
+def read_config_pin():
+    """Read the temporary config PIN created by mock_app.py, if active."""
+    try:
+        if not os.path.exists(CONFIG_PIN_FILE):
+            return None
+        with open(CONFIG_PIN_FILE, "r", encoding="utf-8") as f:
+            pin = f.read().strip()
+            return pin or None
+    except Exception as e:
+        print(f"[config-pin] read failed: {e}")
+        return None
+
+@app.route("/config_pin.json")
+def config_pin_json():
+    """Expose the active config PIN to the mock display UI."""
+    response = jsonify({"pin": read_config_pin()})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+# Backwards-compatible aliases for older wifi.js versions while testing.
+@app.route("/frame_pin.json")
+def frame_pin_json_alias():
+    return config_pin_json()
+
+@app.route("/ap_pin.json")
+def ap_pin_json_alias():
+    return config_pin_json()
 
 # ---------- System ----------
 @app.route("/status.json")
@@ -233,5 +273,6 @@ if __name__ == "__main__":
     print("🖼  MementoFrame Mock — API Service (api_service.py)")
     print("   http://localhost:5001")
     print()
+    print(f"   Runtime PIN: {CONFIG_PIN_FILE}")
     print("   Dev toggles: POST /dev/toggle_spotify | /dev/toggle_mode | /dev/next_track")
     app.run(host="0.0.0.0", port=5001, debug=True)

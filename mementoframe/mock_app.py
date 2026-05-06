@@ -15,11 +15,11 @@ Run with: pip install flask flask-cors pillow python-dotenv werkzeug && python m
 
 
 
-from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory
+from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps
-import os, json, uuid
+import os, json, uuid, time, secrets
 from version_info import VERSIONS
 
 # ---------- All paths anchored to the script's own directory ----------
@@ -47,7 +47,140 @@ for d in [USERDATA_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, ASSETS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 app = Flask(__name__, template_folder=TEMPLATES_DIR)
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or "mock-dev-secret-key"
 CORS(app)
+
+
+# ---------- Mock Config PIN Gate ----------
+# Mirrors the real app.py flow, but without GPIO.
+# The PIN is only created when someone tries to open the protected backend.
+# The frame/display can poll /config_pin.json; it returns null when no unlock
+# request is active, so the PIN stays hidden until needed.
+RUNTIME_DIR = p("runtime")
+os.makedirs(RUNTIME_DIR, exist_ok=True)
+
+CONFIG_PIN_FILE = p("runtime", "config_pin.txt")
+CONFIG_PIN_LENGTH = 6
+CONFIG_PIN_TTL_SECONDS = 5 * 60
+
+CONFIG_PIN_EXEMPT_ENDPOINTS = {
+    "config_pin_page",
+    "config_pin_submit",
+    "config_pin_json",
+    "static",
+    "serve_assets",
+}
+
+
+def read_config_pin():
+    """Return the active PIN only if it exists and has not expired."""
+    if not os.path.exists(CONFIG_PIN_FILE):
+        return None
+
+    age = time.time() - os.path.getmtime(CONFIG_PIN_FILE)
+    if age > CONFIG_PIN_TTL_SECONDS:
+        clear_config_pin()
+        return None
+
+    try:
+        with open(CONFIG_PIN_FILE, "r", encoding="utf-8") as f:
+            pin = f.read().strip()
+            return pin or None
+    except Exception:
+        return None
+
+
+def create_config_pin():
+    """Create a fresh temporary config PIN."""
+    pin = "".join(secrets.choice("0123456789") for _ in range(CONFIG_PIN_LENGTH))
+
+    with open(CONFIG_PIN_FILE, "w", encoding="utf-8") as f:
+        f.write(pin)
+
+    try:
+        os.chmod(CONFIG_PIN_FILE, 0o600)
+    except Exception:
+        pass
+
+    print(f"[config-pin] created temporary config PIN: {pin}")
+    return pin
+
+
+def get_or_create_config_pin():
+    """Return the current PIN, or create one because unlock was requested."""
+    return read_config_pin() or create_config_pin()
+
+
+def clear_config_pin():
+    """Remove the temporary PIN so the frame display hides it."""
+    try:
+        if os.path.exists(CONFIG_PIN_FILE):
+            os.remove(CONFIG_PIN_FILE)
+            print("[config-pin] cleared temporary config PIN")
+    except Exception as e:
+        print(f"⚠️ Could not clear config PIN: {e}")
+
+
+def config_pin_gate_required():
+    """Return True if this browser session has not unlocked the backend."""
+    return session.get("config_unlocked") is not True
+
+
+def wake_screen():
+    """Mock screen wake. Real app drives GPIO 26 HIGH here."""
+    print("[screen] wake requested (mock)")
+
+
+@app.before_request
+def enforce_config_pin_gate():
+    """Protect backend routes with the config PIN."""
+    if request.endpoint in CONFIG_PIN_EXEMPT_ENDPOINTS:
+        return None
+
+    if config_pin_gate_required():
+        wake_screen()
+        get_or_create_config_pin()
+        return redirect(url_for("config_pin_page"))
+
+    return None
+
+
+def render_pin_page(error=None):
+    """Render templates/pin.html."""
+    return render_template("pin.html", error=error)
+
+
+@app.route("/config-pin", methods=["GET"], endpoint="config_pin_page")
+def config_pin_page():
+    """PIN entry page for the config dashboard."""
+    wake_screen()
+    get_or_create_config_pin()
+    return render_pin_page(error=None)
+
+
+@app.route("/config-pin", methods=["POST"], endpoint="config_pin_submit")
+def config_pin_submit():
+    """Validate submitted PIN and unlock this browser session."""
+    active_pin = read_config_pin()
+    submitted = request.form.get("pin", "").strip()
+
+    if active_pin and submitted == active_pin:
+        session["config_unlocked"] = True
+        clear_config_pin()
+        return redirect(url_for("dashboard"))
+
+    wake_screen()
+    get_or_create_config_pin()
+    return render_pin_page(error="Incorrect PIN — try again.")
+
+
+@app.route("/config_pin.json")
+def config_pin_json():
+    """Expose the active PIN to the mock frame display only while requested."""
+    response = jsonify({"pin": read_config_pin()})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
 
 # ---------- Photo helpers ----------
 def build_photo_list():
