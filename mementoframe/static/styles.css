@@ -866,3 +866,63 @@ body {
 .month-year {
   color: var(--accent-text);
 }
+
+
+/* Frame PIN display on photo frame */
+.wifi-info {
+  overflow: hidden;
+  transition:
+    width 0.35s ease,
+    padding 0.35s ease,
+    background 0.35s ease,
+    border-color 0.35s ease;
+}
+
+.wifi-info.pin-expanded {
+  width: auto;
+  min-width: 118px;
+  padding: 0.55rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.15rem;
+  background: #1c1c1c;
+  border-radius: 20px;
+}
+
+.frame-pin-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.frame-pin-label {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.55rem;
+  font-weight: 600;
+  color: var(--accent-color);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  line-height: 1;
+}
+
+.frame-pin-digits {
+  font-family: 'Roboto Mono', monospace;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--accent-text);
+  line-height: 1.25;
+  padding-left: 0.18em;
+}
+
+.frame-pin-url {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.58rem;
+  font-weight: 400;
+  color: rgba(242, 242, 242, 0.55);
+  line-height: 1.1;
+  white-space: nowrap;
+}
