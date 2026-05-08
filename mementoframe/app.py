@@ -1,15 +1,37 @@
-from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory
-import subprocess, os, json, socket, threading, time, uuid, shlex
+from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
+import subprocess, os, json, socket, threading, time, uuid, shlex, secrets
+from pathlib import Path
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from PIL import Image, ImageOps
 import RPi.GPIO as GPIO
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+from version_info import VERSIONS
 
 # ---------- Initialization ----------
+ENV_FILE = Path(".env")
+
+
+def ensure_flask_secret_key():
+    """Return a stable Flask secret key, generating and saving one if missing."""
+    key = os.getenv("FLASK_SECRET_KEY")
+    if key:
+        return key
+
+    key = secrets.token_urlsafe(32)
+
+    with open(ENV_FILE, "a", encoding="utf-8") as f:
+        f.write(f"\nFLASK_SECRET_KEY={key}\n")
+
+    os.environ["FLASK_SECRET_KEY"] = key
+    print("🔐 Generated FLASK_SECRET_KEY and saved it to .env")
+    return key
+
+
 load_dotenv()
 app = Flask(__name__)
+app.secret_key = ensure_flask_secret_key()
 
 # ---------- Paths ----------
 CONFIG_FILE = "config.json"
@@ -32,15 +54,151 @@ for d in [USERDATA_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, ASSETS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # ---------- GPIO Setup ----------
+SCREEN_PIN = 26
 BRIGHTNESS_DOWN = 21
 BRIGHTNESS_UP = 20
 PRESS_DURATION = 5.5
 STEP_DELAY = 0.5
 
 GPIO.setmode(GPIO.BCM)
+GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(BRIGHTNESS_DOWN, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(BRIGHTNESS_UP, GPIO.OUT, initial=GPIO.HIGH)
 gpio_lock = threading.Lock()
+
+# ---------- Frame PIN Gate ----------
+# app.py owns PIN creation and validation. api_service.py only reads this file
+# for the physical display UI. The file is deliberately runtime-only and short
+# lived, not persistent user data.
+RUNTIME_DIR = "runtime"
+os.makedirs(RUNTIME_DIR, exist_ok=True)
+
+CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
+CONFIG_PORTAL_PIN_LENGTH = 6
+CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
+
+CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS = {
+    "config_portal_pin_page",
+    "config_portal_pin_submit",
+    "static",
+    "serve_assets",
+}
+
+
+def _atomic_write_json(path, data):
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+
+
+def remove_config_portal_pin():
+    try:
+        os.remove(CONFIG_PORTAL_PIN_FILE)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"⚠️ Could not remove config portal PIN: {e}")
+
+
+def read_config_portal_pin_record():
+    try:
+        with open(CONFIG_PORTAL_PIN_FILE, "r", encoding="utf-8") as f:
+            record = json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        remove_config_portal_pin()
+        return None
+
+    expires_at = float(record.get("expires_at") or 0)
+    pin = str(record.get("pin") or "").strip()
+    if not pin or not expires_at or time.time() >= expires_at:
+        remove_config_portal_pin()
+        return None
+    return record
+
+
+def create_config_portal_pin():
+    now = time.time()
+    pin = "".join(secrets.choice("0123456789") for _ in range(CONFIG_PORTAL_PIN_LENGTH))
+    record = {
+        "pin": pin,
+        "created_at": now,
+        "expires_at": now + CONFIG_PORTAL_PIN_TTL_SECONDS,
+        "ttl_seconds": CONFIG_PORTAL_PIN_TTL_SECONDS,
+    }
+    _atomic_write_json(CONFIG_PORTAL_PIN_FILE, record)
+    try:
+        os.chmod(CONFIG_PORTAL_PIN_FILE, 0o600)
+    except Exception:
+        pass
+
+    def expire_pin(expected_pin=pin, expected_expires_at=record["expires_at"]):
+        time.sleep(CONFIG_PORTAL_PIN_TTL_SECONDS)
+        current = read_config_portal_pin_record()
+        if current and current.get("pin") == expected_pin and current.get("expires_at") == expected_expires_at:
+            remove_config_portal_pin()
+
+    threading.Thread(target=expire_pin, daemon=True).start()
+    return record
+
+
+def get_or_create_config_portal_pin_record():
+    return read_config_portal_pin_record() or create_config_portal_pin()
+
+
+def config_portal_pin_gate_required():
+    return session.get("config_unlocked") is not True
+
+
+def wake_screen():
+    try:
+        GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
+        GPIO.output(SCREEN_PIN, GPIO.HIGH)
+    except Exception as e:
+        print(f"⚠️ Could not wake screen: {e}")
+
+
+@app.before_request
+def enforce_config_portal_pin_gate():
+    if request.endpoint in CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS:
+        return None
+    if config_portal_pin_gate_required():
+        wake_screen()
+        get_or_create_config_portal_pin_record()
+        return redirect(url_for("config_portal_pin_page"))
+    return None
+
+
+@app.route("/config-portal-pin", methods=["GET"])
+def config_portal_pin_page():
+    wake_screen()
+    get_or_create_config_portal_pin_record()
+    return render_template("pin.html", error=None)
+
+
+@app.route("/config-portal-pin", methods=["POST"])
+def config_portal_pin_submit():
+    record = read_config_portal_pin_record()
+    submitted = request.form.get("pin", "").strip()
+    if record and submitted == record.get("pin"):
+        session["config_unlocked"] = True
+        remove_config_portal_pin()
+        return redirect(url_for("dashboard"))
+
+    wake_screen()
+    get_or_create_config_portal_pin_record()
+    return render_template("pin.html", error="Incorrect or expired PIN — try again.")
+
+def clear_config_portal_pin():
+    try:
+        os.remove(CONFIG_PORTAL_PIN_FILE)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"⚠️ Could not clear config portal PIN: {e}")
+
 
 # ---------- Photo Helpers ----------
 def build_photo_list():
@@ -76,93 +234,41 @@ def sync_photo_js(photos=None):
     with open(PHOTO_JS, "w") as f:
         f.write(js_content)
 
-# ---------- Wi-Fi helpers ----------
-AP_INTERFACE = "wlan0"
-AP_CON_NAME  = "MementoAP"
-AP_IP        = "192.168.4.1"
-
-
-def _sh(cmd):
-    """Run a shell command and return stdout, or raise on error."""
-    return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
-
-
+# ---------- Network Helpers ----------
 def _run(cmd):
-    """Run a shell command and return (returncode, stdout, stderr)."""
     proc = subprocess.run(cmd, capture_output=True, text=True)
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
-
-def _nmcli(*args):
-    """Run an nmcli command with sudo."""
-    return _run(["sudo", "nmcli"] + list(args))
-
-
-def get_current_connection():
-    """Return the active NetworkManager connection name on wlan0, or None."""
+def connect_wifi_sudo(ssid, psk, ifname="wlan0", stop_ap=True, timeout=10):
     try:
-        out = _sh(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"])
-        for line in out.splitlines():
-            parts = line.split(":")
-            if len(parts) >= 4 and parts[0] == AP_INTERFACE and parts[1] == "wifi":
-                return parts[3] if parts[2] == "connected" else None
-    except subprocess.CalledProcessError:
-        pass
-    return None
-
-
-def _stop_ap_for_wifi():
-    """Stop AP mode and return wlan0 to NetworkManager client mode now.
-
-    This intentionally mirrors ap_mode_manager.py: stop AP services, clear
-    the AP IP, hand wlan0 back to NetworkManager, turn Wi-Fi on, and force
-    a clean device disconnect before trying the saved client profile.
-    """
-    if get_current_connection() == AP_CON_NAME:
-        print("🔌 Stopping NetworkManager AP profile before connecting…")
-        _run(["sudo", "nmcli", "connection", "down", AP_CON_NAME])
-
-    for service in ("dnsmasq", "hostapd"):
-        _run(["sudo", "systemctl", "stop", service])
-
-    _run(["sudo", "ip", "addr", "flush", "dev", AP_INTERFACE])
-    _run(["sudo", "ip", "link", "set", AP_INTERFACE, "up"])
-
-    # ap_mode_manager.py may have set wlan0 unmanaged while serving the AP.
-    _run(["sudo", "nmcli", "device", "set", AP_INTERFACE, "managed", "yes"])
-    _run(["sudo", "nmcli", "radio", "wifi", "on"])
-
-    # This is the missing bit compared with the manager's stop_ap(): reset the
-    # device state so NM does not wait until the next external reconnect probe.
-    _run(["sudo", "nmcli", "device", "disconnect", AP_INTERFACE])
-
-    # Give NetworkManager a moment to re-own wlan0 after AP teardown.
-    time.sleep(2)
-
-
-def get_mode():
-    """Return 'ap' if the AP profile/IP is active, otherwise 'wifi'."""
-    con = get_current_connection()
-    if con == AP_CON_NAME:
-        return "ap"
-    try:
-        out = _sh(["ip", "-4", "addr", "show", AP_INTERFACE])
-        if "192.168.4.1/24" in out:
-            return "ap"
-    except subprocess.CalledProcessError:
-        pass
-    return "wifi"
-
+        if stop_ap:
+            _run(["sudo", "systemctl", "stop", "hostapd"])
+            _run(["sudo", "systemctl", "stop", "dnsmasq"])
+        _run(["sudo", "nmcli", "connection", "delete", ssid])
+        rc, out, err = _run([
+            "sudo", "nmcli", "connection", "add",
+            "type", "wifi", "ifname", ifname,
+            "con-name", ssid, "ssid", ssid, "autoconnect", "no"
+        ])
+        if rc != 0:
+            return False, f"failed to add connection: {err or out}"
+        _run(["sudo", "nmcli", "connection", "modify", ssid,
+              "802-11-wireless-security.key-mgmt", "wpa-psk"])
+        _run(["sudo", "nmcli", "connection", "modify", ssid,
+              "802-11-wireless-security.psk", psk])
+        _run(["sudo", "nmcli", "connection", "modify", ssid,
+              "connection.autoconnect", "yes"])
+        _run(["sudo", "nmcli", "connection", "up", ssid])
+        _run(["sudo", "nmcli", "device", "connect", ifname])
+        time.sleep(min(max(timeout, 1), 30))
+        rc, out, _ = _run(["nmcli", "-t", "-f", "DEVICE,STATE", "device", "status"])
+        if f"{ifname}:connected" in out:
+            return True, f"Connected to {ssid}"
+        return True, f"Connection attempt OK; verify network state"
+    except Exception as e:
+        return False, f"exception: {e}"
 
 def get_local_ip():
-    """Return the current IP address of wlan0, falling back to socket detection."""
-    try:
-        out = _sh(["ip", "-4", "addr", "show", AP_INTERFACE])
-        for line in out.splitlines():
-            if line.strip().startswith("inet "):
-                return line.split()[1].split("/")[0]
-    except subprocess.CalledProcessError:
-        pass
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -170,84 +276,26 @@ def get_local_ip():
         s.close()
         return ip
     except Exception:
-        return AP_IP
+        return "192.168.4.1"
 
+def get_mode():
+    try:
+        result = subprocess.check_output(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "d"]).decode()
+        if "ap" in result and "connected" in result:
+            return "ap"
+    except Exception:
+        pass
+    return "wifi"
 
 def scan_networks():
-    """Trigger a Wi-Fi scan and return visible SSIDs."""
     try:
-        _nmcli("device", "wifi", "rescan", "ifname", AP_INTERFACE)
+        subprocess.run(["nmcli", "dev", "wifi", "rescan"], check=True)
         time.sleep(2)
-        out = _sh(["nmcli", "-t", "-f", "SSID", "device", "wifi", "list", "ifname", AP_INTERFACE])
-        seen = set()
-        networks = []
-        for line in out.splitlines():
-            ssid = line.strip()
-            if ssid and ssid not in seen and ssid != "MementoFrame":
-                seen.add(ssid)
-                networks.append(ssid)
-        return networks
+        result = subprocess.check_output(["nmcli", "-t", "-f", "SSID", "dev", "wifi", "list"]).decode()
+        ssids = [line for line in result.splitlines() if line.strip()]
+        return list(dict.fromkeys(ssids))
     except subprocess.CalledProcessError:
         return []
-
-
-def connect_wifi(ssid, psk, timeout=10):
-    """Connect to a Wi-Fi network immediately after password submission."""
-    ssid = (ssid or "").strip()
-    psk  = (psk  or "").strip()
-
-    if not ssid:
-        return False, "SSID is required"
-
-    try:
-        _stop_ap_for_wifi()
-
-        # Remove stale profile with same name to avoid NM conflicts.
-        _run(["sudo", "nmcli", "connection", "delete", ssid])
-
-        rc, out, err = _run([
-            "sudo", "nmcli", "connection", "add",
-            "type", "wifi", "ifname", AP_INTERFACE,
-            "con-name", ssid, "ssid", ssid, "autoconnect", "no",
-        ])
-        if rc != 0:
-            return False, f"Failed to create profile: {err or out}"
-
-        # Open networks should be allowed, but normal WPA networks need the PSK.
-        if psk:
-            _run(["sudo", "nmcli", "connection", "modify", ssid,
-                  "802-11-wireless-security.key-mgmt", "wpa-psk"])
-            _run(["sudo", "nmcli", "connection", "modify", ssid,
-                  "802-11-wireless-security.psk", psk])
-
-        _run(["sudo", "nmcli", "connection", "modify", ssid,
-              "connection.autoconnect", "yes"])
-
-        # Do the manager's reconnect probe immediately, but target the profile
-        # we just saved instead of waiting for PROBE_EVERY.
-        _run(["sudo", "nmcli", "device", "wifi", "rescan", "ifname", AP_INTERFACE])
-
-        deadline = time.time() + min(max(timeout, 1), 30)
-        last_error = ""
-        while time.time() < deadline:
-            rc, out, err = _run(["sudo", "nmcli", "connection", "up", ssid, "ifname", AP_INTERFACE])
-            if rc == 0:
-                rc2, state, _ = _run(["nmcli", "-t", "-f", "DEVICE,STATE,CONNECTION", "device", "status"])
-                for line in state.splitlines():
-                    parts = line.split(":")
-                    if len(parts) >= 3 and parts[0] == AP_INTERFACE and parts[1] == "connected" and parts[2] == ssid:
-                        return True, f"Connected to {ssid}"
-            last_error = err or out or last_error
-
-            # If the profile-up call lost a race with AP teardown, force the
-            # generic device reconnect that ap_mode_manager.py uses.
-            _run(["sudo", "nmcli", "device", "connect", AP_INTERFACE])
-            time.sleep(2)
-
-        return False, f"Saved {ssid}, but immediate connect did not complete: {last_error or 'timed out'}"
-
-    except Exception as e:
-        return False, f"Connection error: {e}"
 
 # ---------- Spotify ----------
 def get_spotify_oauth():
@@ -327,7 +375,7 @@ def dashboard():
     if request.method == "POST" and "ssid" in request.form:
         ssid = request.form["ssid"].strip()
         psk = request.form.get("psk", "").strip()
-        success, msg = connect_wifi(ssid, psk)
+        success, msg = connect_wifi_sudo(ssid, psk)
         return redirect(url_for("dashboard", msg=msg))
 
     return render_template(
@@ -482,6 +530,10 @@ def save_weather_api():
     save_config(config)
     return redirect(url_for("dashboard"))
 
+# ---------- Versions ----------
+@app.route("/versions")
+def versions():
+    return jsonify(VERSIONS)
 
 # ---------- Spotify Integration ----------
 @app.route("/spotify/connect")
@@ -527,6 +579,7 @@ def spotify_disconnect():
 
 # ---------- Run ----------
 if __name__ == "__main__":
+    clear_config_portal_pin()
     photos = load_photos()
     sync_photo_js(photos)
     app.run(host="0.0.0.0", port=5000)
