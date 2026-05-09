@@ -1,3 +1,48 @@
+#!/usr/bin/env python3
+# MementoFrame - Raspberry Pi Smart Photo Frame
+# Copyright (c) 2026 João Fernandes
+#
+# This work is licensed under the Creative Commons Attribution-NonCommercial
+# 4.0 International License. To view a copy of this license, visit:
+# http://creativecommons.org/licenses/by-nc/4.0/
+
+"""
+app.py
+
+Brief:
+    Flask configuration portal for MementoFrame.
+
+Endpoints:
+    GET|POST /                         - Dashboard and Wi-Fi connection form.
+    GET      /assets/<filename>        - Serve static project assets.
+    GET      /userdata/<filename>      - Serve persistent user data files.
+    GET      /resources/Photos/full/<filename>   - Serve full-size uploaded photos.
+    GET      /resources/Photos/thumbs/<filename> - Serve generated photo thumbnails.
+    POST     /upload                   - Upload photos and generate WebP images.
+    POST     /delete_selected_photos   - Delete selected uploaded photos.
+    POST     /test_brightness          - Start a background brightness test.
+    POST     /save_clock_settings      - Save dashboard clock settings.
+    POST     /save_display_settings    - Save brightness/display settings.
+    POST     /save_auto_power          - Save automatic screen power schedule.
+    POST     /save_weather_api         - Save WeatherAPI key and region.
+    GET      /versions                 - Return installed component versions.
+    GET      /spotify/connect          - Begin Spotify OAuth authorization.
+    POST     /spotify/manual           - Complete Spotify OAuth using pasted callback URL.
+    POST     /spotify/disconnect       - Remove cached Spotify credentials.
+    GET      /config-portal-pin        - Show PIN unlock page for AP configuration mode.
+    POST     /config-portal-pin        - Validate submitted configuration portal PIN.
+
+Flow chart:
+
+    ┌────────────────────────┐
+    │ Request enters Flask   │
+    └──────┬─────────────────┘
+           │
+           ├── PIN locked ─────► Wake screen → create/read PIN → show PIN page
+           │
+           └── PIN unlocked ───► Dashboard/routes manage Wi-Fi, photos, settings,
+                                  Spotify auth, brightness, and config persistence
+"""
 from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
 import subprocess, os, json, socket, threading, time, uuid, shlex, secrets
 from pathlib import Path
@@ -9,12 +54,14 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from version_info import VERSIONS
 
-# ---------- Initialization ----------
+# =============================================================================
+# Environment and Flask initialization
+# =============================================================================
 ENV_FILE = Path(".env")
 
 
 def ensure_flask_secret_key():
-    """Return a stable Flask secret key, generating and saving one if missing."""
+    """Return a stable Flask session secret, creating and saving one when missing."""
     key = os.getenv("FLASK_SECRET_KEY")
     if key:
         return key
@@ -33,10 +80,11 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = ensure_flask_secret_key()
 
-# ---------- Paths ----------
+# =============================================================================
+# Filesystem layout
+# =============================================================================
 CONFIG_FILE = "config.json"
 
-# User data (persistent)
 USERDATA_DIR = "resources/userdata"
 PHOTO_DIR = os.path.join(USERDATA_DIR, "Photos")
 FULL_DIR = os.path.join(PHOTO_DIR, "full")
@@ -46,14 +94,14 @@ PHOTO_JS = os.path.join(PHOTO_DIR, "photos.js")
 CACHE_DIR = os.path.join(USERDATA_DIR, "cache")
 SPOTIFY_CACHE = os.path.join(CACHE_DIR, ".cache_spotify")
 
-# Static assets (safe to overwrite in updates)
 ASSETS_DIR = "resources/assets"
 
-# Ensure structure
 for d in [USERDATA_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, ASSETS_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# ---------- GPIO Setup ----------
+# =============================================================================
+# GPIO display and brightness controls
+# =============================================================================
 SCREEN_PIN = 26
 BRIGHTNESS_DOWN = 21
 BRIGHTNESS_UP = 20
@@ -66,10 +114,9 @@ GPIO.setup(BRIGHTNESS_DOWN, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(BRIGHTNESS_UP, GPIO.OUT, initial=GPIO.HIGH)
 gpio_lock = threading.Lock()
 
-# ---------- Frame PIN Gate ----------
-# app.py owns PIN creation and validation. api_service.py only reads this file
-# for the physical display UI. The file is deliberately runtime-only and short
-# lived, not persistent user data.
+# =============================================================================
+# Configuration portal PIN gate
+# =============================================================================
 RUNTIME_DIR = "runtime"
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 
@@ -86,6 +133,7 @@ CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS = {
 
 
 def _atomic_write_json(path, data):
+    """Write JSON through a temporary file and atomically replace the target path."""
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
@@ -93,6 +141,7 @@ def _atomic_write_json(path, data):
 
 
 def remove_config_portal_pin():
+    """Delete the active configuration portal PIN file when it exists."""
     try:
         os.remove(CONFIG_PORTAL_PIN_FILE)
     except FileNotFoundError:
@@ -102,6 +151,7 @@ def remove_config_portal_pin():
 
 
 def read_config_portal_pin_record():
+    """Read and validate the short-lived configuration portal PIN record."""
     try:
         with open(CONFIG_PORTAL_PIN_FILE, "r", encoding="utf-8") as f:
             record = json.load(f)
@@ -120,6 +170,7 @@ def read_config_portal_pin_record():
 
 
 def create_config_portal_pin():
+    """Create a new numeric PIN record and schedule automatic expiry cleanup."""
     now = time.time()
     pin = "".join(secrets.choice("0123456789") for _ in range(CONFIG_PORTAL_PIN_LENGTH))
     record = {
@@ -135,6 +186,7 @@ def create_config_portal_pin():
         pass
 
     def expire_pin(expected_pin=pin, expected_expires_at=record["expires_at"]):
+        """Remove the generated PIN after its TTL when it has not been replaced."""
         time.sleep(CONFIG_PORTAL_PIN_TTL_SECONDS)
         current = read_config_portal_pin_record()
         if current and current.get("pin") == expected_pin and current.get("expires_at") == expected_expires_at:
@@ -145,14 +197,17 @@ def create_config_portal_pin():
 
 
 def get_or_create_config_portal_pin_record():
+    """Return the active PIN record, creating one when none is valid."""
     return read_config_portal_pin_record() or create_config_portal_pin()
 
 
 def config_portal_pin_gate_required():
+    """Report whether the current session still needs PIN verification."""
     return session.get("config_unlocked") is not True
 
 
 def wake_screen():
+    """Set the screen GPIO pin high so the user can see the PIN prompt."""
     try:
         GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
         GPIO.output(SCREEN_PIN, GPIO.HIGH)
@@ -162,6 +217,7 @@ def wake_screen():
 
 @app.before_request
 def enforce_config_portal_pin_gate():
+    """Redirect locked sessions to the PIN page before protected routes run."""
     if request.endpoint in CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS:
         return None
     if config_portal_pin_gate_required():
@@ -173,6 +229,7 @@ def enforce_config_portal_pin_gate():
 
 @app.route("/config-portal-pin", methods=["GET"])
 def config_portal_pin_page():
+    """Display the PIN entry page and ensure a valid PIN exists."""
     wake_screen()
     get_or_create_config_portal_pin_record()
     return render_template("pin.html", error=None)
@@ -180,6 +237,7 @@ def config_portal_pin_page():
 
 @app.route("/config-portal-pin", methods=["POST"])
 def config_portal_pin_submit():
+    """Validate a submitted PIN and unlock the configuration portal session."""
     record = read_config_portal_pin_record()
     submitted = request.form.get("pin", "").strip()
     if record and submitted == record.get("pin"):
@@ -192,6 +250,7 @@ def config_portal_pin_submit():
     return render_template("pin.html", error="Incorrect or expired PIN — try again.")
 
 def clear_config_portal_pin():
+    """Remove any stale PIN file during application startup or shutdown cleanup."""
     try:
         os.remove(CONFIG_PORTAL_PIN_FILE)
     except FileNotFoundError:
@@ -200,12 +259,16 @@ def clear_config_portal_pin():
         print(f"⚠️ Could not clear config portal PIN: {e}")
 
 
-# ---------- Photo Helpers ----------
+# =============================================================================
+# Photo metadata and image helpers
+# =============================================================================
 def build_photo_list():
+    """Return sorted supported image filenames from the full-size photo directory."""
     exts = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
     return sorted([f for f in os.listdir(FULL_DIR) if f.lower().endswith(exts)])
 
 def load_photos():
+    """Load the photo ordering file, rebuilding it from disk when missing or invalid."""
     if not os.path.exists(PHOTO_JSON):
         photos = build_photo_list()
         save_photos(photos)
@@ -223,23 +286,29 @@ def load_photos():
         return photos
 
 def save_photos(photos):
+    """Persist the photo list and synchronize the browser-facing JavaScript file."""
     with open(PHOTO_JSON, "w") as f:
         json.dump(photos, f, indent=2)
     sync_photo_js(photos)
 
 def sync_photo_js(photos=None):
+    """Write the current photo list as a JavaScript global for the frame UI."""
     if photos is None:
         photos = load_photos()
     js_content = "window.photos = " + json.dumps(photos, indent=2) + ";"
     with open(PHOTO_JS, "w") as f:
         f.write(js_content)
 
-# ---------- Network Helpers ----------
+# =============================================================================
+# Network helpers
+# =============================================================================
 def _run(cmd):
+    """Run a subprocess command and return its status, stdout, and stderr."""
     proc = subprocess.run(cmd, capture_output=True, text=True)
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 def connect_wifi_sudo(ssid, psk, ifname="wlan0", stop_ap=True, timeout=10):
+    """Create/update a NetworkManager Wi-Fi profile and attempt to connect to it."""
     try:
         if stop_ap:
             _run(["sudo", "systemctl", "stop", "hostapd"])
@@ -269,6 +338,7 @@ def connect_wifi_sudo(ssid, psk, ifname="wlan0", stop_ap=True, timeout=10):
         return False, f"exception: {e}"
 
 def get_local_ip():
+    """Detect the current outbound local IP address, falling back to the AP gateway."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -279,6 +349,7 @@ def get_local_ip():
         return "192.168.4.1"
 
 def get_mode():
+    """Infer whether the frame is in AP mode or Wi-Fi mode."""
     try:
         result = subprocess.check_output(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE", "d"]).decode()
         if "ap" in result and "connected" in result:
@@ -288,6 +359,7 @@ def get_mode():
     return "wifi"
 
 def scan_networks():
+    """Rescan nearby Wi-Fi networks and return unique SSIDs."""
     try:
         subprocess.run(["nmcli", "dev", "wifi", "rescan"], check=True)
         time.sleep(2)
@@ -297,8 +369,11 @@ def scan_networks():
     except subprocess.CalledProcessError:
         return []
 
-# ---------- Spotify ----------
+# =============================================================================
+# Spotify helpers
+# =============================================================================
 def get_spotify_oauth():
+    """Build the Spotify OAuth helper using environment credentials and cache path."""
     return SpotifyOAuth(
         client_id=os.getenv("SPOTIFY_CLIENT_ID"),
         client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
@@ -308,6 +383,7 @@ def get_spotify_oauth():
     )
 
 def get_spotify_user():
+    """Return the connected Spotify user profile when cached credentials are valid."""
     try:
         oauth = get_spotify_oauth()
         token_info = oauth.get_cached_token()
@@ -318,8 +394,11 @@ def get_spotify_user():
     except Exception:
         return None
 
-# ---------- Config ----------
+# =============================================================================
+# Configuration persistence
+# =============================================================================
 def load_config():
+    """Load frame configuration and merge any missing default keys."""
     default = {
         "clock1": {"label": "Lisbon", "timezone": "Europe/Lisbon"},
         "clock2": {"label": "Shanghai", "timezone": "Asia/Shanghai", "enabled": True},
@@ -341,11 +420,15 @@ def load_config():
         return default
 
 def save_config(cfg):
+    """Persist frame configuration to config.json."""
     with open(CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
 
-# ---------- Brightness ----------
+# =============================================================================
+# Brightness controls
+# =============================================================================
 def press(pin, duration=PRESS_DURATION):
+    """Simulate a hardware button press on the selected GPIO pin."""
     GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.output(pin, GPIO.LOW)
     time.sleep(duration)
@@ -353,6 +436,7 @@ def press(pin, duration=PRESS_DURATION):
     GPIO.cleanup(pin)
 
 def set_brightness(level):
+    """Reset brightness to minimum and step upward to the requested level."""
     level = max(0, min(100, int(level)))
     press(BRIGHTNESS_DOWN, PRESS_DURATION)
     GPIO.cleanup(BRIGHTNESS_DOWN)
@@ -361,9 +445,12 @@ def set_brightness(level):
         press(BRIGHTNESS_UP, 0.5)
         time.sleep(STEP_DELAY - 0.1)
 
-# ---------- Routes ----------
+# =============================================================================
+# Flask routes: dashboard, assets, photos, settings, versions, and Spotify
+# =============================================================================
 @app.route("/", methods=["GET", "POST"])
 def dashboard():
+    """Render the configuration dashboard and handle Wi-Fi connection submissions."""
     mode = get_mode()
     ip = get_local_ip()
     photos = load_photos()
@@ -391,22 +478,27 @@ def dashboard():
 
 @app.route("/assets/<path:filename>")
 def serve_assets(filename):
+    """Serve read-only static assets from the project assets directory."""
     return send_from_directory(ASSETS_DIR, filename)
 
 @app.route("/userdata/<path:filename>")
 def serve_userdata(filename):
+    """Serve persistent user data files required by the configuration UI."""
     return send_from_directory(USERDATA_DIR, filename)
 
 @app.route("/resources/Photos/full/<path:filename>")
 def serve_full(filename):
+    """Serve a full-size uploaded photo file."""
     return send_from_directory(FULL_DIR, filename)
 
 @app.route("/resources/Photos/thumbs/<path:filename>")
 def serve_thumb(filename):
+    """Serve a generated thumbnail photo file."""
     return send_from_directory(THUMB_DIR, filename)
 
 @app.route("/upload", methods=["POST"])
 def upload_photo():
+    """Accept uploaded images, convert them to WebP, create thumbnails, and update metadata."""
     files = request.files.getlist("photos")
     if not files or all(f.filename == "" for f in files):
         return "No file", 400
@@ -450,6 +542,7 @@ def upload_photo():
 
 @app.route("/delete_selected_photos", methods=["POST"])
 def delete_selected_photos():
+    """Remove selected photo files and update the saved photo list."""
     selected = request.form.getlist("selected_photos")
     for name in selected:
         filename = secure_filename(name)
@@ -465,6 +558,7 @@ def delete_selected_photos():
 
 @app.route("/test_brightness", methods=["POST"])
 def test_brightness():
+    """Validate a brightness level and start a non-blocking brightness update."""
     data = request.get_json() or {}
     level = data.get("level", 80)
     try:
@@ -475,12 +569,13 @@ def test_brightness():
     threading.Thread(target=set_brightness, args=(level,), daemon=True).start()
     return jsonify({"status": "started", "level": level})
 
-# ---------- Clock Settings ----------
 @app.route("/save_clock_settings", methods=["POST"])
 def save_clock_settings():
+    """Save label/timezone settings for the dashboard clocks."""
     config = load_config()
 
     def make_clock(prefix):
+        """Build one clock configuration object from submitted form fields."""
         return {
             "label": request.form.get(f"{prefix}_label", prefix.title()),
             "timezone": request.form.get(f"{prefix}_tz", "UTC")
@@ -494,9 +589,9 @@ def save_clock_settings():
     return redirect(url_for("dashboard"))
 
 
-# ---------- Display Settings ----------
 @app.route("/save_display_settings", methods=["POST"])
 def save_display_settings():
+    """Save brightness settings and apply them asynchronously."""
     config = load_config()
     try:
         level = int(request.form.get("brightness", 80))
@@ -510,9 +605,9 @@ def save_display_settings():
     return redirect(url_for("dashboard"))
 
 
-# ---------- Auto Power Schedule ----------
 @app.route("/save_auto_power", methods=["POST"])
 def save_auto_power():
+    """Save automatic display power schedule settings."""
     config = load_config()
     config["auto_power"]["enabled"] = "auto_power_enabled" in request.form
     config["auto_power"]["off_time"] = request.form.get("off_time", "23:00")
@@ -521,29 +616,30 @@ def save_auto_power():
     return redirect(url_for("dashboard"))
 
 
-# ---------- Weather API ----------
 @app.route("/save_weather_api", methods=["POST"])
 def save_weather_api():
+    """Save WeatherAPI credentials and region settings."""
     config = load_config()
     config["weather_api_key"] = request.form.get("weather_api_key", "")
     config["weather_region"] = request.form.get("weather_region", "")
     save_config(config)
     return redirect(url_for("dashboard"))
 
-# ---------- Versions ----------
 @app.route("/versions")
 def versions():
+    """Return component version information as JSON."""
     return jsonify(VERSIONS)
 
-# ---------- Spotify Integration ----------
 @app.route("/spotify/connect")
 def spotify_connect():
+    """Redirect the user to Spotify authorization."""
     oauth = get_spotify_oauth()
     return redirect(oauth.get_authorize_url())
 
 
 @app.route("/spotify/manual", methods=["POST"])
 def spotify_manual():
+    """Extract the Spotify callback code from a pasted URL and cache the access token."""
     pasted_url = request.form.get("spotify_url")
     if not pasted_url:
         return redirect(url_for("dashboard", msg="No URL provided"))
@@ -571,13 +667,12 @@ def spotify_manual():
 
 @app.route("/spotify/disconnect", methods=["POST"])
 def spotify_disconnect():
+    """Delete cached Spotify credentials and return to the dashboard."""
     if os.path.exists(SPOTIFY_CACHE):
         os.remove(SPOTIFY_CACHE)
     return redirect(url_for("dashboard", msg="Spotify disconnected."))
 
 
-
-# ---------- Run ----------
 if __name__ == "__main__":
     clear_config_portal_pin()
     photos = load_photos()

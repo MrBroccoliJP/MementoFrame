@@ -1,3 +1,34 @@
+#!/usr/bin/env python3
+# MementoFrame - Raspberry Pi Smart Photo Frame
+# Copyright (c) 2026 João Fernandes
+#
+# This work is licensed under the Creative Commons Attribution-NonCommercial
+# 4.0 International License. To view a copy of this license, visit:
+# http://creativecommons.org/licenses/by-nc/4.0/
+
+"""
+api_service.py
+
+Brief:
+    Local display API for MementoFrame frontend widgets and hardware controls.
+
+Endpoints:
+    GET  /                         - Render the photo-frame frontend.
+    GET  /assets/<filename>        - Serve static project assets.
+    GET  /userdata/<filename>      - Serve persistent user data files.
+    GET  /config.json              - Serve saved frame configuration.
+    GET  /spotify.json             - Return current Spotify playback metadata.
+    GET  /weather.json             - Return current weather data.
+    GET  /config_portal_pin.json   - Return active AP-mode PIN for local display UI.
+    GET  /status.json              - Return Wi-Fi/AP mode, IP address, and uptime.
+    GET  /health                   - Return service health status.
+    GET  /get_ip                   - Return detected local IP address.
+    GET  /versions                 - Return installed component versions.
+    GET  /config/stream            - Server-Sent Events stream for config/photo reloads.
+    POST /screen/on                - Turn the display output on.
+    POST /screen/off               - Turn the display output off.
+
+"""
 from flask import Flask, jsonify, render_template, send_from_directory, Response
 from flask_cors import CORS
 import os, json, time, socket, threading, subprocess, requests
@@ -7,20 +38,25 @@ from spotipy.oauth2 import SpotifyOAuth
 import RPi.GPIO as GPIO
 from version_info import VERSIONS
 
-# ---------- Hardware ----------
+# =============================================================================
+# Hardware setup
+# =============================================================================
 SCREEN_PIN = 26
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
 
-# ---------- Initialization ----------
+# =============================================================================
+# Flask initialization
+# =============================================================================
 load_dotenv()
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 CORS(app)
 
-# ---------- Paths ----------
+# =============================================================================
+# Filesystem layout
+# =============================================================================
 CONFIG_FILE = "config.json"
 
-# Align with new project structure
 USERDATA_DIR = "resources/userdata"
 ASSETS_DIR = "resources/assets"
 PHOTO_JSON = os.path.join(USERDATA_DIR, "Photos/photos.json")
@@ -28,8 +64,11 @@ SPOTIFY_CACHE = os.path.join(USERDATA_DIR, "cache/.cache_spotify")
 RUNTIME_DIR = "runtime"
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
 
-# ---------- Load config ----------
+# =============================================================================
+# Configuration loading
+# =============================================================================
 def load_config():
+    """Load config.json for display-service runtime settings."""
     if not os.path.exists(CONFIG_FILE):
         return {}
     try:
@@ -41,7 +80,9 @@ def load_config():
 
 config = load_config()
 
-# ---------- Spotify setup ----------
+# =============================================================================
+# Spotify client setup
+# =============================================================================
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
     client_id=os.getenv("SPOTIFY_CLIENT_ID"),
     client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
@@ -50,20 +91,23 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
     cache_path=SPOTIFY_CACHE
 ))
 
-# ---------- Weather config ----------
+# =============================================================================
+# Weather configuration
+# =============================================================================
 WEATHER_API_KEY = config.get("weather_api_key")
 WEATHER_LOCATION = config.get("weather_region", "Porto")
 
-# ---------- Cache + rate-limiting ----------
+# =============================================================================
+# Shared cache and rate-limit state
+# =============================================================================
 cache = {}
 cooldowns = {}
 MAX_CACHE_AGE = 30  # seconds
 
 def safe_spotify_call(endpoint_key, func, *args, **kwargs):
-    """Run a Spotify API call with caching and 429-rate-limit handling."""
+    """Call Spotify with short cache support and graceful rate-limit handling."""
     now = time.time()
 
-    # Cooldown (rate-limited)
     if endpoint_key in cooldowns and now < cooldowns[endpoint_key]:
         if endpoint_key in cache:
             cached_data, cached_time = cache[endpoint_key]
@@ -90,8 +134,11 @@ def safe_spotify_call(endpoint_key, func, *args, **kwargs):
         print(f"[{endpoint_key}] Unexpected error: {e}")
         return None
 
-# ---------- Weather API ----------
+# =============================================================================
+# Weather data helper
+# =============================================================================
 def get_weather_data():
+    """Fetch current weather, using cached data when fresh or when requests fail."""
     now = time.time()
     if "weather" in cache:
         cached_data, cached_time = cache["weather"]
@@ -127,8 +174,11 @@ def get_weather_data():
     except Exception as e:
         return {"error": f"Unexpected error: {e}"}
 
-# ---------- Utility ----------
+# =============================================================================
+# Utility helpers
+# =============================================================================
 def get_local_ip():
+    """Detect the current outbound local IP address, falling back to the AP gateway."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -138,28 +188,33 @@ def get_local_ip():
     except Exception:
         return "192.168.4.1"
 
-# ---------- Routes ----------
+# =============================================================================
+# Flask routes: frontend, assets, data APIs, system status, and screen control
+# =============================================================================
 @app.route("/")
 def home():
+    """Render the main photo-frame frontend."""
     return render_template("index.html")
 
-# Serve restructured resources
 @app.route("/assets/<path:filename>")
 def serve_assets(filename):
+    """Serve static assets used by the frontend."""
     return send_from_directory(ASSETS_DIR, filename)
 
 @app.route("/userdata/<path:filename>")
 def serve_userdata(filename):
+    """Serve persistent user data used by the frontend."""
     return send_from_directory(USERDATA_DIR, filename)
 
 @app.route("/config.json")
 def serve_config():
+    """Serve the current config.json file to the frontend."""
     return send_from_directory(".", "config.json")
 
 
-# ---------- Spotify / Weather ----------
 @app.route("/spotify.json")
 def spotify_status():
+    """Return current playback metadata and liked-state information."""
     data = safe_spotify_call("playback", sp.current_playback)
     if not data or not data.get("item"):
         return jsonify({"isPlaying": False})
@@ -190,15 +245,15 @@ def spotify_status():
 
 @app.route("/weather.json")
 def weather_status():
+    """Return current weather information or an error response."""
     weather_data = get_weather_data()
     if not weather_data:
         return jsonify({"error": "Unable to fetch weather data"}), 503
     return jsonify(weather_data)
 
-# ---------- Frame PIN ----------
 @app.route("/config_portal_pin.json")
 def config_portal_pin_json():
-    """Expose the short-lived config PIN to the local display UI only."""
+    """Expose the active short-lived configuration PIN to the local display UI."""
     try:
         with open(CONFIG_PORTAL_PIN_FILE, "r", encoding="utf-8") as f:
             record = json.load(f)
@@ -228,9 +283,9 @@ def config_portal_pin_json():
     })
 
 
-# ---------- System ----------
 @app.route("/status.json")
 def system_status():
+    """Return detected Wi-Fi/AP mode, current IP address, and service timestamp."""
     try:
         result = subprocess.run(["ip", "addr", "show", "wlan0"], capture_output=True, text=True)
         output = result.stdout
@@ -257,24 +312,26 @@ def system_status():
 
 @app.route("/health")
 def health_check():
+    """Return a basic health-check response."""
     return jsonify({"status": "ok", "timestamp": time.time()})
 
 @app.route("/get_ip")
 def get_ip():
+    """Return the detected local IP address as JSON."""
     return jsonify({"ip": get_local_ip()})
 
-# ---------- Versions ----------
 @app.route("/versions")
 def versions():
+    """Return component version information as JSON."""
     return jsonify(VERSIONS)
 
-# ---------- Config Stream (SSE) ----------
 @app.route("/config/stream")
 def config_stream():
-    """Stream config and photo changes to frontend."""
+    """Open an SSE stream that notifies clients when config or photo metadata changes."""
     CONFIG_FILES = [CONFIG_FILE, PHOTO_JSON]
 
     def event_stream():
+        """Yield SSE heartbeat and reload messages when watched files change."""
         mtimes = {f: os.path.getmtime(f) if os.path.exists(f) else 0 for f in CONFIG_FILES}
         yield "data: ready\n\n"
         while True:
@@ -297,18 +354,18 @@ def config_stream():
     print("📡 SSE client connected to /config/stream")
     return Response(event_stream(), mimetype="text/event-stream")
 
-# ---------- Screen Control ----------
 @app.route("/screen/on", methods=["POST"])
 def screen_on():
+    """Set the display GPIO pin high."""
     GPIO.output(SCREEN_PIN, GPIO.HIGH)
     return jsonify({"status": "on"})
 
 @app.route("/screen/off", methods=["POST"])
 def screen_off():
+    """Set the display GPIO pin low."""
     GPIO.output(SCREEN_PIN, GPIO.LOW)
     return jsonify({"status": "off"})
 
-# ---------- Run ----------
 if __name__ == "__main__":
     if not os.getenv("SPOTIFY_CLIENT_ID") or not os.getenv("SPOTIFY_CLIENT_SECRET"):
         print("⚠️  Spotify credentials missing — endpoints disabled.")
