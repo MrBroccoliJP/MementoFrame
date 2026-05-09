@@ -66,12 +66,10 @@ export const PATHS = {
  * @property {number} WEATHER              - Weather data poll rate (30 min).
  * @property {number} PHOTOS               - Time each photo is displayed (20 s).
  * @property {number} QR                   - QR code IP refresh rate (30 s).
- * @property {number} HOURLY_CHECK         - Rate at which hourly events are checked (1 min).
- *                                          Used for the top-of-hour calendar highlight and
- *                                          the auto power schedule evaluation.
- * @property {number} SWAP_PANELS          - How often the panels swap sides (1 h).
- * @property {number} CALENDAR_FULL_TIMEOUT - How long the calendar stays at full opacity
- *                                           during the hourly highlight before dimming (5 min).
+ * @property {number} HOURLY_CHECK          - Rate at which the auto power schedule is evaluated (1 min).
+ * @property {number} SWAP_PANELS           - How often the panels swap sides (1 h).
+ * @property {number} CALENDAR_CYCLE        - How often the calendar full-opacity window repeats (30 min).
+ * @property {number} CALENDAR_FULL_TIMEOUT - How long the calendar stays at full opacity per cycle (10 min).
  */
 export const INTERVALS = {
   CLOCK:                 1000,
@@ -80,9 +78,10 @@ export const INTERVALS = {
   WEATHER:               30 * 60 * 1000,  // 30 minutes
   PHOTOS:                20000,
   QR:                    30000,
-  HOURLY_CHECK:          60000,            // 1 minute
+  HOURLY_CHECK:          60000,            // 1 minute (power schedule only)
   SWAP_PANELS:           60 * 60 * 1000,  // 1 hour
-  CALENDAR_FULL_TIMEOUT: 5 * 60 * 1000,   // 5 minutes
+  CALENDAR_CYCLE:        30 * 60 * 1000,  // 30 minutes
+  CALENDAR_FULL_TIMEOUT: 10 * 60 * 1000,  // 10 minutes
 };
 
 /**

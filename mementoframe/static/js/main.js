@@ -26,8 +26,11 @@
  *        - Power        — requires state.config.auto_power (set by loadConfig)
  *        - QR           — independent; polls /get_ip
  *   4. Starts two recurring global behaviours:
- *        - `checkHourlyCalendarDisplay` — every INTERVALS.HOURLY_CHECK ms,
- *          shows the calendar at full opacity at the top of each hour.
+ *        - `scheduleCalendarCycle` — self-scheduling setTimeout that shows the
+ *          calendar at full opacity for 10 min every 30 min. Fires immediately
+ *          on startup so the first window begins right away. When Spotify hides,
+ *          showCalendar() resets the cycle to "now + 30 min" so the user gets a
+ *          fresh window rather than waiting for the original trigger time.
  *        - `swapPanels` — every INTERVALS.SWAP_PANELS ms (1 hour), toggles
  *          the left/right panel layout for visual variety.
  *   5. Opens the SSE config watcher so the display reloads when settings
@@ -48,7 +51,7 @@ import { initPhotos, burstPhotos } from "./modules/photoslideshow.js";
 import { initSpotify } from "./modules/spotify.js";
 import { initWeather } from "./modules/weather.js";
 import { initWiFi } from "./modules/wifi.js";
-import { swapPanels, checkHourlyCalendarDisplay, setCalendarOpacity } from "./modules/layout.js";
+import { swapPanels, scheduleCalendarCycle, setCalendarOpacity } from "./modules/layout.js";
 import { initPower } from "./modules/power.js";
 import { initQR } from "./modules/qr.js";
 import { loadVersions, hideLoadingScreen, setLoadingStatus, delay } from "./modules/loading.js";
@@ -71,7 +74,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   initPower();
   initQR();
 
-  setInterval(checkHourlyCalendarDisplay, INTERVALS.HOURLY_CHECK);
+  scheduleCalendarCycle();
   setInterval(swapPanels, INTERVALS.SWAP_PANELS);
   setupConfigWatcher();
 
