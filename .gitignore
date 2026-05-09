@@ -58,3 +58,4 @@ build/
 *.egg-info/
 
 mementoframe/runtime/*
+mementoframe/resources/userdata/Photos/
