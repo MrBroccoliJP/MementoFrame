@@ -56,3 +56,5 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+mementoframe/runtime/*
