@@ -20,8 +20,24 @@ Run with: python mock_api_service.py
 from flask import Flask, jsonify, render_template, send_from_directory, Response, request, redirect, url_for
 from flask_cors import CORS
 import os
+import sys
 import json
 import time
+
+# Keep repo-root/dev first so `import mock_shared` always loads this dev copy,
+# not any stale copy that may exist inside repo-root/mementoframe.
+_DEV_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_DEV_DIR)
+_PROJECT_ROOT = os.path.join(_REPO_ROOT, "mementoframe")
+
+if _DEV_DIR in sys.path:
+    sys.path.remove(_DEV_DIR)
+sys.path.insert(0, _DEV_DIR)
+
+# Add the real project folder after dev so imports like version_info still work.
+if _PROJECT_ROOT in sys.path:
+    sys.path.remove(_PROJECT_ROOT)
+sys.path.insert(1, _PROJECT_ROOT)
 
 try:
     from version_info import VERSIONS
@@ -29,11 +45,17 @@ except Exception:
     VERSIONS = {"mock": "local"}
 
 from mock_shared import (
-    BASE_DIR,
+    ASSETS_DIR,
     CONFIG_FILE,
     MOCK_TRACKS,
+    STATIC_DIR,
+    TEMPLATES_DIR,
+    USERDATA_DIR,
+    cache_spotify_token_from_url,
+    clear_spotify_cache,
     current_track_payload,
     get_or_create_config_portal_pin_record,
+    get_spotify_authorize_url,
     load_config,
     load_state,
     next_track as shared_next_track,
@@ -43,14 +65,17 @@ from mock_shared import (
     save_state,
 )
 
-# Paths anchored to this script's directory.
-USERDATA_DIR = os.path.join(BASE_DIR, "resources", "userdata")
-ASSETS_DIR = os.path.join(BASE_DIR, "resources", "assets")
+# Paths are provided by mock_shared and point at repo-root/mementoframe.
 PHOTO_JSON = os.path.join(USERDATA_DIR, "Photos", "photos.json")
 os.makedirs(USERDATA_DIR, exist_ok=True)
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
-app = Flask(__name__, static_folder="static", static_url_path="/static")
+app = Flask(
+    __name__,
+    template_folder=TEMPLATES_DIR,
+    static_folder=STATIC_DIR,
+    static_url_path="/static",
+)
 CORS(app)
 
 
@@ -122,8 +147,11 @@ def mock_management_html():
 
     <section class="card">
       <h2>Spotify</h2>
+      <p>Source: <code>{state['spotify'].get('source', 'mock')}</code></p>
       <p>Current: <code>{track.get('track', 'not playing')}</code> {('— ' + track.get('artist', '')) if track.get('artist') else ''}</p>
+      <p class="muted">{track.get('error', '')}</p>
       <form method="post" action="/mock/spotify">
+        <label>Data source</label><select name="source"><option value="mock" {'selected' if state['spotify'].get('source','mock')=='mock' else ''}>mock data</option><option value="real" {'selected' if state['spotify'].get('source','mock')=='real' else ''}>real Spotify</option></select>
         <label><input type="checkbox" name="connected" {'checked' if state['spotify'].get('connected') else ''}> Connected</label>
         <label><input type="checkbox" name="playing" {'checked' if state['spotify'].get('playing') else ''}> Playing</label>
         <label>Track</label><select name="track_index">{''.join(f'<option value="{i}" {"selected" if i == int(state["spotify"].get("track_index",0)) else ""}>{t["track"]} — {t["artist"]}</option>' for i,t in enumerate(MOCK_TRACKS))}</select>
@@ -131,6 +159,8 @@ def mock_management_html():
       </form>
       <form class="row" method="post" action="/dev/toggle_spotify"><button class="secondary">Toggle play</button></form>
       <form class="row" method="post" action="/dev/next_track"><button class="secondary">Next track</button></form>
+      <form class="row" method="get" action="/spotify/connect"><button>Connect real Spotify</button></form>
+      <p class="muted">For real Spotify: set source to real, click connect, log in, then paste the callback URL into the admin dashboard manual Spotify form.</p>
     </section>
 
     <section class="card">
@@ -168,7 +198,7 @@ def mock_management_html():
 
 @app.route("/")
 def home():
-    template_path = os.path.join(BASE_DIR, "templates", "index.html")
+    template_path = os.path.join(TEMPLATES_DIR, "index.html")
     if os.path.exists(template_path):
         return render_template("index.html")
     return redirect(url_for("mock_management"))
@@ -340,6 +370,7 @@ def save_mock_state_form():
 def save_mock_spotify_form():
     state = load_state()
     spotify = state["spotify"]
+    spotify["source"] = request.form.get("source", spotify.get("source", "mock"))
     spotify["connected"] = "connected" in request.form
     spotify["playing"] = "playing" in request.form
     spotify["track_index"] = int(request.form.get("track_index", 0))
@@ -417,6 +448,44 @@ def toggle_mode():
 def next_track_route():
     payload = shared_next_track()
     return jsonify(payload) if request.accept_mimetypes.best == "application/json" else redirect(url_for("mock_management"))
+
+
+@app.route("/spotify/connect")
+def spotify_connect():
+    state = load_state()
+    state["spotify"]["source"] = "real"
+    state["spotify"]["connected"] = True
+    save_state(state)
+    try:
+        return redirect(get_spotify_authorize_url())
+    except Exception as e:
+        return jsonify({"error": str(e), "hint": "Install spotipy and add Spotify credentials to your local .env"}), 500
+
+
+@app.route("/spotify/manual", methods=["POST"])
+def spotify_manual():
+    pasted_url = request.form.get("spotify_url", "")
+    try:
+        cache_spotify_token_from_url(pasted_url)
+        state = load_state()
+        state["spotify"]["source"] = "real"
+        state["spotify"]["connected"] = True
+        state["spotify"]["playing"] = True
+        save_state(state)
+        return redirect(url_for("mock_management"))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/spotify/disconnect", methods=["POST"])
+def spotify_disconnect():
+    clear_spotify_cache()
+    state = load_state()
+    state["spotify"]["source"] = "mock"
+    state["spotify"]["connected"] = False
+    state["spotify"]["playing"] = False
+    save_state(state)
+    return redirect(url_for("mock_management"))
 
 
 if __name__ == "__main__":

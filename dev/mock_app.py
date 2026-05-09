@@ -19,49 +19,70 @@ from flask import Flask, request, render_template, render_template_string, redir
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps
-import os, json, uuid, time, secrets
+import os, sys, json, uuid, time, secrets
+
+# Keep repo-root/dev first so `import mock_shared` always loads this dev copy,
+# not any stale copy that may exist inside repo-root/mementoframe.
+_DEV_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_DEV_DIR)
+_PROJECT_ROOT = os.path.join(_REPO_ROOT, "mementoframe")
+
+if _DEV_DIR in sys.path:
+    sys.path.remove(_DEV_DIR)
+sys.path.insert(0, _DEV_DIR)
+
+# Add the real project folder after dev so imports like version_info still work.
+if _PROJECT_ROOT in sys.path:
+    sys.path.remove(_PROJECT_ROOT)
+sys.path.insert(1, _PROJECT_ROOT)
+
 try:
     from version_info import VERSIONS
 except Exception:
     VERSIONS = {"mock": "local"}
 
 from mock_shared import (
+    ASSETS_DIR,
+    BASE_DIR,
+    CONFIG_FILE,
     MOCK_TRACKS,
+    STATIC_DIR,
+    TEMPLATES_DIR,
+    USERDATA_DIR,
+    cache_spotify_token_from_url,
+    clear_spotify_cache,
     current_track_payload,
     get_or_create_config_portal_pin_record,
+    get_spotify_authorize_url,
     load_state,
     next_track as shared_next_track,
     pin_response_payload,
     read_config_portal_pin_record,
+    real_spotify_user,
     remove_config_portal_pin,
     save_state,
 )
 
-# ---------- All paths anchored to the script's own directory ----------
-# This ensures folders are created in the right place regardless of
-# which directory you run the script from (important on Windows).
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-def p(*parts):
-    """Build an absolute path relative to the script directory."""
-    return os.path.join(BASE_DIR, *parts)
-
-CONFIG_FILE  = p("config.json")
-USERDATA_DIR = p("resources", "userdata")
-PHOTO_DIR    = p("resources", "userdata", "Photos")
-FULL_DIR     = p("resources", "userdata", "Photos", "full")
-THUMB_DIR    = p("resources", "userdata", "Photos", "thumbs")
-PHOTO_JSON   = p("resources", "userdata", "Photos", "photos.json")
-PHOTO_JS     = p("resources", "userdata", "Photos", "photos.js")
-CACHE_DIR    = p("resources", "userdata", "cache")
-ASSETS_DIR   = p("resources", "assets")
-TEMPLATES_DIR = p("templates")
+# ---------- Project paths ----------
+# This file is intended to live in repo-root/dev, while the real project files
+# live in repo-root/mementoframe.
+PHOTO_DIR    = os.path.join(USERDATA_DIR, "Photos")
+FULL_DIR     = os.path.join(PHOTO_DIR, "full")
+THUMB_DIR    = os.path.join(PHOTO_DIR, "thumbs")
+PHOTO_JSON   = os.path.join(PHOTO_DIR, "photos.json")
+PHOTO_JS     = os.path.join(PHOTO_DIR, "photos.js")
+CACHE_DIR    = os.path.join(USERDATA_DIR, "cache")
 
 # Create all directories on startup
 for d in [USERDATA_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, ASSETS_DIR]:
     os.makedirs(d, exist_ok=True)
 
-app = Flask(__name__, template_folder=TEMPLATES_DIR)
+app = Flask(
+    __name__,
+    template_folder=TEMPLATES_DIR,
+    static_folder=STATIC_DIR,
+    static_url_path="/static",
+)
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or "mock-dev-secret-key"
 CORS(app)
 
@@ -71,10 +92,10 @@ CORS(app)
 # The PIN is only created when someone tries to open the protected backend.
 # The frame/display can poll /config_pin.json; it returns null when no unlock
 # request is active, so the PIN stays hidden until needed.
-RUNTIME_DIR = p("runtime")
+RUNTIME_DIR = os.path.join(BASE_DIR, "runtime")
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 
-CONFIG_PIN_FILE = p("runtime", "config_portal_pin.json")
+CONFIG_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
 CONFIG_PIN_LENGTH = 6
 CONFIG_PIN_TTL_SECONDS = 10 * 60
 
@@ -126,7 +147,7 @@ def enforce_config_pin_gate():
     if config_pin_gate_required():
         wake_screen()
         get_or_create_config_pin()
-        return redirect(url_for("config_pin_page"))
+        return redirect(url_for("config_portal_pin_page"))
 
     return None
 
@@ -268,7 +289,7 @@ def dashboard():
             ip           = state.get("ip", "127.0.0.1"),
             networks     = networks,
             photos       = photos,
-            spotify_user = {"display_name": "Mock User", "id": "mockuser"} if state.get("spotify", {}).get("connected", True) else None,
+            spotify_user = (real_spotify_user() if state.get("spotify", {}).get("source") == "real" else ({"display_name": "Mock User", "id": "mockuser"} if state.get("spotify", {}).get("connected", True) else None)),
             spotify_msg  = spotify_msg,
             config       = config,
         )
@@ -302,7 +323,7 @@ MOCK_ADMIN_TEMPLATE = """
     <form method="post" action="/mock/state"><label>Mode</label><select name="mode"><option value="client" {% if state.mode=='client' %}selected{% endif %}>client</option><option value="ap" {% if state.mode=='ap' %}selected{% endif %}>ap</option><option value="unknown" {% if state.mode=='unknown' %}selected{% endif %}>unknown</option></select><label>IP</label><input name="ip" value="{{ state.ip }}"><label>Wi-Fi SSID</label><input name="wifi_ssid" value="{{ state.wifi_ssid }}"><label>AP SSID</label><input name="ap_ssid" value="{{ state.ap_ssid }}"><label>Known networks</label><textarea name="known_networks" rows="4">{{ networks|join('\n') }}</textarea><button>Save state</button></form>
   </section>
   <section class="card"><h2>PIN</h2><p>Active PIN: <code>{{ pin.pin or 'none' }}</code>{% if pin.active %} — {{ pin.seconds_remaining }}s{% endif %}</p><form method="post" action="/mock/pin/create"><button>Create/show PIN</button></form><form method="post" action="/mock/pin/clear"><button class="danger">Clear PIN</button></form></section>
-  <section class="card"><h2>Spotify</h2><p><code>{{ track.track or 'not playing' }}</code> {{ track.artist or '' }}</p><form method="post" action="/mock/spotify"><label><input type="checkbox" name="connected" {% if state.spotify.connected %}checked{% endif %}> Connected</label><label><input type="checkbox" name="playing" {% if state.spotify.playing %}checked{% endif %}> Playing</label><label>Track</label><select name="track_index">{% for t in tracks %}<option value="{{ loop.index0 }}" {% if loop.index0 == state.spotify.track_index %}selected{% endif %}>{{ t.track }} — {{ t.artist }}</option>{% endfor %}</select><button>Save Spotify</button></form><form method="post" action="/mock/spotify/next"><button class="secondary">Next track</button></form></section>
+  <section class="card"><h2>Spotify</h2><p>Source <code>{{ state.spotify.source or 'mock' }}</code></p><p><code>{{ track.track or 'not playing' }}</code> {{ track.artist or '' }}</p>{% if track.error %}<p class="muted">{{ track.error }}</p>{% endif %}<form method="post" action="/mock/spotify"><label>Data source</label><select name="source"><option value="mock" {% if (state.spotify.source or 'mock') == 'mock' %}selected{% endif %}>mock data</option><option value="real" {% if state.spotify.source == 'real' %}selected{% endif %}>real Spotify</option></select><label><input type="checkbox" name="connected" {% if state.spotify.connected %}checked{% endif %}> Connected</label><label><input type="checkbox" name="playing" {% if state.spotify.playing %}checked{% endif %}> Playing</label><label>Track</label><select name="track_index">{% for t in tracks %}<option value="{{ loop.index0 }}" {% if loop.index0 == state.spotify.track_index %}selected{% endif %}>{{ t.track }} — {{ t.artist }}</option>{% endfor %}</select><button>Save Spotify</button></form><form method="post" action="/mock/spotify/next"><button class="secondary">Next track</button></form><form method="get" action="/spotify/connect"><button>Connect real Spotify</button></form><form method="post" action="/spotify/manual"><label>Paste Spotify callback URL</label><input name="spotify_url" placeholder="https://httpbin.org/anything?code=..."><button>Save real Spotify token</button></form><form method="post" action="/spotify/disconnect"><button class="danger">Disconnect Spotify</button></form></section>
   <section class="card"><h2>Weather</h2><form method="post" action="/mock/weather"><label><input type="checkbox" name="enabled" {% if state.weather.enabled %}checked{% endif %}> Enabled</label><label>City</label><input name="city" value="{{ state.weather.city }}"><label>Temperature</label><input type="number" step="0.1" name="temperature" value="{{ state.weather.temperature }}"><label>Condition</label><input name="condition" value="{{ state.weather.condition }}"><label>Humidity</label><input type="number" name="humidity" value="{{ state.weather.humidity }}"><label>Wind kph</label><input type="number" step="0.1" name="windSpeed" value="{{ state.weather.windSpeed }}"><label>Icon URL</label><input name="icon" value="{{ state.weather.icon }}"><button>Save weather</button></form></section>
   <section class="card"><h2>Photos</h2><p>{{ photos|length }} photo(s) loaded.</p><form method="post" action="/upload" enctype="multipart/form-data"><input type="file" name="photos" multiple><button>Upload photos</button></form></section>
 </div>
@@ -328,6 +349,7 @@ def mock_save_state():
 @app.route("/mock/spotify", methods=["POST"])
 def mock_save_spotify():
     state = load_state()
+    state["spotify"]["source"] = request.form.get("source", state["spotify"].get("source", "mock"))
     state["spotify"]["connected"] = "connected" in request.form
     state["spotify"]["playing"] = "playing" in request.form
     state["spotify"]["track_index"] = int(request.form.get("track_index", 0))
@@ -525,17 +547,39 @@ def test_brightness():
 # ---------- Spotify stubs ----------
 @app.route("/spotify/connect")
 def spotify_connect():
-    state = load_state(); state["spotify"]["connected"] = True; save_state(state)
-    return redirect(url_for("dashboard", msg="Spotify OAuth would open here (mock)"))
+    state = load_state()
+    state["spotify"]["source"] = "real"
+    state["spotify"]["connected"] = True
+    save_state(state)
+    try:
+        return redirect(get_spotify_authorize_url())
+    except Exception as e:
+        return redirect(url_for("dashboard", msg=f"Spotify setup error: {e}"))
 
 @app.route("/spotify/manual", methods=["POST"])
 def spotify_manual():
-    print(f"[spotify/manual] url: {request.form.get('spotify_url', '')}")
-    return redirect(url_for("dashboard", msg="Connected as Mock User (mock)"))
+    pasted_url = request.form.get("spotify_url", "")
+    try:
+        cache_spotify_token_from_url(pasted_url)
+        state = load_state()
+        state["spotify"]["source"] = "real"
+        state["spotify"]["connected"] = True
+        state["spotify"]["playing"] = True
+        save_state(state)
+        user = real_spotify_user()
+        name = (user or {}).get("display_name") or (user or {}).get("id") or "Spotify"
+        return redirect(url_for("dashboard", msg=f"Connected as {name}"))
+    except Exception as e:
+        return redirect(url_for("dashboard", msg=f"Spotify error: {e}"))
 
 @app.route("/spotify/disconnect", methods=["POST"])
 def spotify_disconnect():
-    state = load_state(); state["spotify"]["connected"] = False; state["spotify"]["playing"] = False; save_state(state)
+    clear_spotify_cache()
+    state = load_state()
+    state["spotify"]["source"] = "mock"
+    state["spotify"]["connected"] = False
+    state["spotify"]["playing"] = False
+    save_state(state)
     return redirect(url_for("dashboard", msg="Spotify disconnected."))
 
 @app.route("/versions")

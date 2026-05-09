@@ -286,9 +286,57 @@ Creative Commons Attribution-NonCommercial 4.0 International
 
 [http://creativecommons.org/licenses/by-nc/4.0/](http://creativecommons.org/licenses/by-nc/4.0/)
 
----
+
 
 ## Author
 
 João Fernandes — 2026
 
+
+---
+---
+
+# Demo Image Attributions
+
+These images are included only as demo/development placeholders for MementoFrame.
+
+Images sourced from Unsplash under the Unsplash License:
+https://unsplash.com/license
+
+## Included Images
+
+- `erik-jan-leusink-IbPxGLgJiMI-unsplash.jpg`
+  Photo by Erik-Jan Leusink
+  https://unsplash.com/@erikjanl
+
+- `kate-stone-matheson-uy5t-CJuIK4-unsplash.jpg`
+  Photo by Kate Stone Matheson
+  https://unsplash.com/@kstonematheson
+
+- `ryoji-iwata-X53e51WfjIE-unsplash.jpg`
+  Photo by Ryoji Iwata
+  https://unsplash.com/@ryoji__iwata
+
+- `ray-hennessy-MH_psben7HE-unsplash.jpg`
+  Photo by Ray Hennessy
+  https://unsplash.com/@rayhennessy
+
+- `tanya-barrow-AobgShFe_ks-unsplash.jpg`
+  Photo by Tanya Barrow
+  https://unsplash.com/@tanyabarrow
+
+- `bin-thieu-ILEzY3D9jbQ-unsplash.jpg`
+  Photo by Bin Thieu
+  https://unsplash.com/@binthieu
+
+- `brooke-balentine-ta4hTTz7ipw-unsplash.jpg`
+  Photo by Brooke Balentine
+  https://unsplash.com/@brookebalentine
+
+- `microsoft-copilot-o2MBk6J-qc-unsplash.jpg`
+  Photo by Microsoft 365
+  https://unsplash.com/@microsoft365
+
+- `jason-leung-TxhDR5I-sUg-unsplash.jpg`
+  Photo by Jason Leung
+  https://unsplash.com/@ninjason
