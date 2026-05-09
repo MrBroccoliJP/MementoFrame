@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime state and local simulator data
+runtime/
+*.log
+
+# Spotify OAuth cache / tokens
+resources/userdata/cache/
+*.cache_spotify
+.cache_spotify
+
+# User-uploaded/generated photos
+resources/userdata/Photos/full/*
+resources/userdata/Photos/thumbs/*
+!resources/userdata/Photos/full/.gitkeep
+!resources/userdata/Photos/thumbs/.gitkeep
+
+# Generated photo metadata; keep out if it is user-specific
+resources/userdata/Photos/photos.json
+resources/userdata/Photos/photos.js
+
+# Local config may contain private API keys or personal settings
+config.json
+!config.example.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+# Build / packaging
+dist/
+build/
+*.egg-info/
