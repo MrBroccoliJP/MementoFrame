@@ -141,6 +141,13 @@ export const state = {
     shuffled:        [],
     index:           0,
     thumbsContainer: null,
+    /**
+     * Promise that resolves when all thumbnails have finished loading.
+     * Set by preloadAllThumbs(); awaited by burstPhotos() to ensure
+     * all images are decoded before the animation starts.
+     * @type {Promise<void>|null}
+     */
+    thumbsReady:     null,
   },
 
   /**

@@ -165,6 +165,30 @@ function getPanelDimensions() {
 }
 
 /**
+ * Keep the burst photo horizontal offset in sync with the panel layout.
+ *
+ * Uses `--burst-x-offset` so existing and newly created `.floating-photo`
+ * elements move correctly when panels are swapped, including mid-animation.
+ *
+ * Offset is only applied when panels are swapped in the wide photo layout;
+ * narrow states already position the photo panel, so no extra offset is needed.
+ */
+function updateBurstOffset() {
+  const left = $(SELECTORS.leftPanel);
+  if (!left) return;
+
+  const needsOffset =
+    state.panels.swapped &&
+    !state.panels.calendarFullOpacity &&
+    !state.panels.spotifyPlaying;
+
+  left.style.setProperty(
+    "--burst-x-offset",
+    needsOffset ? `${window.innerWidth * 0.3}px` : "0px"
+  );
+}
+
+/**
  * Apply the calculated panel dimensions to the left panel DOM element.
  *
  * Animates width and left position using a 0.6s CSS transition so
@@ -173,10 +197,14 @@ function getPanelDimensions() {
 function applyPanelDimensions() {
   const left = $(SELECTORS.leftPanel);
   if (!left) return;
+
   const dim = getPanelDimensions();
+
   left.style.transition = "width 0.6s ease, left 0.6s ease";
   left.style.left  = dim.left;
   left.style.width = dim.width;
+
+  updateBurstOffset();
 }
 
 /**
@@ -196,9 +224,6 @@ export function swapPanels() {
   const wifiInfo   = document.querySelector(".wifi-info");
   const qrCode     = document.querySelector(".qrcode_icon");
   const systemInfo = document.querySelector(".system-info-box");
-
-  const floating    = $$(".floating-photo");
-  const hadFloating = floating.length > 0;
 
   if (state.panels.swapped) {
     // Restore default positions
@@ -229,15 +254,6 @@ export function swapPanels() {
     updatePanelState({ swapped: true });
   }
 
-  // Shift floating photos to match the new panel position
-  if (hadFloating) {
-    const offset = state.panels.swapped ? window.innerWidth * 0.3 : 0;
-    floating.forEach(photo => {
-      if (!photo.dataset.baseLeft) photo.dataset.baseLeft = parseFloat(photo.style.left) || 0;
-      const base = parseFloat(photo.dataset.baseLeft);
-      photo.style.left = `${base + offset}px`;
-    });
-  }
 }
 
 /**

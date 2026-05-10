@@ -58,4 +58,6 @@ build/
 *.egg-info/
 
 mementoframe/runtime/*
-mementoframe/resources/userdata/Photos/
+mementoframe/resources/userdata/Photos/*
+*/photos.js
+*/photos.json
