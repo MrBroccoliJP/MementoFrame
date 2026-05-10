@@ -106,21 +106,35 @@ function showPhoto(index) {
       img.classList.remove("vertical");
     }
 
-    container.appendChild(img);
+    const frame = document.createElement("div");
+    frame.className = "photo-frame";
+
+    if (img.classList.contains("vertical")) {
+      frame.classList.add("vertical-frame");
+
+      const aspect = img.naturalWidth / img.naturalHeight;
+      frame.style.width = `${container.clientHeight * aspect}px`;
+    } else {
+      frame.classList.add("horizontal-frame");
+    }
+
+    frame.appendChild(img);
+    container.appendChild(frame);
 
     // Force reflow so the browser paints the image before the transition
     // eslint-disable-next-line no-unused-expressions
     img.offsetHeight;
 
     requestAnimationFrame(() => {
-      const current = container.querySelector("img.active");
+      const current = container.querySelector(".photo-frame.active");
       if (current) current.classList.remove("active");
-      requestAnimationFrame(() => img.classList.add("active"));
+
+      requestAnimationFrame(() => frame.classList.add("active"));
     });
 
     // Clean up old images after the fade transition completes
     setTimeout(() => {
-      const all = $$(".photo img", container);
+      const all = $$(".photo-frame", container);
       all.slice(0, -1).forEach((n) => n.remove());
     }, 2100);
   };
@@ -324,15 +338,12 @@ async function burstPhotos() {
 //debug function to trigger the burst manually without waiting for the slideshow cycle
 async function runBurstCycle() {
   await burstPhotos();
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1000));
 
   state.photos.index = 0;
   state.photos.shuffled = shuffle([...state.photos.shuffled]);
 
   showPhoto(state.photos.index);
 }
-window.runBurstCycle = runBurstCycle;
 
 export { burstPhotos, runBurstCycle };
-
-//export { burstPhotos };

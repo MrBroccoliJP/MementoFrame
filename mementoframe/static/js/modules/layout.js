@@ -140,6 +140,9 @@ export function showCalendar() {
 export function updatePanelState(updates) {
   Object.assign(state.panels, updates);
   applyPanelDimensions();
+
+  const left = $(SELECTORS.leftPanel);
+  left?.classList.toggle("swapped", state.panels.swapped);
 }
 
 /**
@@ -203,6 +206,12 @@ function applyPanelDimensions() {
   left.style.transition = "width 0.6s ease, left 0.6s ease";
   left.style.left  = dim.left;
   left.style.width = dim.width;
+
+  left.classList.toggle("swapped", state.panels.swapped);
+  left.classList.toggle(
+    "photo-narrow",
+    state.panels.calendarFullOpacity || state.panels.spotifyPlaying
+  );
 
   updateBurstOffset();
 }
