@@ -331,3 +331,126 @@ button:hover {
 }
 
 
+
+
+/* Software Updates */
+.setting-hint {
+  margin: -0.4rem 0 0;
+  color: #888;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.update-available-card {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0.8rem 0 1rem;
+  padding: 1rem;
+  border-radius: 16px;
+  background: #102315;
+  border: 1px solid #1DB954;
+  color: #fff;
+}
+
+.update-available-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: #1DB954;
+  color: #000;
+  font-weight: 700;
+  font-size: 1.4rem;
+}
+
+.update-available-card span {
+  display: block;
+  color: #aaa;
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.update-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.8rem;
+  margin: 1rem 0;
+}
+
+.update-status-item {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 0.85rem;
+}
+
+.update-status-item span {
+  display: block;
+  color: #888;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  margin-bottom: 0.35rem;
+}
+
+.update-status-item strong {
+  color: #fff;
+  word-break: break-word;
+}
+
+.update-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.update-install-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.update-action-status {
+  min-height: 1.2rem;
+  margin-top: 0.8rem;
+  color: #aaa;
+  font-size: 0.9rem;
+}
+
+.update-action-status--busy { color: #f1c40f; }
+.update-action-status--ok { color: #1DB954; }
+.update-action-status--error,
+.update-error {
+  color: #e74c3c;
+}
+
+.update-error {
+  background: #2d1515;
+  border: 1px solid #c0392b;
+  border-radius: 10px;
+  padding: 0.8rem;
+  margin: 0.8rem 0;
+}
+
+.update-release-notes {
+  margin-top: 1rem;
+}
+
+.update-release-notes pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0e0e0e;
+  border-radius: 10px;
+  padding: 1rem;
+  color: #bbb;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 700px) {
+  .update-status-grid,
+  .update-actions {
+    grid-template-columns: 1fr;
+  }
+}

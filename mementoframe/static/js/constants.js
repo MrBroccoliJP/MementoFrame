@@ -46,6 +46,7 @@ export const PATHS = {
   SCREEN_ON:           "/screen/on",
   SCREEN_OFF:          "/screen/off",
   CONFIG_STREAM:       "/config/stream",
+  UPDATE_STATUS:       "/update_status.json",
 
   PHOTOS_FULL:         "/userdata/Photos/full/",
   PHOTOS_THUMBS:       "/userdata/Photos/thumbs/",
@@ -78,6 +79,7 @@ export const INTERVALS = {
   WEATHER:               30 * 60 * 1000,  // 30 minutes
   PHOTOS:                20000,
   QR:                    30000,
+  UPDATE_STATUS:         60000,
   HOURLY_CHECK:          60000,            // 1 minute (power schedule only)
   SWAP_PANELS:           60 * 60 * 1000,  // 1 hour
   CALENDAR_CYCLE:        30 * 60 * 1000,  // 30 minutes

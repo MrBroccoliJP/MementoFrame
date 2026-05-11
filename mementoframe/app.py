@@ -44,7 +44,7 @@ Flow chart:
                                   Spotify auth, brightness, and config persistence
 """
 from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
-import subprocess, os, json, socket, threading, time, uuid, shlex, secrets
+import subprocess, os, json, socket, threading, time, uuid, shlex, secrets, sys
 from pathlib import Path
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
@@ -121,6 +121,7 @@ RUNTIME_DIR = "runtime"
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
+UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
 CONFIG_PORTAL_PIN_LENGTH = 6
 CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
 
@@ -129,6 +130,7 @@ CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS = {
     "config_portal_pin_submit",
     "static",
     "serve_assets",
+    "health_check",
 }
 
 
@@ -406,6 +408,14 @@ def load_config():
         "weather_region": "",
         "brightness": 80,
         "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
+        "updates": {
+            "auto_update": False,
+            "repo": os.getenv("MEMENTOFRAME_UPDATE_REPO", ""),
+            "channel": "stable",
+            "last_checked": None,
+            "available_version": None,
+            "available": False,
+        },
     }
     if not os.path.exists(CONFIG_FILE):
         return default
@@ -414,6 +424,9 @@ def load_config():
             cfg = json.load(f)
         for key, val in default.items():
             cfg.setdefault(key, val)
+            if isinstance(val, dict) and isinstance(cfg.get(key), dict):
+                for sub_key, sub_val in val.items():
+                    cfg[key].setdefault(sub_key, sub_val)
         return cfg
     except Exception as e:
         print(f"⚠️ Error loading config.json: {e}")
@@ -423,6 +436,47 @@ def save_config(cfg):
     """Persist frame configuration to config.json."""
     with open(CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
+
+
+def load_update_state():
+    """Read updater runtime state and merge it with config/version defaults."""
+    try:
+        with open(UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        state = {}
+    except Exception as e:
+        state = {"last_error": f"Unable to read update state: {e}"}
+
+    cfg = load_config()
+    updates_cfg = cfg.get("updates", {})
+    state.setdefault("installed_version", VERSIONS.get("MementoFrame") or VERSIONS.get("Global App Version"))
+    state.setdefault("available", False)
+    state.setdefault("pending_restart", False)
+    state.setdefault("update_in_progress", False)
+    state["auto_update"] = bool(updates_cfg.get("auto_update", False))
+    state["repo"] = updates_cfg.get("repo", "")
+    state["channel"] = updates_cfg.get("channel", "stable")
+    return state
+
+
+def run_updater(command, background=False):
+    """Run updater.py with a controlled command from the config portal."""
+    cmd = [sys.executable, "updater.py", command]
+    if background:
+        subprocess.Popen(cmd, cwd=os.getcwd(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"status": "started", "command": command}
+
+    proc = subprocess.run(cmd, cwd=os.getcwd(), capture_output=True, text=True, timeout=90)
+    payload = {"status": "ok" if proc.returncode == 0 else "error", "returncode": proc.returncode}
+    if proc.stdout.strip():
+        try:
+            payload["updater"] = json.loads(proc.stdout)
+        except Exception:
+            payload["stdout"] = proc.stdout.strip()
+    if proc.stderr.strip():
+        payload["stderr"] = proc.stderr.strip()
+    return payload
 
 # =============================================================================
 # Brightness controls
@@ -473,6 +527,7 @@ def dashboard():
         photos=photos,
         spotify_user=spotify_user,
         spotify_msg=spotify_msg,
+        update_state=load_update_state(),
         config=config,
     )
 
@@ -624,6 +679,42 @@ def save_weather_api():
     config["weather_region"] = request.form.get("weather_region", "")
     save_config(config)
     return redirect(url_for("dashboard"))
+
+
+@app.route("/health")
+def health_check():
+    """Return a basic health-check response for post-update validation."""
+    return jsonify({"status": "ok", "service": "dashboard", "timestamp": time.time()})
+
+
+@app.route("/update/status")
+def update_status():
+    """Return current software update state for the config portal."""
+    return jsonify(load_update_state())
+
+
+@app.route("/update/check", methods=["POST"])
+def update_check():
+    """Check GitHub releases for an available MementoFrame update."""
+    return jsonify(run_updater("check", background=False))
+
+
+@app.route("/update/install", methods=["POST"])
+def update_install():
+    """Start a software update. updater.py handles the reboot when complete."""
+    return jsonify(run_updater("update", background=True))
+
+
+@app.route("/save_update_settings", methods=["POST"])
+def save_update_settings():
+    """Save software-update preferences from the configuration dashboard."""
+    config = load_config()
+    updates = config.setdefault("updates", {})
+    updates["auto_update"] = "auto_update" in request.form
+    updates["repo"] = request.form.get("update_repo", updates.get("repo", "")).strip()
+    updates["channel"] = request.form.get("update_channel", updates.get("channel", "stable")).strip() or "stable"
+    save_config(config)
+    return redirect(url_for("dashboard", msg="Update settings saved."))
 
 @app.route("/versions")
 def versions():

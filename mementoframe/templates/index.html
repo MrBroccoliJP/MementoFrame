@@ -19,6 +19,29 @@
 <title>MementoFrame MainPage</title>
 
 <body>
+<div id="mf-update-overlay" class="mf-update-overlay" aria-hidden="true">
+  <div class="mf-loading__inner">
+    <div class="mf-loading__logo" aria-hidden="true">
+      <div class="mf-loading__frame mf-loading__frame--back"></div>
+      <div class="mf-loading__frame mf-loading__frame--mid"></div>
+      <div class="mf-loading__frame mf-loading__frame--front"></div>
+      <div class="mf-loading__dot mf-loading__dot--lg"></div>
+      <div class="mf-loading__dot mf-loading__dot--sm"></div>
+    </div>
+
+    <div class="mf-loading__wordmark">
+      <span>UPDATING</span>
+      <span>FRAME</span>
+    </div>
+  </div>
+
+  <div class="mf-loading__footer">
+    <div class="mf-loading__status" id="updateStatusText">Applying software update</div>
+    <div class="mf-loading__progress" aria-hidden="true"></div>
+    <div class="mf-update-overlay__hint">The frame may restart automatically when the update finishes.</div>
+  </div>
+</div>
+
 <div id="loading-screen" class="mf-loading">
   <div class="mf-loading__inner">
     <div class="mf-loading__logo" aria-hidden="true">
@@ -116,6 +139,14 @@
         <div class="wifistatus" id="wifi-status">
           <img id="wifi-icon" src="/assets/Icons/wifi.svg" alt="WiFi Status" />
         </div>
+      </div>
+      <div id="update-status-card" class="rounded-box update-status-card hidden" title="Software update available">
+        <svg class="update-status-card__icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M12 3v10.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+          <path d="M7.8 9.2 12 13.4l4.2-4.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 16.5v1.2A2.3 2.3 0 0 0 7.3 20h9.4a2.3 2.3 0 0 0 2.3-2.3v-1.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+        </svg>
+        <div class="update-status-card__text">UPDATE</div>
       </div>
       <div class="rounded-box qrcode_icon">
         <img src="resources/qrcode.png" alt="QR Code Icon" />

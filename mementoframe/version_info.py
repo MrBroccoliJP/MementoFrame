@@ -1,6 +1,12 @@
+# MementoFrame version metadata.
+# Use Global App Version for GitHub release tags, e.g. v2.0.3.
+
+GLOBAL_APP_VERSION = "1.0.0.0"
+
 VERSIONS = {
-    "Frontend": "2.0.4",         # html and css files | Last Change: spotify accent color update
-    "App": "2.0.2",              # app.py             | Last Change: Documentation update 
-    "Api Service": "2.0.1",      # api_service.py     | Last Change: Documentation update 
-    "AP Mode Manager": "2.0.1",  # ap_mode_manager.py | Last Change: Documentation update and rework of the code logic
+    "MementoFrame": GLOBAL_APP_VERSION,
+    "Frontend": "2.0.4",
+    "App": "2.0.2",
+    "Api Service": "2.0.1",
+    "AP Mode Manager": "2.0.1",
 }

@@ -63,6 +63,7 @@ PHOTO_JSON = os.path.join(USERDATA_DIR, "Photos/photos.json")
 SPOTIFY_CACHE = os.path.join(USERDATA_DIR, "cache/.cache_spotify")
 RUNTIME_DIR = "runtime"
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
+UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
 
 # =============================================================================
 # Configuration loading
@@ -77,6 +78,27 @@ def load_config():
     except Exception as e:
         print(f"Error loading config.json: {e}")
         return {}
+
+
+def load_update_state():
+    """Return updater runtime state merged with config/update defaults for display UI."""
+    state = {}
+    try:
+        with open(UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        state = {}
+    except Exception as e:
+        state = {"last_error": f"Unable to read update state: {e}"}
+
+    cfg = load_config()
+    updates_cfg = cfg.get("updates", {}) if isinstance(cfg, dict) else {}
+    state.setdefault("available", False)
+    state.setdefault("pending_restart", False)
+    state.setdefault("update_in_progress", False)
+    state.setdefault("installed_version", VERSIONS.get("MementoFrame") or VERSIONS.get("Global App Version"))
+    state["auto_update"] = bool(updates_cfg.get("auto_update", False))
+    return state
 
 config = load_config()
 
@@ -324,6 +346,12 @@ def get_ip():
 def versions():
     """Return component version information as JSON."""
     return jsonify(VERSIONS)
+
+
+@app.route("/update_status.json")
+def update_status_json():
+    """Return read-only software update state for the display UI."""
+    return jsonify(load_update_state())
 
 @app.route("/config/stream")
 def config_stream():

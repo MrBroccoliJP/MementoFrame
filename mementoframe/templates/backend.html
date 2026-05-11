@@ -34,6 +34,43 @@
       const checkboxes = document.querySelectorAll('.photo-checkbox');
       checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
     }
+
+    async function runUpdateAction(url, label) {
+      const status = document.querySelector('#update_action_status');
+      if (status) {
+        status.textContent = label;
+        status.className = 'update-action-status update-action-status--busy';
+      }
+
+      try {
+        const res = await fetch(url, { method: 'POST' });
+        const data = await res.json();
+        const ok = res.ok && data.status !== 'error';
+        if (status) {
+          status.textContent = ok
+            ? 'Done. Refreshing update status…'
+            : (data.stderr || data.stdout || data?.updater?.last_error || 'Update action failed.');
+          status.className = ok
+            ? 'update-action-status update-action-status--ok'
+            : 'update-action-status update-action-status--error';
+        }
+        setTimeout(() => window.location.reload(), ok ? 1200 : 2500);
+      } catch (e) {
+        if (status) {
+          status.textContent = 'Update action failed: ' + e;
+          status.className = 'update-action-status update-action-status--error';
+        }
+      }
+    }
+
+    function checkForUpdates() {
+      runUpdateAction('/update/check', 'Checking GitHub releases…');
+    }
+
+    function installUpdateNow() {
+      runUpdateAction('/update/install', 'Starting update. The frame may restart automatically…');
+    }
+
   </script>
 </head>
 
@@ -212,6 +249,91 @@
       </form>
       {% endif %}
     </details>
+
+
+    <!-- Software Updates -->
+    <details class="section">
+      <summary>⬆️ Software Updates</summary>
+
+      {% set updates = config.updates or {} %}
+      {% set us = update_state or {} %}
+
+      {% if us.available %}
+      <div class="update-available-card">
+        <div class="update-available-card__icon">⬆</div>
+        <div>
+          <strong>Update available</strong>
+          <span>{{ us.installed_version or 'unknown' }} → {{ us.latest_version or us.latest_tag or 'latest' }}</span>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if us.update_in_progress %}
+      <div class="message">An update is currently being applied. The frame may restart automatically.</div>
+      {% elif us.pending_restart %}
+      <div class="message">An update was installed and a restart is pending.</div>
+      {% endif %}
+
+      {% if us.last_error %}
+      <div class="update-error">{{ us.last_error }}</div>
+      {% endif %}
+
+      <div class="update-status-grid">
+        <div class="update-status-item">
+          <span>Installed</span>
+          <strong>{{ us.installed_version or 'unknown' }}</strong>
+        </div>
+        <div class="update-status-item">
+          <span>Latest</span>
+          <strong>{{ us.latest_version or us.latest_tag or 'not checked' }}</strong>
+        </div>
+        <div class="update-status-item">
+          <span>Status</span>
+          <strong>
+            {% if us.update_in_progress %}Updating
+            {% elif us.pending_restart %}Restart pending
+            {% elif us.available %}Available
+            {% else %}Up to date{% endif %}
+          </strong>
+        </div>
+      </div>
+
+      <form action="{{ url_for('save_update_settings') }}" method="POST">
+        <label>
+          <input type="checkbox" name="auto_update" {% if updates.auto_update %}checked{% endif %}>
+          Enable Automatic Updates
+        </label>
+        <p class="setting-hint">
+          Auto updates run near the end of the night schedule. If no display schedule is enabled, they run around 05:00.
+        </p>
+
+        <label>GitHub Repository</label>
+        <input type="text" name="update_repo" placeholder="owner/repository" value="{{ updates.repo or '' }}">
+
+        <label>Update Channel</label>
+        <select name="update_channel">
+          <option value="stable" {% if updates.channel == 'stable' %}selected{% endif %}>Stable</option>
+        </select>
+
+        <button type="submit">Save Update Settings</button>
+      </form>
+
+      <div class="update-actions">
+        <button type="button" onclick="checkForUpdates()">Check for Updates</button>
+        <button type="button" class="update-install-btn" onclick="installUpdateNow()" {% if not us.available or us.update_in_progress %}disabled{% endif %}>
+          Install Update Now
+        </button>
+      </div>
+      <div id="update_action_status" class="update-action-status"></div>
+
+      {% if us.release_notes %}
+      <details class="update-release-notes">
+        <summary>Release notes</summary>
+        <pre>{{ us.release_notes }}</pre>
+      </details>
+      {% endif %}
+    </details>
+
 
     <footer class="footer">
       Mode: {{ mode.upper() }} | IP: <span>{{ ip }}</span>
