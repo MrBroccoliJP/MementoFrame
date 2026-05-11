@@ -81,11 +81,29 @@ function setAccentVar(color) {
  * @param {string} rgb - CSS rgb() string, e.g. "rgb(20, 10, 50)".
  * @returns {string} Original or brightened rgb() string.
  */
-function ensureReadable(rgb) {
-  const m = rgb.match(/\d+(?:\.\d+)?/g);
-  if (!m) return rgb;
+function ensureReadable(color) {
+  if (typeof color !== "string") return color;
 
-  let [r, g, b] = m.map(Number);
+  const value = color.trim();
+
+  // Do not parse hsl(...) as rgb(...).
+  // Browser can use HSL directly, and your randomPastel() already returns light colours.
+  if (value.startsWith("hsl")) {
+    return value;
+  }
+
+  // Spotify album-art extraction returns rgb(...), so keep supporting rgb/rgba.
+  const m = value.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
+  if (!m) return color;
+
+  let r = Number(m[1]);
+  let g = Number(m[2]);
+  let b = Number(m[3]);
+
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+    return color;
+  }
+
   const brightness = perceivedBrightness({ r, g, b });
 
   if (brightness < 90) {
@@ -116,7 +134,7 @@ function applyAccent(color, transition = true) {
   const dateBox     = $(SELECTORS.dateBox);
 
   const ts = transition
-    ? "background 700ms ease, border-color 700ms ease, color 700ms ease"
+    ? "background 1s ease, border-color 1s ease, color 1s ease"
     : "none";
 
   if (spotify) {
@@ -164,7 +182,7 @@ function startAccentColorCycle() {
   applyAccent(randomPastel(), false);
   state.spotify.accentTimer = setInterval(
     () => applyAccent(randomPastel(), true),
-    60 * 60 * 1000
+    30*60*1000
   );
 }
 
