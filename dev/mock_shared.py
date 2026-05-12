@@ -271,9 +271,9 @@ def _version_tuple(value):
     for chunk in _normalize_version(value).replace("-", ".").split("."):
         digits = "".join(ch for ch in chunk if ch.isdigit())
         parts.append(int(digits or 0))
-    while len(parts) < 3:
+    while len(parts) < 4:
         parts.append(0)
-    return tuple(parts[:3])
+    return tuple(parts[:4])  
 
 
 def default_update_state():
@@ -306,6 +306,9 @@ def load_update_state():
                 stored = json.load(f)
             if isinstance(stored, dict):
                 state.update(stored)
+            # Always overwrite with the real value from version_info.py
+            state["installed_version"] = _global_app_version()  # ADD THIS
+            state["current_version"] = state["installed_version"]  # ADD THIS
     except Exception as e:
         state["last_error"] = f"Unable to read mock update state: {e}"
 
@@ -394,11 +397,30 @@ def check_for_updates_mock():
         save_update_state(state)
         return state
 
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    channel = state.get("channel", "stable")
+    if channel == "pre-release":
+        url = f"https://api.github.com/repos/{repo}/releases?per_page=5"
+    else:
+        url = f"https://api.github.com/repos/{repo}/releases/latest"
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "MementoFrame-Mock-Updater",
+    }
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     try:
-        req = Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "MementoFrame-Mock-Updater"})
+        req = Request(url, headers=headers)
         with urlopen(req, timeout=8) as res:
             payload = json.loads(res.read().decode("utf-8"))
+
+        if isinstance(payload, list):
+            if not payload:
+                raise RuntimeError("No releases found.")
+            payload = payload[0]
+
         tag = str(payload.get("tag_name") or "").strip()
         latest = _normalize_version(tag)
         installed = _normalize_version(state.get("installed_version"))

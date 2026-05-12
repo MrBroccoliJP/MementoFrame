@@ -29,6 +29,9 @@ Endpoints:
     POST /screen/off               - Turn the display output off.
 
 """
+import sys
+import threading
+
 from flask import Flask, jsonify, render_template, send_from_directory, Response
 from flask_cors import CORS
 import os, json, time, socket, threading, subprocess, requests
@@ -36,7 +39,9 @@ from dotenv import load_dotenv
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import RPi.GPIO as GPIO
+from mementoframe.updater import PROJECT_ROOT
 from version_info import VERSIONS
+
 
 # =============================================================================
 # Hardware setup
@@ -393,6 +398,26 @@ def screen_off():
     """Set the display GPIO pin low."""
     GPIO.output(SCREEN_PIN, GPIO.LOW)
     return jsonify({"status": "off"})
+
+def _autoupdate_worker():
+    while True:
+        time.sleep(60 * 60)
+        try:
+            # Don't spawn if an update is already running
+            state = load_update_state()
+            if state.get("update_in_progress"):
+                continue
+            subprocess.run(
+                [sys.executable, "updater.py", "autoupdate"],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except Exception as e:
+            print(f"[autoupdate] error: {e}")
+
+threading.Thread(target=_autoupdate_worker, daemon=True).start()            
 
 if __name__ == "__main__":
     if not os.getenv("SPOTIFY_CLIENT_ID") or not os.getenv("SPOTIFY_CLIENT_SECRET"):

@@ -112,7 +112,7 @@ def write_state(**updates: Any) -> dict[str, Any]:
     state = read_json(STATE_FILE, {})
     state.update(updates)
     state.setdefault("checked_at", None)
-    state.setdefault("installed_version", installed_version())
+    state["installed_version"] = installed_version()
     state.setdefault("latest_version", None)
     state.setdefault("available", False)
     state.setdefault("pending_restart", False)
@@ -179,27 +179,24 @@ def version_newer(latest: str, current: str) -> bool:
 
 
 def http_json(url: str, timeout: int = 15, retries: int = 3) -> dict[str, Any]:
-    """Fetch JSON from a URL with simple exponential-backoff retry.
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "MementoFrame-Updater",
+    }
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
-    Retries up to `retries` times on any exception (network error, timeout,
-    bad status). Waits 1 s then 2 s between attempts. Re-raises on final failure.
-    """
     last_exc: Exception = RuntimeError("No attempts made")
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "Accept": "application/vnd.github+json",
-                    "User-Agent": "MementoFrame-Updater",
-                },
-            )
+            req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=timeout) as res:
                 return json.loads(res.read().decode("utf-8"))
         except Exception as exc:
             last_exc = exc
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # 1 s, 2 s
+                time.sleep(2 ** attempt)
     raise last_exc
 
 
