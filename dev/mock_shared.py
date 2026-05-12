@@ -4,6 +4,9 @@ import json
 import os
 import secrets
 import time
+import re
+import urllib.error
+import urllib.request
 from copy import deepcopy
 from urllib.parse import parse_qs, urlparse
 
@@ -32,6 +35,7 @@ USERDATA_DIR = os.path.join(PROJECT_ROOT, "resources", "userdata")
 ASSETS_DIR = os.path.join(PROJECT_ROOT, "resources", "assets")
 
 MOCK_STATE_FILE = os.path.join(RUNTIME_DIR, "mock_state.json")
+UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
 LEGACY_CONFIG_PIN_FILE = os.path.join(RUNTIME_DIR, "config_pin.txt")
 
@@ -45,6 +49,11 @@ DEFAULT_CONFIG = {
     "weather_region": "Porto",
     "brightness": 80,
     "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
+    "updates": {
+        "auto_update": False,
+        "repo": "",
+        "channel": "stable",
+    },
 }
 
 DEFAULT_STATE = {
@@ -163,6 +172,158 @@ def load_config():
 
 def save_config(cfg):
     atomic_write_json(CONFIG_FILE, deep_merge(DEFAULT_CONFIG, cfg))
+
+
+
+
+# ---------------------------------------------------------------------------
+# Mock software-update helpers
+# ---------------------------------------------------------------------------
+def installed_global_version():
+    """Return the local app version used for GitHub release comparison."""
+    try:
+        from version_info import GLOBAL_APP_VERSION
+        return str(GLOBAL_APP_VERSION)
+    except Exception:
+        pass
+    try:
+        from version_info import VERSIONS
+        return str(VERSIONS.get("MementoFrame") or VERSIONS.get("Global App Version") or VERSIONS.get("App") or "0.0.0")
+    except Exception:
+        return "0.0.0"
+
+
+def version_tuple(value):
+    """Convert v1.2.3-ish strings into comparable integer tuples."""
+    parts = re.findall(r"\d+", str(value or ""))
+    nums = [int(p) for p in parts[:3]]
+    while len(nums) < 3:
+        nums.append(0)
+    return tuple(nums)
+
+
+def normalize_tag(value):
+    return str(value or "").strip().lstrip("vV")
+
+
+def default_update_state():
+    return {
+        "installed_version": installed_global_version(),
+        "latest_version": None,
+        "latest_tag": None,
+        "available": False,
+        "checked_at": None,
+        "pending_restart": False,
+        "update_in_progress": False,
+        "auto_update": False,
+        "repo": "",
+        "channel": "stable",
+        "last_error": None,
+        "mock": True,
+        "install_blocked": True,
+    }
+
+
+def load_update_state():
+    """Return mock update state merged with config and version defaults."""
+    state = default_update_state()
+    if os.path.exists(UPDATE_STATE_FILE):
+        try:
+            with open(UPDATE_STATE_FILE, encoding="utf-8") as f:
+                stored = json.load(f)
+            if isinstance(stored, dict):
+                state.update(stored)
+        except Exception as e:
+            state["last_error"] = f"Unable to read mock update state: {e}"
+
+    cfg = load_config()
+    updates_cfg = cfg.get("updates", {}) if isinstance(cfg, dict) else {}
+    state["installed_version"] = installed_global_version()
+    state["auto_update"] = bool(updates_cfg.get("auto_update", False))
+    state["repo"] = updates_cfg.get("repo", "")
+    state["channel"] = updates_cfg.get("channel", "stable")
+    state["mock"] = True
+    state["install_blocked"] = True
+    # Mocks must never accidentally look like they are applying an update.
+    state["update_in_progress"] = False
+    state["pending_restart"] = False
+    return state
+
+
+def save_update_state(state):
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    clean = dict(state)
+    clean["update_in_progress"] = False
+    clean["pending_restart"] = False
+    clean["mock"] = True
+    clean["install_blocked"] = True
+    atomic_write_json(UPDATE_STATE_FILE, clean)
+    return clean
+
+
+def check_for_updates_mock():
+    """Check GitHub Releases for availability, without installing anything."""
+    state = load_update_state()
+    cfg = load_config()
+    updates_cfg = cfg.get("updates", {}) if isinstance(cfg, dict) else {}
+    repo = (updates_cfg.get("repo") or os.getenv("MEMENTOFRAME_UPDATE_REPO", "")).strip()
+
+    state.update({
+        "checked_at": time.time(),
+        "available": False,
+        "latest_version": None,
+        "latest_tag": None,
+        "last_error": None,
+        "update_in_progress": False,
+        "pending_restart": False,
+        "repo": repo,
+    })
+
+    if not repo:
+        state["last_error"] = "No GitHub repository configured for mock update checks."
+        return save_update_state(state)
+
+    repo = repo.removeprefix("https://github.com/").strip("/")
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    try:
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "MementoFrame-Mock-Updater",
+        })
+        with urllib.request.urlopen(req, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        tag = payload.get("tag_name") or payload.get("name") or ""
+        latest = normalize_tag(tag)
+        installed = normalize_tag(state.get("installed_version"))
+        state.update({
+            "latest_version": latest,
+            "latest_tag": tag,
+            "available": version_tuple(latest) > version_tuple(installed),
+            "release_name": payload.get("name"),
+            "release_url": payload.get("html_url"),
+        })
+    except urllib.error.HTTPError as e:
+        state["last_error"] = f"GitHub update check failed: HTTP {e.code}"
+    except Exception as e:
+        state["last_error"] = f"GitHub update check failed: {e}"
+
+    return save_update_state(state)
+
+
+def mock_install_update_blocked():
+    """No-op install endpoint for mocks. Never updates files or reboots."""
+    state = load_update_state()
+    state.update({
+        "update_in_progress": False,
+        "pending_restart": False,
+        "last_error": "Mock environment: install/reboot is disabled. Use /update/check to test availability only.",
+        "install_blocked": True,
+        "mock": True,
+    })
+    return save_update_state(state)
 
 
 def remove_config_portal_pin():

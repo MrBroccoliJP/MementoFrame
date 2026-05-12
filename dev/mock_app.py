@@ -55,6 +55,9 @@ from mock_shared import (
     get_or_create_config_portal_pin_record,
     get_spotify_authorize_url,
     load_state,
+    load_update_state,
+    check_for_updates_mock,
+    mock_install_update_blocked,
     next_track as shared_next_track,
     pin_response_payload,
     read_config_portal_pin_record,
@@ -251,6 +254,7 @@ def load_config():
         "weather_region": "",
         "brightness": 80,
         "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
+        "updates": {"auto_update": False, "repo": "", "channel": "stable"},
     }
     if not os.path.exists(CONFIG_FILE):
         return default
@@ -272,6 +276,7 @@ def save_config(cfg):
 @app.route("/", methods=["GET", "POST"])
 def dashboard():
     config      = load_config()
+    update_state  = load_update_state()
     photos      = load_photos()
     spotify_msg = request.args.get("msg")
 
@@ -292,6 +297,7 @@ def dashboard():
             spotify_user = (real_spotify_user() if state.get("spotify", {}).get("source") == "real" else ({"display_name": "Mock User", "id": "mockuser"} if state.get("spotify", {}).get("connected", True) else None)),
             spotify_msg  = spotify_msg,
             config       = config,
+            update_state  = update_state,
         )
     return render_template_string(MOCK_ADMIN_TEMPLATE, state=state, config=config, photos=photos, networks=networks, spotify_msg=spotify_msg, track=current_track_payload(), pin=pin_response_payload(), tracks=MOCK_TRACKS)
 
@@ -581,6 +587,56 @@ def spotify_disconnect():
     state["spotify"]["playing"] = False
     save_state(state)
     return redirect(url_for("dashboard", msg="Spotify disconnected."))
+
+
+# ---------- Update mock endpoints ----------
+@app.route("/health")
+def health_check():
+    return jsonify({"status": "ok", "timestamp": time.time(), "service": "mock_app"})
+
+
+@app.route("/update/status")
+def update_status():
+    return jsonify(load_update_state())
+
+
+@app.route("/update/check", methods=["POST"])
+def update_check():
+    """Check GitHub Releases in mock mode and always return JSON.
+
+    The config page calls this endpoint with fetch(). Returning redirects/HTML
+    makes the browser fail with JSON.parse errors, so mock update actions always
+    return a JSON payload regardless of Accept headers.
+    """
+    state = check_for_updates_mock()
+    return jsonify({
+        "status": "ok" if not state.get("last_error") else "error",
+        "message": state.get("last_error") or "Update check complete (mock).",
+        "updater": state,
+    })
+
+
+@app.route("/update/install", methods=["POST"])
+def update_install():
+    """Block mock installs/reboots and always return JSON."""
+    state = mock_install_update_blocked()
+    return jsonify({
+        "status": "blocked",
+        "message": "Mock environment: update install/reboot is disabled.",
+        "updater": state,
+    }), 409
+
+
+@app.route("/save_update_settings", methods=["POST"])
+def save_update_settings():
+    config = load_config()
+    config["updates"] = {
+        "auto_update": "auto_update" in request.form,
+        "repo": request.form.get("update_repo", "").strip(),
+        "channel": request.form.get("update_channel", "stable").strip() or "stable",
+    }
+    save_config(config)
+    return redirect(url_for("dashboard", msg="Update settings saved."))
 
 @app.route("/versions")
 def versions():
