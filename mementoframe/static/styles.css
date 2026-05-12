@@ -528,8 +528,25 @@ body {
   transform: translateY(0);
 }
 
-
-
+.clock,
+.weather-temperature,
+.weather-condition,
+.region,
+.day,
+.month-year,
+.track-name,
+.track-artist,
+.frame-pin-label,
+.frame-pin-digits,
+.update-status-card,
+.update-status-card__text,
+#calendar th,
+#calendar td {
+  transition: color 1s ease, background-color 1s ease, border-color 1s ease;
+}
+.progress-bar {
+  transition: width 0.5s linear, background-color 1s ease;
+}
 
 /* scrolling animation for long track names or artist */
 @keyframes marquee {
@@ -825,7 +842,7 @@ body {
   background-color: var(--accent-color);
   color: #111;
   font-weight: bold;
-  transition: background-color 1s ease;
+  transition: background-color 1s ease, color 1s ease;
 }
 
 /* Common hidden state */
