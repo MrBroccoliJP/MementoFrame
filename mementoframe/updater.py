@@ -2,65 +2,25 @@
 # MementoFrame - Raspberry Pi Smart Photo Frame
 # Updater / installer helper
 
-"""
-updater.py
-
-Usage:
-    python3 updater.py install
-    python3 updater.py status
-    python3 updater.py check
-    python3 updater.py update
-    python3 updater.py update --no-reboot
-    python3 updater.py autoupdate
-    python3 updater.py autoupdate --no-reboot
-    python3 updater.py post-reboot-check
-
-Configuration:
-    Add this to config.json, or set MEMENTOFRAME_UPDATE_REPO in .env:
-
-    {
-      "updates": {
-        "auto_update": false,
-        "repo": "your-github-user/mementoframe",
-        "channel": "stable",
-        "preserve": ["config.json", ".env", "resources/userdata", "runtime"],
-        "service_names": [
-          "mementoframe-dashboard.service",
-          "mementoframe-display.service",
-          "mementoframe-ap.service"
-        ]
-      }
-    }
-
-Notes:
-    - GitHub release tags should match version_info.GLOBAL_APP_VERSION, usually vX.Y.Z.
-    - Release archives are downloaded from GitHub's zipball_url.
-    - The updater preserves config/user data, writes runtime/update_state.json,
-      and reboots after a successful update.
-"""
-
 from __future__ import annotations
 
 import argparse
-import contextlib
-import fnmatch
 import hashlib
 import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
 import urllib.request
 import zipfile
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+UPDATER_BUILD = "2026-05-12-working-prerelease-root-services-v6"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
@@ -68,19 +28,10 @@ RUNTIME_DIR = PROJECT_ROOT / "runtime"
 STATE_FILE = RUNTIME_DIR / "update_state.json"
 BACKUP_ROOT = PROJECT_ROOT.parent / "mementoframe_backups"
 DEFAULT_UPDATE_TIME = "05:00"
-DEFAULT_PRESERVE = [
-    "config.json",
-    ".env", 
-    "resources/userdata",
-    "resources/userdata/Photos",
-    "runtime",
-]
-DEFAULT_SERVICES = [
-    "mementoframe-dashboard.service",
-    "mementoframe-display.service",
-    "mementoframe-ap.service",
-]
+DEFAULT_PRESERVE = ["config.json", ".env", "resources/userdata", "runtime"]
+DEFAULT_SERVICES = ["mementoframe.service", "kiosk.service"]
 HEALTH_URLS = ["http://127.0.0.1:5000/health", "http://127.0.0.1:5001/health"]
+APP_SUBDIR = "mementoframe"
 
 EXCLUDE_DURING_COPY = {
     ".git",
@@ -91,10 +42,28 @@ EXCLUDE_DURING_COPY = {
     "runtime",
     "resources/userdata",
 }
-APP_SUBDIR = "mementoframe"
+
 
 def now_ts() -> int:
     return int(time.time())
+
+
+def load_dotenv() -> None:
+    for env_path in [PROJECT_ROOT / ".env", PROJECT_ROOT.parent / ".env"]:
+        if not env_path.exists():
+            continue
+        try:
+            for raw in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+        except Exception:
+            pass
 
 
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
@@ -114,46 +83,65 @@ def read_json(path: Path, fallback: dict[str, Any] | None = None) -> dict[str, A
         return {**fallback, "_read_error": str(exc)}
 
 
+def base_state(**updates: Any) -> dict[str, Any]:
+    data = {
+        "updater_build": UPDATER_BUILD,
+        "installed_version": installed_version(),
+        "latest_version": None,
+        "latest_tag": None,
+        "release_name": None,
+        "release_notes": "",
+        "release_url": None,
+        "zipball_url": None,
+        "available": False,
+        "checked_at": None,
+        "pending_restart": False,
+        "reboot_requested": False,
+        "update_in_progress": False,
+        "last_error": None,
+    }
+    data.update(updates)
+    return data
+
+
 def write_state(**updates: Any) -> dict[str, Any]:
     state = read_json(STATE_FILE, {})
+    state.update({"updater_build": UPDATER_BUILD, "installed_version": installed_version()})
     state.update(updates)
-    state.setdefault("checked_at", None)
-    state["installed_version"] = installed_version()
     state.setdefault("latest_version", None)
     state.setdefault("available", False)
     state.setdefault("pending_restart", False)
+    state.setdefault("reboot_requested", False)
     state.setdefault("update_in_progress", False)
     state.setdefault("last_error", None)
     atomic_write_json(STATE_FILE, state)
     return state
 
 
+def replace_state(**updates: Any) -> dict[str, Any]:
+    state = base_state(**updates)
+    atomic_write_json(STATE_FILE, state)
+    return state
+
+
 def installed_version() -> str:
-    """Read version from the import-cached module. Use _read_version_from_file()
-    after a file copy to avoid getting a stale cached value."""
-    sys.path.insert(0, str(PROJECT_ROOT))
+    # Read from file directly to avoid Python import cache after updates.
+    version_file = PROJECT_ROOT / "version_info.py"
     try:
-        from version_info import GLOBAL_APP_VERSION, VERSIONS  # type: ignore
-        return str(GLOBAL_APP_VERSION or VERSIONS.get("MementoFrame") or VERSIONS.get("Global App Version") or "0.0.0")
-    except Exception:
-        return "0.0.0"
-
-
-def _read_version_from_file() -> str:
-    """Read GLOBAL_APP_VERSION directly from version_info.py without importing it.
-
-    Used post-copy so we always get the new file's version, bypassing Python's
-    module cache which would otherwise return the pre-update value.
-    """
-    try:
-        text = (PROJECT_ROOT / "version_info.py").read_text(encoding="utf-8")
+        text = version_file.read_text(encoding="utf-8")
         m = re.search(r'^GLOBAL_APP_VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
-        return m.group(1) if m else "0.0.0"
+        if m:
+            return m.group(1)
+        m = re.search(r'["\'](?:MementoFrame|Global App Version)["\']\s*:\s*["\']([^"\']+)["\']', text)
+        if m:
+            return m.group(1)
     except Exception:
-        return "0.0.0"
+        pass
+    return "0.0.0"
 
 
 def load_config() -> dict[str, Any]:
+    load_dotenv()
     cfg = read_json(CONFIG_FILE, {})
     cfg.setdefault("updates", {})
     updates = cfg["updates"]
@@ -161,7 +149,8 @@ def load_config() -> dict[str, Any]:
     updates.setdefault("repo", os.getenv("MEMENTOFRAME_UPDATE_REPO", ""))
     updates.setdefault("channel", "stable")
     updates.setdefault("preserve", DEFAULT_PRESERVE)
-    updates.setdefault("service_names", DEFAULT_SERVICES)
+    # Always use the project service names. Do not require config edits.
+    updates["service_names"] = DEFAULT_SERVICES
     return cfg
 
 
@@ -170,21 +159,18 @@ def save_config(cfg: dict[str, Any]) -> None:
 
 
 def parse_version(v: str) -> tuple[int, ...]:
-    v = str(v).strip().lstrip("vV")
-    parts = re.findall(r"\d+", v)
+    parts = re.findall(r"\d+", str(v).strip().lstrip("vV"))
     return tuple(int(p) for p in parts[:4]) or (0,)
 
 
 def version_newer(latest: str, current: str) -> bool:
     a = parse_version(latest)
     b = parse_version(current)
-    max_len = max(len(a), len(b))
-    a += (0,) * (max_len - len(a))
-    b += (0,) * (max_len - len(b))
-    return a > b
+    n = max(len(a), len(b))
+    return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
 
 
-def http_json(url: str, timeout: int = 15, retries: int = 3) -> dict[str, Any]:
+def http_json(url: str, timeout: int = 15) -> Any:
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "MementoFrame-Updater",
@@ -192,58 +178,40 @@ def http_json(url: str, timeout: int = 15, retries: int = 3) -> dict[str, Any]:
     token = os.getenv("GITHUB_TOKEN", "").strip()
     if token:
         headers["Authorization"] = f"Bearer {token}"
-
-    last_exc: Exception = RuntimeError("No attempts made")
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=timeout) as res:
-                return json.loads(res.read().decode("utf-8"))
-        except Exception as exc:
-            last_exc = exc
-            if attempt < retries - 1:
-                time.sleep(2 ** attempt)
-    raise last_exc
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return json.loads(res.read().decode("utf-8"))
 
 
 def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
     if not repo or "/" not in repo:
         raise RuntimeError("Update repo is not configured. Set updates.repo or MEMENTOFRAME_UPDATE_REPO.")
-    
-    if channel == "pre-release":
-        # /releases/latest skips pre-releases, so we fetch the full list
-        # and return the first one (most recent), which may be a pre-release.
-        releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=5")
-        if not releases:
-            raise RuntimeError("No releases found.")
-        return releases[0]
-    
-    return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
 
-def download_file(url: str, dest: Path, timeout: int = 60) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "MementoFrame-Updater"})
-    h = hashlib.sha256()
-    with urllib.request.urlopen(req, timeout=timeout) as res, dest.open("wb") as f:
-        while True:
-            chunk = res.read(1024 * 256)
-            if not chunk:
-                break
-            h.update(chunk)
-            f.write(chunk)
-    return h.hexdigest()
+    # IMPORTANT: /releases/latest ignores pre-releases and can return 404 when
+    # all releases are pre-releases. Your repo currently has pre-releases only.
+    if channel in {"pre-release", "prerelease", "pre_release"}:
+        releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=10")
+        if not isinstance(releases, list) or not releases:
+            raise RuntimeError("No GitHub releases found.")
+        for release in releases:
+            if not release.get("draft"):
+                return release
+        raise RuntimeError("Only draft releases found.")
+
+    return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
 
 
 def check_for_update() -> dict[str, Any]:
     cfg = load_config()
-    updates_cfg = cfg.get("updates", {})
-    repo = updates_cfg.get("repo", "")
-    channel = updates_cfg.get("channel", "stable")
+    updates = cfg.get("updates", {})
+    repo = updates.get("repo", "")
+    channel = updates.get("channel", "stable")
     current = installed_version()
     try:
         release = github_latest_release(repo, channel=channel)
         latest = str(release.get("tag_name") or "").lstrip("v")
         available = bool(latest and version_newer(latest, current))
-        state = write_state(
+        return replace_state(
             installed_version=current,
             latest_version=latest or None,
             latest_tag=release.get("tag_name"),
@@ -255,9 +223,8 @@ def check_for_update() -> dict[str, Any]:
             checked_at=now_ts(),
             last_error=None,
         )
-        return state
     except Exception as exc:
-        return write_state(
+        return replace_state(
             installed_version=current,
             checked_at=now_ts(),
             available=False,
@@ -270,11 +237,11 @@ def should_preserve(rel: str, preserve: list[str]) -> bool:
     return any(rel == p.strip("/") or rel.startswith(p.strip("/") + "/") for p in preserve)
 
 
-def copy_tree_contents(src: Path, dst: Path, preserve: list[str], _rel_prefix: str = "") -> None:
+def copy_tree_contents(src: Path, dst: Path, preserve: list[str]) -> list[str]:
+    copied: list[str] = []
     for item in src.iterdir():
         name = item.name
-        rel = f"{_rel_prefix}{name}" if _rel_prefix else name
-        if name in EXCLUDE_DURING_COPY or should_preserve(rel, preserve):
+        if name in EXCLUDE_DURING_COPY or should_preserve(name, preserve):
             continue
         target = dst / name
         if item.is_dir():
@@ -284,6 +251,8 @@ def copy_tree_contents(src: Path, dst: Path, preserve: list[str], _rel_prefix: s
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target)
+        copied.append(name)
+    return copied
 
 
 def ignore_patterns(preserve: list[str]):
@@ -304,26 +273,18 @@ def ignore_patterns(preserve: list[str]):
     return _ignore
 
 
-def find_app_root(tmpdir: Path) -> Path:
-    """Find the mementoframe/ subfolder inside the GitHub-generated zip.
-    
-    GitHub wraps everything in a top-level folder like owner-repo-abc1234/,
-    so we look one level deep for APP_SUBDIR rather than at the zip root.
-    """
-    # GitHub zip: tmpdir/owner-repo-sha/mementoframe/
-    for child in tmpdir.iterdir():
-        if child.is_dir():
-            target = child / APP_SUBDIR
-            if target.is_dir():
-                return target
-    # Fallback: mementoframe/ directly at zip root
-    direct = tmpdir / APP_SUBDIR
-    if direct.is_dir():
-        return direct
-    raise RuntimeError(
-        f"Could not find '{APP_SUBDIR}/' in the release archive. "
-        f"Expected structure: <repo-root>/{APP_SUBDIR}/..."
-    )
+def find_release_app_root(extract_dir: Path) -> Path:
+    candidates: list[Path] = []
+    for root, dirs, files in os.walk(extract_dir):
+        p = Path(root)
+        if "app.py" in files and "api_service.py" in files:
+            candidates.append(p)
+    if not candidates:
+        raise RuntimeError("Could not find app.py + api_service.py inside release archive.")
+    for candidate in candidates:
+        if candidate.name == APP_SUBDIR:
+            return candidate
+    return sorted(candidates, key=lambda p: len(p.parts))[0]
 
 
 def run(cmd: list[str], check: bool = False, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
@@ -333,33 +294,45 @@ def run(cmd: list[str], check: bool = False, timeout: int | None = None) -> subp
     return proc
 
 
-def systemctl(action: str, services: list[str]) -> None:
+def sudo_cmd(*cmd: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return run(["sudo", "-n", *cmd], check=False, timeout=timeout)
+
+
+def restart_services(services: list[str]) -> None:
     for svc in services:
-        proc = run(["sudo", "systemctl", action, svc], check=False, timeout=30)
+        proc = sudo_cmd("systemctl", "restart", svc, timeout=30)
         if proc.returncode != 0:
-            print(f"⚠️ systemctl {action} {svc}: {proc.stderr.strip() or proc.stdout.strip()}")
+            print(f"⚠️ systemctl restart {svc}: {proc.stderr.strip() or proc.stdout.strip()}")
 
 
 def backup_current() -> Path:
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = BACKUP_ROOT / f"mementoframe-{installed_version()}-{stamp}"
-
-    base_ignore = shutil.ignore_patterns("venv", "__pycache__", ".git", "runtime/update_state.json")
-
-    def ignore_all(directory, names):
-        ignored = base_ignore(directory, names)
-        for name in names:
-            path = Path(directory) / name
-            try:
-                if path.exists() and not (path.is_file() or path.is_dir() or path.is_symlink()):
-                    ignored.add(name)
-            except Exception:
-                ignored.add(name)
-        return ignored
-
-    shutil.copytree(PROJECT_ROOT, dest, ignore=ignore_all, ignore_dangling_symlinks=True)
+    shutil.copytree(
+        PROJECT_ROOT,
+        dest,
+        ignore=shutil.ignore_patterns("venv", "__pycache__", ".git", "runtime/update_state.json"),
+        ignore_dangling_symlinks=True,
+    )
     return dest
+
+
+def download_file(url: str, dest: Path, timeout: int = 60) -> str:
+    headers = {"User-Agent": "MementoFrame-Updater"}
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
+    h = hashlib.sha256()
+    with urllib.request.urlopen(req, timeout=timeout) as res, dest.open("wb") as f:
+        while True:
+            chunk = res.read(1024 * 256)
+            if not chunk:
+                break
+            h.update(chunk)
+            f.write(chunk)
+    return h.hexdigest()
 
 
 def install_requirements() -> None:
@@ -375,86 +348,57 @@ def install_requirements() -> None:
 
 def apply_update() -> dict[str, Any]:
     cfg = load_config()
-    updates_cfg = cfg.get("updates", {})
-    preserve = list(updates_cfg.get("preserve") or DEFAULT_PRESERVE)
-    services = list(updates_cfg.get("service_names") or DEFAULT_SERVICES)
+    updates = cfg.get("updates", {})
+    preserve = list(updates.get("preserve") or DEFAULT_PRESERVE)
+    services = list(updates.get("service_names") or DEFAULT_SERVICES)
 
     state = read_json(STATE_FILE, {})
     if not state.get("zipball_url") or not state.get("available"):
         state = check_for_update()
     if not state.get("available"):
-        return write_state(update_in_progress=False, last_error=None)
+        return write_state(update_in_progress=False, applied_update=False)
 
     latest = state.get("latest_version") or state.get("latest_tag") or "unknown"
     write_state(update_in_progress=True, update_started_at=now_ts(), last_error=None)
 
-    # FIX 1 + FIX 2: success flag + finally block so update_in_progress is
-    # always cleared, even if write_state itself throws. On the success path
-    # we also read the version from disk (not from the import cache) so we
-    # get the newly-copied version_info.py rather than the pre-update value.
-    success = False
-    sha256 = ""
-    backup: Path | None = None
+    with tempfile.TemporaryDirectory(prefix="mementoframe-update-") as td:
+        tmp = Path(td)
+        archive = tmp / "release.zip"
+        sha256 = download_file(str(state["zipball_url"]), archive)
+        extract_dir = tmp / "extract"
+        extract_dir.mkdir()
+        with zipfile.ZipFile(archive) as zf:
+            bad = zf.testzip()
+            if bad:
+                raise RuntimeError(f"Corrupted zip file: {bad}")
+            zf.extractall(extract_dir)
 
-    try:
-        with tempfile.TemporaryDirectory(prefix="mementoframe-update-") as td:
-            tmp = Path(td)
-            archive = tmp / "release.zip"
-            sha256 = download_file(str(state["zipball_url"]), archive)
-            extract_dir = tmp / "extract"
-            extract_dir.mkdir()
-            with zipfile.ZipFile(archive) as zf:
-                    bad = zf.testzip()
-                    if bad:
-                        raise RuntimeError(f"Corrupted zip file: {bad}")
-                    zf.extractall(extract_dir)
-            release_root = find_app_root(extract_dir)
+        release_root = find_release_app_root(extract_dir)
+        backup = backup_current()
+        copied = copy_tree_contents(release_root, PROJECT_ROOT, preserve)
+        install_requirements()
 
-            backup = backup_current()
-            systemctl("stop", services)
-            copy_tree_contents(release_root, PROJECT_ROOT, preserve)
-            install_requirements()
-            systemctl("start", services)
-
-        # Read version from the freshly-copied file — bypasses Python's module
-        # cache which would otherwise return the pre-update version string.
-        new_version = _read_version_from_file()
-
-        write_state(
-            installed_version=new_version,
-            latest_version=str(latest).lstrip("v"),
-            available=False,
-            update_in_progress=False,
-            pending_restart=True,
-            reboot_requested=True,
-            updated_at=now_ts(),
-            downloaded_sha256=sha256,
-            backup_path=str(backup) if backup else None,
-            last_error=None,
-        )
-        success = True
-        return read_json(STATE_FILE, {})
-
-    except Exception as exc:
-        write_state(update_in_progress=False, last_error=str(exc))
-        raise
-
-    finally:
-        # Last-resort safety net: if write_state threw on the success path
-        # and left update_in_progress=True in the file, clear it now so the
-        # display doesn't show the "Updating" overlay indefinitely.
-        if not success:
-            try:
-                raw = read_json(STATE_FILE, {})
-                if raw.get("update_in_progress"):
-                    atomic_write_json(STATE_FILE, {**raw, "update_in_progress": False})
-            except Exception:
-                pass  # Nothing more we can do; don't mask the original error.
+    new_version = installed_version()
+    return write_state(
+        installed_version=new_version,
+        latest_version=str(latest).lstrip("v"),
+        available=False,
+        update_in_progress=False,
+        pending_restart=True,
+        reboot_requested=True,
+        applied_update=True,
+        updated_at=now_ts(),
+        downloaded_sha256=sha256,
+        backup_path=str(backup),
+        release_root=str(release_root),
+        copied_top_level=copied,
+        last_error=None,
+    )
 
 
 def request_reboot() -> None:
     write_state(pending_restart=True, reboot_requested=True)
-    proc = run(["sudo", "reboot"], check=False, timeout=10)
+    proc = sudo_cmd("reboot", timeout=10)
     if proc.returncode != 0:
         print(f"⚠️ reboot failed: {proc.stderr.strip() or proc.stdout.strip()}")
 
@@ -463,8 +407,7 @@ def parse_hm(value: str) -> tuple[int, int]:
     m = re.match(r"^(\d{1,2}):(\d{2})$", str(value or ""))
     if not m:
         return (5, 0)
-    h, mi = int(m.group(1)), int(m.group(2))
-    return max(0, min(23, h)), max(0, min(59, mi))
+    return max(0, min(23, int(m.group(1)))), max(0, min(59, int(m.group(2))))
 
 
 def current_minutes() -> int:
@@ -476,7 +419,6 @@ def auto_update_target_minute(cfg: dict[str, Any]) -> int:
     ap = cfg.get("auto_power") or {}
     if ap.get("enabled"):
         h, m = parse_hm(ap.get("on_time", DEFAULT_UPDATE_TIME))
-        # Update shortly before the screen comes back on.
         return (h * 60 + m - 30) % (24 * 60)
     h, m = parse_hm(DEFAULT_UPDATE_TIME)
     return h * 60 + m
@@ -488,18 +430,16 @@ def in_auto_update_window(cfg: dict[str, Any], window_minutes: int = 20) -> bool
     return 0 <= ((now - target) % (24 * 60)) < window_minutes
 
 
-# FIX 4: autoupdate now accepts no_reboot so --no-reboot works from the CLI.
 def autoupdate(no_reboot: bool = False) -> dict[str, Any]:
     cfg = load_config()
     if not cfg.get("updates", {}).get("auto_update"):
         return write_state(auto_update_skipped="disabled", last_autoupdate_check=now_ts())
     if not in_auto_update_window(cfg):
         return write_state(auto_update_skipped="outside_window", last_autoupdate_check=now_ts())
-
     state = check_for_update()
     if state.get("available"):
         result = apply_update()
-        if not no_reboot:
+        if result.get("applied_update") and not no_reboot:
             request_reboot()
         return result
     return state
@@ -517,8 +457,6 @@ def post_reboot_check() -> dict[str, Any]:
     state = read_json(STATE_FILE, {})
     if not state.get("pending_restart"):
         return write_state(post_reboot_checked_at=now_ts())
-
-    # Give systemd/app startup a little time when this is run too early.
     deadline = time.time() + 90
     while time.time() < deadline:
         if all(url_ok(u) for u in HEALTH_URLS):
@@ -530,7 +468,6 @@ def post_reboot_check() -> dict[str, Any]:
                 last_error=None,
             )
         time.sleep(3)
-
     return write_state(post_reboot_checked_at=now_ts(), last_error="Post-reboot health check failed")
 
 
@@ -544,17 +481,40 @@ def install() -> dict[str, Any]:
         RUNTIME_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
-
     if not CONFIG_FILE.exists():
         save_config(cfg)
-
     venv = PROJECT_ROOT / "venv"
     if not venv.exists():
         run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=300)
     install_requirements()
+    return replace_state(installed_version=installed_version(), installed_at=now_ts(), last_error=None)
 
-    state = write_state(installed_version=installed_version(), installed_at=now_ts(), last_error=None)
-    return state
+
+def diagnose() -> dict[str, Any]:
+    cfg = load_config()
+    updates = cfg.get("updates", {})
+    repo = updates.get("repo", "")
+    channel = updates.get("channel", "stable")
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=10" if channel.startswith("pre") else f"https://api.github.com/repos/{repo}/releases/latest"
+    out = {
+        "updater_build": UPDATER_BUILD,
+        "project_root": str(PROJECT_ROOT),
+        "installed_version": installed_version(),
+        "repo": repo,
+        "channel": channel,
+        "url": url,
+        "github_token_loaded": bool(os.getenv("GITHUB_TOKEN", "").strip()),
+    }
+    try:
+        data = http_json(url)
+        if isinstance(data, list):
+            out["release_count"] = len(data)
+            out["tags"] = [r.get("tag_name") for r in data]
+        else:
+            out["tag"] = data.get("tag_name")
+    except Exception as exc:
+        out["error"] = str(exc)
+    return out
 
 
 def print_json(data: dict[str, Any]) -> None:
@@ -563,36 +523,29 @@ def print_json(data: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MementoFrame updater")
-    parser.add_argument(
-        "command",
-        choices=["install", "status", "check", "update", "autoupdate", "post-reboot-check", "reboot"],
-    )
-    parser.add_argument(
-        "--no-reboot",
-        action="store_true",
-        # FIX 4: flag now applies to both `update` and `autoupdate`.
-        help="Do not reboot after update (applies to both `update` and `autoupdate`)",
-    )
+    parser.add_argument("command", choices=["install", "status", "check", "update", "autoupdate", "post-reboot-check", "reboot", "diagnose"])
+    parser.add_argument("--no-reboot", action="store_true", help="Do not reboot after update/autoupdate")
     args = parser.parse_args()
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-
     try:
         if args.command == "install":
             print_json(install())
         elif args.command == "status":
             state = read_json(STATE_FILE, {})
+            state.setdefault("updater_build", UPDATER_BUILD)
             state.setdefault("installed_version", installed_version())
             print_json(state)
+        elif args.command == "diagnose":
+            print_json(diagnose())
         elif args.command == "check":
             print_json(check_for_update())
         elif args.command == "update":
             result = apply_update()
             print_json(result)
-            if not args.no_reboot and result.get("pending_restart"):
+            if result.get("applied_update") and not args.no_reboot:
                 request_reboot()
         elif args.command == "autoupdate":
-            # FIX 4: pass the flag through so autoupdate respects --no-reboot.
             print_json(autoupdate(no_reboot=args.no_reboot))
         elif args.command == "post-reboot-check":
             print_json(post_reboot_check())
