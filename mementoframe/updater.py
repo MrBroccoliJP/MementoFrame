@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-UPDATER_BUILD = "2026-05-12-working-prerelease-root-services-v6"
+UPDATER_BUILD = "2026-05-12-backup-special-files-v7"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
@@ -305,6 +306,45 @@ def restart_services(services: list[str]) -> None:
             print(f"⚠️ systemctl restart {svc}: {proc.stderr.strip() or proc.stdout.strip()}")
 
 
+def backup_ignore(directory: str, names: list[str]) -> set[str]:
+    """Return names that should be skipped during backup.
+
+    The updater must never fail because a runtime/tooling process created a
+    special file in the project tree. This skips FIFOs/named pipes, sockets,
+    block devices, character devices, and other non-regular filesystem nodes.
+    It also skips heavy/runtime folders that are either regenerated or already
+    preserved separately.
+    """
+    ignored = set(shutil.ignore_patterns(
+        "venv",
+        "__pycache__",
+        ".git",
+        ".pytest_cache",
+        "node_modules",
+        "runtime/update_state.json",
+    )(directory, names))
+
+    for name in names:
+        if name in ignored:
+            continue
+        path = Path(directory) / name
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError:
+            ignored.add(name)
+            continue
+
+        # Directories, normal files, and symlinks are safe for copytree with
+        # ignore_dangling_symlinks=True. Everything else is a special file
+        # and should not be part of an app backup.
+        if stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode):
+            continue
+
+        ignored.add(name)
+
+    return ignored
+
+
 def backup_current() -> Path:
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -312,7 +352,7 @@ def backup_current() -> Path:
     shutil.copytree(
         PROJECT_ROOT,
         dest,
-        ignore=shutil.ignore_patterns("venv", "__pycache__", ".git", "runtime/update_state.json"),
+        ignore=backup_ignore,
         ignore_dangling_symlinks=True,
     )
     return dest
