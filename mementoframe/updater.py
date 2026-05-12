@@ -192,14 +192,22 @@ def http_json(url: str, timeout: int = 15) -> Any:
 def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
     if not repo or "/" not in repo:
         raise RuntimeError("Update repo is not configured. Set updates.repo or MEMENTOFRAME_UPDATE_REPO.")
-    if str(channel).lower() in {"pre-release", "prerelease", "pre_release"}:
-        releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=10")
+
+    if channel in {"pre-release", "prerelease", "pre_release"}:
+        releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=30")
         if not isinstance(releases, list) or not releases:
             raise RuntimeError("No GitHub releases found.")
-        for release in releases:
-            if not release.get("draft"):
-                return release
-        raise RuntimeError("Only draft releases found.")
+
+        candidates = [
+            r for r in releases
+            if not r.get("draft") and r.get("tag_name")
+        ]
+
+        if not candidates:
+            raise RuntimeError("No non-draft releases found.")
+
+        return max(candidates, key=lambda r: parse_version(str(r.get("tag_name") or "")))
+
     return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
 
 
