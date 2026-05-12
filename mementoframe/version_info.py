@@ -1,7 +1,7 @@
 # MementoFrame version metadata.
 # Global App Version for GitHub release tags
 
-GLOBAL_APP_VERSION = "0.0.0.8" #updater fixes
+GLOBAL_APP_VERSION = "0.0.0.9" #updater fixes
 
 VERSIONS = {
     "MementoFrame": GLOBAL_APP_VERSION,

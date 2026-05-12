@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-UPDATER_BUILD = "2026-05-12-backup-special-files-v7"
+UPDATER_BUILD = "2026-05-12-preserve-userdata-v9"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
@@ -239,22 +239,87 @@ def should_preserve(rel: str, preserve: list[str]) -> bool:
 
 
 def copy_tree_contents(src: Path, dst: Path, preserve: list[str]) -> list[str]:
-    copied: list[str] = []
-    for item in src.iterdir():
-        name = item.name
-        if name in EXCLUDE_DURING_COPY or should_preserve(name, preserve):
-            continue
-        target = dst / name
-        if item.is_dir():
-            if target.exists() and not target.is_dir():
-                target.unlink()
-            shutil.copytree(item, target, dirs_exist_ok=True, ignore=ignore_patterns(preserve))
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target)
-        copied.append(name)
-    return copied
+    """Copy release files into the live app tree without touching preserved paths.
 
+    This is intentionally recursive instead of using shutil.copytree() with an
+    ignore callback. The old implementation copied top-level folders such as
+    resources/ with copytree(), but the ignore callback could not reliably map
+    extracted-release paths back to project-relative paths. That allowed nested
+    preserved folders like resources/userdata to be replaced by the release.
+
+    The recursive copy below computes the project-relative path itself for every
+    item before copying, so preserve entries such as resources/userdata, .env,
+    config.json, and runtime are protected at every depth.
+    """
+    copied_top_level: list[str] = []
+
+    def is_copyable(path: Path) -> bool:
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError:
+            return False
+        return stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode)
+
+    def copy_dir(src_dir: Path, dst_dir: Path, rel_prefix: str = "") -> None:
+        for item in src_dir.iterdir():
+            name = item.name
+            rel = f"{rel_prefix}/{name}" if rel_prefix else name
+
+            if name in EXCLUDE_DURING_COPY or should_preserve(rel, preserve):
+                continue
+            if not is_copyable(item):
+                continue
+
+            target = dst_dir / name
+
+            if item.is_dir() and not item.is_symlink():
+                if target.exists() and not target.is_dir():
+                    target.unlink()
+                target.mkdir(parents=True, exist_ok=True)
+                copy_dir(item, target, rel)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists() and target.is_dir():
+                    shutil.rmtree(target)
+                shutil.copy2(item, target, follow_symlinks=False)
+
+            if not rel_prefix and name not in copied_top_level:
+                copied_top_level.append(name)
+
+    copy_dir(src, dst)
+    return copied_top_level
+
+
+def restore_preserved_from_backup(backup: Path, dst: Path, preserve: list[str]) -> list[str]:
+    """Restore critical preserved paths after copy as a second safety net.
+
+    The copy routine should already skip these paths. This restore step makes the
+    updater resilient against future copy logic mistakes or unexpected release
+    structures. It intentionally restores only config/.env/userdata, not the
+    whole runtime folder, because runtime/update_state.json is managed by the
+    updater itself.
+    """
+    restored: list[str] = []
+    critical = ["config.json", ".env", "resources/userdata"]
+    for rel in critical:
+        if not should_preserve(rel, preserve):
+            continue
+        src_path = backup / rel
+        dst_path = dst / rel
+        if not src_path.exists() and not src_path.is_symlink():
+            continue
+        if dst_path.exists() or dst_path.is_symlink():
+            if dst_path.is_dir() and not dst_path.is_symlink():
+                shutil.rmtree(dst_path)
+            else:
+                dst_path.unlink()
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        if src_path.is_dir() and not src_path.is_symlink():
+            shutil.copytree(src_path, dst_path, symlinks=True, ignore_dangling_symlinks=True)
+        else:
+            shutil.copy2(src_path, dst_path, follow_symlinks=False)
+        restored.append(rel)
+    return restored
 
 def ignore_patterns(preserve: list[str]):
     def _ignore(directory: str, names: list[str]) -> set[str]:
@@ -306,6 +371,32 @@ def restart_services(services: list[str]) -> None:
             print(f"⚠️ systemctl restart {svc}: {proc.stderr.strip() or proc.stdout.strip()}")
 
 
+
+def cleanup_special_files(root: Path) -> list[str]:
+    """Remove special filesystem nodes that should never live in the app tree.
+
+    Some desktop/file-sync/runtime tools can leave FIFOs/named pipes, sockets,
+    or device nodes under the project directory. Python's shutil.copytree
+    raises on these during backup. They are not source files and cannot be
+    restored meaningfully, so delete them before backup/update.
+    """
+    removed: list[str] = []
+    for path in root.rglob("*"):
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError:
+            continue
+        if stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode):
+            continue
+        try:
+            path.unlink()
+            removed.append(str(path.relative_to(root)))
+        except Exception as exc:
+            # If we cannot remove it, backup_ignore will still skip it. Keep
+            # a trace in update_state for debugging without failing early.
+            removed.append(f"FAILED:{path.relative_to(root)}:{exc}")
+    return removed
+
 def backup_ignore(directory: str, names: list[str]) -> set[str]:
     """Return names that should be skipped during backup.
 
@@ -345,8 +436,9 @@ def backup_ignore(directory: str, names: list[str]) -> set[str]:
     return ignored
 
 
-def backup_current() -> Path:
+def backup_current() -> tuple[Path, list[str]]:
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    removed_special_files = cleanup_special_files(PROJECT_ROOT)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = BACKUP_ROOT / f"mementoframe-{installed_version()}-{stamp}"
     shutil.copytree(
@@ -355,7 +447,7 @@ def backup_current() -> Path:
         ignore=backup_ignore,
         ignore_dangling_symlinks=True,
     )
-    return dest
+    return dest, removed_special_files
 
 
 def download_file(url: str, dest: Path, timeout: int = 60) -> str:
@@ -414,8 +506,9 @@ def apply_update() -> dict[str, Any]:
             zf.extractall(extract_dir)
 
         release_root = find_release_app_root(extract_dir)
-        backup = backup_current()
+        backup, removed_special_files = backup_current()
         copied = copy_tree_contents(release_root, PROJECT_ROOT, preserve)
+        restored_preserved = restore_preserved_from_backup(backup, PROJECT_ROOT, preserve)
         install_requirements()
 
     new_version = installed_version()
@@ -430,6 +523,8 @@ def apply_update() -> dict[str, Any]:
         updated_at=now_ts(),
         downloaded_sha256=sha256,
         backup_path=str(backup),
+        removed_special_files=removed_special_files,
+        restored_preserved=restored_preserved,
         release_root=str(release_root),
         copied_top_level=copied,
         last_error=None,
