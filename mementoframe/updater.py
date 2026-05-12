@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-UPDATER_BUILD = "2026-05-12-preserve-userdata-v9"
+UPDATER_BUILD = "2026-05-12-permissions-preserve-v10"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
@@ -41,7 +41,14 @@ EXCLUDE_DURING_COPY = {
     ".pytest_cache",
     "node_modules",
     "runtime",
+}
+
+SPECIAL_FILE_CLEANUP_SKIP = {
+    ".git",
+    "venv",
+    "node_modules",
     "resources/userdata",
+    "runtime",
 }
 
 
@@ -84,49 +91,7 @@ def read_json(path: Path, fallback: dict[str, Any] | None = None) -> dict[str, A
         return {**fallback, "_read_error": str(exc)}
 
 
-def base_state(**updates: Any) -> dict[str, Any]:
-    data = {
-        "updater_build": UPDATER_BUILD,
-        "installed_version": installed_version(),
-        "latest_version": None,
-        "latest_tag": None,
-        "release_name": None,
-        "release_notes": "",
-        "release_url": None,
-        "zipball_url": None,
-        "available": False,
-        "checked_at": None,
-        "pending_restart": False,
-        "reboot_requested": False,
-        "update_in_progress": False,
-        "last_error": None,
-    }
-    data.update(updates)
-    return data
-
-
-def write_state(**updates: Any) -> dict[str, Any]:
-    state = read_json(STATE_FILE, {})
-    state.update({"updater_build": UPDATER_BUILD, "installed_version": installed_version()})
-    state.update(updates)
-    state.setdefault("latest_version", None)
-    state.setdefault("available", False)
-    state.setdefault("pending_restart", False)
-    state.setdefault("reboot_requested", False)
-    state.setdefault("update_in_progress", False)
-    state.setdefault("last_error", None)
-    atomic_write_json(STATE_FILE, state)
-    return state
-
-
-def replace_state(**updates: Any) -> dict[str, Any]:
-    state = base_state(**updates)
-    atomic_write_json(STATE_FILE, state)
-    return state
-
-
 def installed_version() -> str:
-    # Read from file directly to avoid Python import cache after updates.
     version_file = PROJECT_ROOT / "version_info.py"
     try:
         text = version_file.read_text(encoding="utf-8")
@@ -141,6 +106,49 @@ def installed_version() -> str:
     return "0.0.0"
 
 
+def base_state(**updates: Any) -> dict[str, Any]:
+    state = {
+        "updater_build": UPDATER_BUILD,
+        "installed_version": installed_version(),
+        "latest_version": None,
+        "latest_tag": None,
+        "release_name": None,
+        "release_notes": "",
+        "release_url": None,
+        "zipball_url": None,
+        "available": False,
+        "checked_at": None,
+        "pending_restart": False,
+        "reboot_requested": False,
+        "update_in_progress": False,
+        "applied_update": False,
+        "last_error": None,
+    }
+    state.update(updates)
+    return state
+
+
+def replace_state(**updates: Any) -> dict[str, Any]:
+    state = base_state(**updates)
+    atomic_write_json(STATE_FILE, state)
+    return state
+
+
+def write_state(**updates: Any) -> dict[str, Any]:
+    state = read_json(STATE_FILE, {})
+    state.update({"updater_build": UPDATER_BUILD, "installed_version": installed_version()})
+    state.update(updates)
+    state.setdefault("latest_version", None)
+    state.setdefault("available", False)
+    state.setdefault("pending_restart", False)
+    state.setdefault("reboot_requested", False)
+    state.setdefault("update_in_progress", False)
+    state.setdefault("applied_update", False)
+    state.setdefault("last_error", None)
+    atomic_write_json(STATE_FILE, state)
+    return state
+
+
 def load_config() -> dict[str, Any]:
     load_dotenv()
     cfg = read_json(CONFIG_FILE, {})
@@ -150,7 +158,7 @@ def load_config() -> dict[str, Any]:
     updates.setdefault("repo", os.getenv("MEMENTOFRAME_UPDATE_REPO", ""))
     updates.setdefault("channel", "stable")
     updates.setdefault("preserve", DEFAULT_PRESERVE)
-    # Always use the project service names. Do not require config edits.
+    # Project service names are fixed; no user config required.
     updates["service_names"] = DEFAULT_SERVICES
     return cfg
 
@@ -172,10 +180,7 @@ def version_newer(latest: str, current: str) -> bool:
 
 
 def http_json(url: str, timeout: int = 15) -> Any:
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "MementoFrame-Updater",
-    }
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "MementoFrame-Updater"}
     token = os.getenv("GITHUB_TOKEN", "").strip()
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -187,10 +192,7 @@ def http_json(url: str, timeout: int = 15) -> Any:
 def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
     if not repo or "/" not in repo:
         raise RuntimeError("Update repo is not configured. Set updates.repo or MEMENTOFRAME_UPDATE_REPO.")
-
-    # IMPORTANT: /releases/latest ignores pre-releases and can return 404 when
-    # all releases are pre-releases. Your repo currently has pre-releases only.
-    if channel in {"pre-release", "prerelease", "pre_release"}:
+    if str(channel).lower() in {"pre-release", "prerelease", "pre_release"}:
         releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=10")
         if not isinstance(releases, list) or not releases:
             raise RuntimeError("No GitHub releases found.")
@@ -198,7 +200,6 @@ def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
             if not release.get("draft"):
                 return release
         raise RuntimeError("Only draft releases found.")
-
     return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
 
 
@@ -225,12 +226,7 @@ def check_for_update() -> dict[str, Any]:
             last_error=None,
         )
     except Exception as exc:
-        return replace_state(
-            installed_version=current,
-            checked_at=now_ts(),
-            available=False,
-            last_error=str(exc),
-        )
+        return replace_state(installed_version=current, checked_at=now_ts(), available=False, last_error=str(exc))
 
 
 def should_preserve(rel: str, preserve: list[str]) -> bool:
@@ -238,110 +234,128 @@ def should_preserve(rel: str, preserve: list[str]) -> bool:
     return any(rel == p.strip("/") or rel.startswith(p.strip("/") + "/") for p in preserve)
 
 
-def copy_tree_contents(src: Path, dst: Path, preserve: list[str]) -> list[str]:
-    """Copy release files into the live app tree without touching preserved paths.
+def is_excluded(rel: str) -> bool:
+    rel = rel.strip("/")
+    return any(rel == p or rel.startswith(p + "/") for p in EXCLUDE_DURING_COPY)
 
-    This is intentionally recursive instead of using shutil.copytree() with an
-    ignore callback. The old implementation copied top-level folders such as
-    resources/ with copytree(), but the ignore callback could not reliably map
-    extracted-release paths back to project-relative paths. That allowed nested
-    preserved folders like resources/userdata to be replaced by the release.
 
-    The recursive copy below computes the project-relative path itself for every
-    item before copying, so preserve entries such as resources/userdata, .env,
-    config.json, and runtime are protected at every depth.
-    """
-    copied_top_level: list[str] = []
+def is_special_file(path: Path) -> bool:
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        return True
+    return not (stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode))
 
-    def is_copyable(path: Path) -> bool:
+
+def cleanup_special_files(root: Path = PROJECT_ROOT) -> list[str]:
+    removed: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        current = Path(dirpath)
         try:
-            mode = os.lstat(path).st_mode
-        except OSError:
-            return False
-        return stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode)
+            rel_dir = str(current.relative_to(root)).strip(".")
+        except Exception:
+            rel_dir = ""
 
-    def copy_dir(src_dir: Path, dst_dir: Path, rel_prefix: str = "") -> None:
-        for item in src_dir.iterdir():
-            name = item.name
-            rel = f"{rel_prefix}/{name}" if rel_prefix else name
-
-            if name in EXCLUDE_DURING_COPY or should_preserve(rel, preserve):
+        # Prevent descending into ignored runtime/heavy folders.
+        keep_dirs = []
+        for d in dirnames:
+            rel = f"{rel_dir}/{d}".strip("/") if rel_dir else d
+            if any(rel == skip or rel.startswith(skip + "/") for skip in SPECIAL_FILE_CLEANUP_SKIP):
                 continue
-            if not is_copyable(item):
-                continue
+            keep_dirs.append(d)
+        dirnames[:] = keep_dirs
 
-            target = dst_dir / name
-
-            if item.is_dir() and not item.is_symlink():
-                if target.exists() and not target.is_dir():
-                    target.unlink()
-                target.mkdir(parents=True, exist_ok=True)
-                copy_dir(item, target, rel)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if target.exists() and target.is_dir():
-                    shutil.rmtree(target)
-                shutil.copy2(item, target, follow_symlinks=False)
-
-            if not rel_prefix and name not in copied_top_level:
-                copied_top_level.append(name)
-
-    copy_dir(src, dst)
-    return copied_top_level
+        for name in filenames:
+            path = current / name
+            try:
+                if is_special_file(path):
+                    rel = str(path.relative_to(root))
+                    path.unlink()
+                    removed.append(rel)
+            except Exception as exc:
+                removed.append(f"{path}: failed to remove ({exc})")
+    return removed
 
 
-def restore_preserved_from_backup(backup: Path, dst: Path, preserve: list[str]) -> list[str]:
-    """Restore critical preserved paths after copy as a second safety net.
+def copy_one(src: Path, dst: Path, rel: str, preserve: list[str], copied_top: set[str]) -> None:
+    rel = rel.strip("/")
+    if not rel or should_preserve(rel, preserve) or is_excluded(rel):
+        return
+    if is_special_file(src):
+        return
 
-    The copy routine should already skip these paths. This restore step makes the
-    updater resilient against future copy logic mistakes or unexpected release
-    structures. It intentionally restores only config/.env/userdata, not the
-    whole runtime folder, because runtime/update_state.json is managed by the
-    updater itself.
-    """
+    top = rel.split("/", 1)[0]
+    copied_top.add(top)
+
+    if src.is_dir() and not src.is_symlink():
+        dst.mkdir(parents=True, exist_ok=True)
+        for child in src.iterdir():
+            child_rel = f"{rel}/{child.name}"
+            copy_one(child, dst / child.name, child_rel, preserve, copied_top)
+        return
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() and dst.is_dir():
+        shutil.rmtree(dst)
+    shutil.copy2(src, dst, follow_symlinks=False)
+
+
+def copy_tree_contents(src: Path, dst: Path, preserve: list[str]) -> list[str]:
+    copied_top: set[str] = set()
+    for item in src.iterdir():
+        copy_one(item, dst / item.name, item.name, preserve, copied_top)
+    return sorted(copied_top)
+
+
+def backup_ignore(directory: str, names: list[str]) -> set[str]:
+    ignored = set(shutil.ignore_patterns(
+        "venv", "__pycache__", ".git", ".pytest_cache", "node_modules", "runtime/update_state.json",
+    )(directory, names))
+    for name in names:
+        if name in ignored:
+            continue
+        path = Path(directory) / name
+        if is_special_file(path):
+            ignored.add(name)
+    return ignored
+
+
+def backup_current() -> Path:
+    cleanup_special_files(PROJECT_ROOT)
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = BACKUP_ROOT / f"mementoframe-{installed_version()}-{stamp}"
+    shutil.copytree(PROJECT_ROOT, dest, ignore=backup_ignore, ignore_dangling_symlinks=True)
+    return dest
+
+
+def restore_preserved_from_backup(backup: Path, preserve: list[str]) -> list[str]:
     restored: list[str] = []
-    critical = ["config.json", ".env", "resources/userdata"]
-    for rel in critical:
-        if not should_preserve(rel, preserve):
+    for rel in preserve:
+        rel = rel.strip("/")
+        if not rel:
             continue
-        src_path = backup / rel
-        dst_path = dst / rel
-        if not src_path.exists() and not src_path.is_symlink():
+        src = backup / rel
+        dst = PROJECT_ROOT / rel
+        if not src.exists() and not src.is_symlink():
             continue
-        if dst_path.exists() or dst_path.is_symlink():
-            if dst_path.is_dir() and not dst_path.is_symlink():
-                shutil.rmtree(dst_path)
+        if dst.exists() or dst.is_symlink():
+            if dst.is_dir() and not dst.is_symlink():
+                shutil.rmtree(dst)
             else:
-                dst_path.unlink()
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
-        if src_path.is_dir() and not src_path.is_symlink():
-            shutil.copytree(src_path, dst_path, symlinks=True, ignore_dangling_symlinks=True)
+                dst.unlink()
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir() and not src.is_symlink():
+            shutil.copytree(src, dst, symlinks=True, ignore_dangling_symlinks=True)
         else:
-            shutil.copy2(src_path, dst_path, follow_symlinks=False)
+            shutil.copy2(src, dst, follow_symlinks=False)
         restored.append(rel)
     return restored
-
-def ignore_patterns(preserve: list[str]):
-    def _ignore(directory: str, names: list[str]) -> set[str]:
-        ignored: set[str] = set()
-        root = Path(directory)
-        for name in names:
-            if name in EXCLUDE_DURING_COPY:
-                ignored.add(name)
-                continue
-            try:
-                project_rel = str((root / name).relative_to(PROJECT_ROOT))
-            except Exception:
-                project_rel = name
-            if should_preserve(project_rel, preserve):
-                ignored.add(name)
-        return ignored
-    return _ignore
 
 
 def find_release_app_root(extract_dir: Path) -> Path:
     candidates: list[Path] = []
-    for root, dirs, files in os.walk(extract_dir):
+    for root, _dirs, files in os.walk(extract_dir):
         p = Path(root)
         if "app.py" in files and "api_service.py" in files:
             candidates.append(p)
@@ -371,85 +385,6 @@ def restart_services(services: list[str]) -> None:
             print(f"⚠️ systemctl restart {svc}: {proc.stderr.strip() or proc.stdout.strip()}")
 
 
-
-def cleanup_special_files(root: Path) -> list[str]:
-    """Remove special filesystem nodes that should never live in the app tree.
-
-    Some desktop/file-sync/runtime tools can leave FIFOs/named pipes, sockets,
-    or device nodes under the project directory. Python's shutil.copytree
-    raises on these during backup. They are not source files and cannot be
-    restored meaningfully, so delete them before backup/update.
-    """
-    removed: list[str] = []
-    for path in root.rglob("*"):
-        try:
-            mode = os.lstat(path).st_mode
-        except OSError:
-            continue
-        if stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode):
-            continue
-        try:
-            path.unlink()
-            removed.append(str(path.relative_to(root)))
-        except Exception as exc:
-            # If we cannot remove it, backup_ignore will still skip it. Keep
-            # a trace in update_state for debugging without failing early.
-            removed.append(f"FAILED:{path.relative_to(root)}:{exc}")
-    return removed
-
-def backup_ignore(directory: str, names: list[str]) -> set[str]:
-    """Return names that should be skipped during backup.
-
-    The updater must never fail because a runtime/tooling process created a
-    special file in the project tree. This skips FIFOs/named pipes, sockets,
-    block devices, character devices, and other non-regular filesystem nodes.
-    It also skips heavy/runtime folders that are either regenerated or already
-    preserved separately.
-    """
-    ignored = set(shutil.ignore_patterns(
-        "venv",
-        "__pycache__",
-        ".git",
-        ".pytest_cache",
-        "node_modules",
-        "runtime/update_state.json",
-    )(directory, names))
-
-    for name in names:
-        if name in ignored:
-            continue
-        path = Path(directory) / name
-        try:
-            mode = os.lstat(path).st_mode
-        except OSError:
-            ignored.add(name)
-            continue
-
-        # Directories, normal files, and symlinks are safe for copytree with
-        # ignore_dangling_symlinks=True. Everything else is a special file
-        # and should not be part of an app backup.
-        if stat.S_ISDIR(mode) or stat.S_ISREG(mode) or stat.S_ISLNK(mode):
-            continue
-
-        ignored.add(name)
-
-    return ignored
-
-
-def backup_current() -> tuple[Path, list[str]]:
-    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-    removed_special_files = cleanup_special_files(PROJECT_ROOT)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = BACKUP_ROOT / f"mementoframe-{installed_version()}-{stamp}"
-    shutil.copytree(
-        PROJECT_ROOT,
-        dest,
-        ignore=backup_ignore,
-        ignore_dangling_symlinks=True,
-    )
-    return dest, removed_special_files
-
-
 def download_file(url: str, dest: Path, timeout: int = 60) -> str:
     headers = {"User-Agent": "MementoFrame-Updater"}
     token = os.getenv("GITHUB_TOKEN", "").strip()
@@ -467,6 +402,35 @@ def download_file(url: str, dest: Path, timeout: int = 60) -> str:
     return h.hexdigest()
 
 
+def repair_runtime_permissions() -> list[str]:
+    fixed: list[str] = []
+    for rel in ["start_apps.sh", "updater.py", "ap_mode_manager.py", "app.py", "api_service.py"]:
+        path = PROJECT_ROOT / rel
+        if not path.exists():
+            continue
+        try:
+            path.chmod(path.stat().st_mode | 0o755)
+            fixed.append(rel)
+        except Exception as exc:
+            fixed.append(f"{rel}: failed to chmod ({exc})")
+    return fixed
+
+
+def ensure_start_script_shebang() -> bool:
+    path = PROJECT_ROOT / "start_apps.sh"
+    if not path.exists():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8")
+        if text.startswith("#!"):
+            return False
+        lines = [line for line in text.splitlines() if not line.strip().startswith("#!")]
+        path.write_text("#!/bin/bash\n" + "\n".join(lines).lstrip("\n") + "\n", encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
 def install_requirements() -> None:
     req = PROJECT_ROOT / "requirements.txt"
     if not req.exists():
@@ -482,7 +446,6 @@ def apply_update() -> dict[str, Any]:
     cfg = load_config()
     updates = cfg.get("updates", {})
     preserve = list(updates.get("preserve") or DEFAULT_PRESERVE)
-    services = list(updates.get("service_names") or DEFAULT_SERVICES)
 
     state = read_json(STATE_FILE, {})
     if not state.get("zipball_url") or not state.get("available"):
@@ -493,42 +456,60 @@ def apply_update() -> dict[str, Any]:
     latest = state.get("latest_version") or state.get("latest_tag") or "unknown"
     write_state(update_in_progress=True, update_started_at=now_ts(), last_error=None)
 
-    with tempfile.TemporaryDirectory(prefix="mementoframe-update-") as td:
-        tmp = Path(td)
-        archive = tmp / "release.zip"
-        sha256 = download_file(str(state["zipball_url"]), archive)
-        extract_dir = tmp / "extract"
-        extract_dir.mkdir()
-        with zipfile.ZipFile(archive) as zf:
-            bad = zf.testzip()
-            if bad:
-                raise RuntimeError(f"Corrupted zip file: {bad}")
-            zf.extractall(extract_dir)
+    backup: Path | None = None
+    sha256 = ""
+    release_root_str = None
+    copied: list[str] = []
+    restored_preserved: list[str] = []
+    fixed_permissions: list[str] = []
+    shebang_fixed = False
+    removed_special_files: list[str] = []
 
-        release_root = find_release_app_root(extract_dir)
-        backup, removed_special_files = backup_current()
-        copied = copy_tree_contents(release_root, PROJECT_ROOT, preserve)
-        restored_preserved = restore_preserved_from_backup(backup, PROJECT_ROOT, preserve)
-        install_requirements()
+    try:
+        with tempfile.TemporaryDirectory(prefix="mementoframe-update-") as td:
+            tmp = Path(td)
+            archive = tmp / "release.zip"
+            sha256 = download_file(str(state["zipball_url"]), archive)
+            extract_dir = tmp / "extract"
+            extract_dir.mkdir()
+            with zipfile.ZipFile(archive) as zf:
+                bad = zf.testzip()
+                if bad:
+                    raise RuntimeError(f"Corrupted zip file: {bad}")
+                zf.extractall(extract_dir)
 
-    new_version = installed_version()
-    return write_state(
-        installed_version=new_version,
-        latest_version=str(latest).lstrip("v"),
-        available=False,
-        update_in_progress=False,
-        pending_restart=True,
-        reboot_requested=True,
-        applied_update=True,
-        updated_at=now_ts(),
-        downloaded_sha256=sha256,
-        backup_path=str(backup),
-        removed_special_files=removed_special_files,
-        restored_preserved=restored_preserved,
-        release_root=str(release_root),
-        copied_top_level=copied,
-        last_error=None,
-    )
+            release_root = find_release_app_root(extract_dir)
+            release_root_str = str(release_root)
+            removed_special_files = cleanup_special_files(PROJECT_ROOT)
+            backup = backup_current()
+            copied = copy_tree_contents(release_root, PROJECT_ROOT, preserve)
+            restored_preserved = restore_preserved_from_backup(backup, preserve)
+            shebang_fixed = ensure_start_script_shebang()
+            fixed_permissions = repair_runtime_permissions()
+            install_requirements()
+
+        return write_state(
+            installed_version=installed_version(),
+            latest_version=str(latest).lstrip("v"),
+            available=False,
+            update_in_progress=False,
+            pending_restart=True,
+            reboot_requested=True,
+            applied_update=True,
+            updated_at=now_ts(),
+            downloaded_sha256=sha256,
+            backup_path=str(backup) if backup else None,
+            release_root=release_root_str,
+            copied_top_level=copied,
+            restored_preserved=restored_preserved,
+            removed_special_files=removed_special_files,
+            fixed_permissions=fixed_permissions,
+            start_apps_shebang_fixed=shebang_fixed,
+            last_error=None,
+        )
+    except Exception as exc:
+        write_state(update_in_progress=False, last_error=str(exc))
+        raise
 
 
 def request_reboot() -> None:
@@ -621,8 +602,18 @@ def install() -> dict[str, Any]:
     venv = PROJECT_ROOT / "venv"
     if not venv.exists():
         run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=300)
+    removed_special_files = cleanup_special_files(PROJECT_ROOT)
+    shebang_fixed = ensure_start_script_shebang()
+    fixed_permissions = repair_runtime_permissions()
     install_requirements()
-    return replace_state(installed_version=installed_version(), installed_at=now_ts(), last_error=None)
+    return replace_state(
+        installed_version=installed_version(),
+        installed_at=now_ts(),
+        removed_special_files=removed_special_files,
+        fixed_permissions=fixed_permissions,
+        start_apps_shebang_fixed=shebang_fixed,
+        last_error=None,
+    )
 
 
 def diagnose() -> dict[str, Any]:
@@ -630,8 +621,8 @@ def diagnose() -> dict[str, Any]:
     updates = cfg.get("updates", {})
     repo = updates.get("repo", "")
     channel = updates.get("channel", "stable")
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=10" if channel.startswith("pre") else f"https://api.github.com/repos/{repo}/releases/latest"
-    out = {
+    url = f"https://api.github.com/repos/{repo}/releases?per_page=10" if str(channel).startswith("pre") else f"https://api.github.com/repos/{repo}/releases/latest"
+    out: dict[str, Any] = {
         "updater_build": UPDATER_BUILD,
         "project_root": str(PROJECT_ROOT),
         "installed_version": installed_version(),
@@ -639,6 +630,7 @@ def diagnose() -> dict[str, Any]:
         "channel": channel,
         "url": url,
         "github_token_loaded": bool(os.getenv("GITHUB_TOKEN", "").strip()),
+        "start_apps_executable": os.access(PROJECT_ROOT / "start_apps.sh", os.X_OK),
     }
     try:
         data = http_json(url)
