@@ -313,6 +313,7 @@
         <label>Update Channel</label>
         <select name="update_channel">
           <option value="stable" {% if updates.channel == 'stable' %}selected{% endif %}>Stable</option>
+          <option value="pre-release" {% if updates.channel == 'pre-release' %}selected{% endif %}>Pre-release</option>
         </select>
 
         <button type="submit">Save Update Settings</button>

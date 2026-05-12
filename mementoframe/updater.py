@@ -203,11 +203,19 @@ def http_json(url: str, timeout: int = 15, retries: int = 3) -> dict[str, Any]:
     raise last_exc
 
 
-def github_latest_release(repo: str) -> dict[str, Any]:
+def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
     if not repo or "/" not in repo:
         raise RuntimeError("Update repo is not configured. Set updates.repo or MEMENTOFRAME_UPDATE_REPO.")
+    
+    if channel == "pre-release":
+        # /releases/latest skips pre-releases, so we fetch the full list
+        # and return the first one (most recent), which may be a pre-release.
+        releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=5")
+        if not releases:
+            raise RuntimeError("No releases found.")
+        return releases[0]
+    
     return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
-
 
 def download_file(url: str, dest: Path, timeout: int = 60) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "MementoFrame-Updater"})
@@ -224,10 +232,12 @@ def download_file(url: str, dest: Path, timeout: int = 60) -> str:
 
 def check_for_update() -> dict[str, Any]:
     cfg = load_config()
-    repo = cfg.get("updates", {}).get("repo", "")
+    updates_cfg = cfg.get("updates", {})
+    repo = updates_cfg.get("repo", "")
+    channel = updates_cfg.get("channel", "stable")
     current = installed_version()
     try:
-        release = github_latest_release(repo)
+        release = github_latest_release(repo, channel=channel)
         latest = str(release.get("tag_name") or "").lstrip("v")
         available = bool(latest and version_newer(latest, current))
         state = write_state(
