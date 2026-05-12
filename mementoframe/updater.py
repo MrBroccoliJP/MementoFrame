@@ -85,7 +85,7 @@ EXCLUDE_DURING_COPY = {
     "runtime",
     "resources/userdata",
 }
-
+APP_SUBDIR = "mementoframe"
 
 def now_ts() -> int:
     return int(time.time())
@@ -291,11 +291,26 @@ def ignore_patterns(preserve: list[str]):
     return _ignore
 
 
-def newest_extracted_root(tmpdir: Path) -> Path:
-    children = [p for p in tmpdir.iterdir() if p.is_dir()]
-    if len(children) == 1:
-        return children[0]
-    return tmpdir
+def find_app_root(tmpdir: Path) -> Path:
+    """Find the mementoframe/ subfolder inside the GitHub-generated zip.
+    
+    GitHub wraps everything in a top-level folder like owner-repo-abc1234/,
+    so we look one level deep for APP_SUBDIR rather than at the zip root.
+    """
+    # GitHub zip: tmpdir/owner-repo-sha/mementoframe/
+    for child in tmpdir.iterdir():
+        if child.is_dir():
+            target = child / APP_SUBDIR
+            if target.is_dir():
+                return target
+    # Fallback: mementoframe/ directly at zip root
+    direct = tmpdir / APP_SUBDIR
+    if direct.is_dir():
+        return direct
+    raise RuntimeError(
+        f"Could not find '{APP_SUBDIR}/' in the release archive. "
+        f"Expected structure: <repo-root>/{APP_SUBDIR}/..."
+    )
 
 
 def run(cmd: list[str], check: bool = False, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
@@ -370,7 +385,7 @@ def apply_update() -> dict[str, Any]:
                     if bad:
                         raise RuntimeError(f"Corrupted zip file: {bad}")
                     zf.extractall(extract_dir)
-            release_root = newest_extracted_root(extract_dir)
+            release_root = find_app_root(extract_dir)
 
             backup = backup_current()
             systemctl("stop", services)
