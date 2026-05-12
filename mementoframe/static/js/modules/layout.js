@@ -53,7 +53,10 @@ export function setCalendarOpacity(opacity) {
 /**
  * Transition the right panel to Spotify view.
  *
- * - Cancels any pending calendarFullTimeout timer.
+ * - Cancels any pending calendarFullTimeout timer (either an active
+ *   full-opacity window or the next cycle trigger). Preserves
+ *   `calendarWindowUntil` so showCalendar() can resume the window for
+ *   the remaining time if the window was still active when Spotify opened.
  * - Hides the calendar box and shows the Spotify box using
  *   "hidden"/"visible" CSS classes.
  * - Restores calendar opacity to 1 so it is not dim if it reappears.
@@ -64,6 +67,8 @@ export function showSpotify() {
   const spotify  = $(SELECTORS.spotifyBox);
   const calendar = $(SELECTORS.calendarBox);
 
+  // Cancel any active window or pending cycle trigger.
+  // Keep calendarWindowUntil intact — showCalendar() reads it to resume.
   if (state.timers.calendarFullTimeout) {
     clearTimeout(state.timers.calendarFullTimeout);
     state.timers.calendarFullTimeout = null;
@@ -83,9 +88,12 @@ export function showSpotify() {
  *
  * - Hides the Spotify box and shows the calendar box.
  * - Updates panel state to mark Spotify as not playing.
- * - If the current minute is < 10 and full-opacity mode is not already
- *   active, triggers `showCalendarFull()` for the hourly highlight.
- *   Otherwise sets calendar opacity to 0.75 (ambient dim level).
+ * - If a full-opacity window was active when Spotify opened and time
+ *   still remains on it, resumes full opacity for the remaining duration.
+ * - Otherwise resets the 30-min cycle to start from now, so the user
+ *   gets a fresh cycle rather than waiting for whenever the original
+ *   trigger was due.
+ * - If neither applies, sets calendar to ambient (0.75) opacity.
  */
 export function showCalendar() {
   const spotify  = $(SELECTORS.spotifyBox);
@@ -98,12 +106,26 @@ export function showCalendar() {
 
   updatePanelState({ spotifyPlaying: false });
 
-  const now     = new Date();
-  const minutes = now.getMinutes();
-  if (minutes < 10 && !state.panels.calendarFullOpacity) {
-    showCalendarFull();
-  } else if (!state.panels.calendarFullOpacity) {
+  const remaining = state.timers.calendarWindowUntil
+    ? state.timers.calendarWindowUntil - Date.now()
+    : 0;
+
+  if (remaining > 0) {
+    // Resume the window for however long was left when Spotify opened.
+    setCalendarOpacity(1);
+    updatePanelState({ calendarFullOpacity: true });
+    if (state.timers.calendarFullTimeout) clearTimeout(state.timers.calendarFullTimeout);
+    state.timers.calendarFullTimeout = setTimeout(hideCalendarFull, remaining);
+  } else {
+    // No active window — reset the 30-min cycle from now so the user
+    // doesn't wait up to 30 min just because Spotify interrupted the schedule.
+    if (state.timers.calendarFullTimeout) {
+      clearTimeout(state.timers.calendarFullTimeout);
+      state.timers.calendarFullTimeout = null;
+    }
+    state.timers.calendarWindowUntil = null;
     setCalendarOpacity(0.75);
+    scheduleCalendarCycle();
   }
 }
 
@@ -118,6 +140,9 @@ export function showCalendar() {
 export function updatePanelState(updates) {
   Object.assign(state.panels, updates);
   applyPanelDimensions();
+
+  const left = $(SELECTORS.leftPanel);
+  left?.classList.toggle("swapped", state.panels.swapped);
 }
 
 /**
@@ -143,6 +168,30 @@ function getPanelDimensions() {
 }
 
 /**
+ * Keep the burst photo horizontal offset in sync with the panel layout.
+ *
+ * Uses `--burst-x-offset` so existing and newly created `.floating-photo`
+ * elements move correctly when panels are swapped, including mid-animation.
+ *
+ * Offset is only applied when panels are swapped in the wide photo layout;
+ * narrow states already position the photo panel, so no extra offset is needed.
+ */
+function updateBurstOffset() {
+  const left = $(SELECTORS.leftPanel);
+  if (!left) return;
+
+  const needsOffset =
+    state.panels.swapped &&
+    !state.panels.calendarFullOpacity &&
+    !state.panels.spotifyPlaying;
+
+  left.style.setProperty(
+    "--burst-x-offset",
+    needsOffset ? `${window.innerWidth * 0.3}px` : "0px"
+  );
+}
+
+/**
  * Apply the calculated panel dimensions to the left panel DOM element.
  *
  * Animates width and left position using a 0.6s CSS transition so
@@ -151,10 +200,20 @@ function getPanelDimensions() {
 function applyPanelDimensions() {
   const left = $(SELECTORS.leftPanel);
   if (!left) return;
+
   const dim = getPanelDimensions();
+
   left.style.transition = "width 0.6s ease, left 0.6s ease";
   left.style.left  = dim.left;
   left.style.width = dim.width;
+
+  left.classList.toggle("swapped", state.panels.swapped);
+  left.classList.toggle(
+    "photo-narrow",
+    state.panels.calendarFullOpacity || state.panels.spotifyPlaying
+  );
+
+  updateBurstOffset();
 }
 
 /**
@@ -174,9 +233,6 @@ export function swapPanels() {
   const wifiInfo   = document.querySelector(".wifi-info");
   const qrCode     = document.querySelector(".qrcode_icon");
   const systemInfo = document.querySelector(".system-info-box");
-
-  const floating    = $$(".floating-photo");
-  const hadFloating = floating.length > 0;
 
   if (state.panels.swapped) {
     // Restore default positions
@@ -207,42 +263,36 @@ export function swapPanels() {
     updatePanelState({ swapped: true });
   }
 
-  // Shift floating photos to match the new panel position
-  if (hadFloating) {
-    const offset = state.panels.swapped ? window.innerWidth * 0.3 : 0;
-    floating.forEach(photo => {
-      if (!photo.dataset.baseLeft) photo.dataset.baseLeft = parseFloat(photo.style.left) || 0;
-      const base = parseFloat(photo.dataset.baseLeft);
-      photo.style.left = `${base + offset}px`;
-    });
-  }
 }
 
 /**
- * Show the calendar at full opacity for a timed period.
+ * Show the calendar at full opacity for INTERVALS.CALENDAR_FULL_TIMEOUT ms.
  *
- * Only activates when the Spotify box is hidden (i.e. not currently
- * playing). Sets a timeout of `INTERVALS.CALENDAR_FULL_TIMEOUT` ms
- * after which `hideCalendarFull` automatically restores ambient opacity.
+ * Only activates when the Spotify box is hidden. Records the window
+ * expiry time in `state.timers.calendarWindowUntil` so that showCalendar()
+ * can resume the window correctly if Spotify hides mid-window.
  *
  * Safe to call multiple times — clears any existing timeout before
  * setting a new one.
  */
 export function showCalendarFull() {
   const spotifyBox = $(SELECTORS.spotifyBox);
-  if (spotifyBox && spotifyBox.classList.contains("hidden")) {
-    setCalendarOpacity(1);
-    updatePanelState({ calendarFullOpacity: true });
-    if (state.timers.calendarFullTimeout) clearTimeout(state.timers.calendarFullTimeout);
-    state.timers.calendarFullTimeout = setTimeout(hideCalendarFull, INTERVALS.CALENDAR_FULL_TIMEOUT);
-  }
+  if (!spotifyBox || !spotifyBox.classList.contains("hidden")) return;
+
+  setCalendarOpacity(1);
+  updatePanelState({ calendarFullOpacity: true });
+
+  if (state.timers.calendarFullTimeout) clearTimeout(state.timers.calendarFullTimeout);
+
+  state.timers.calendarWindowUntil = Date.now() + INTERVALS.CALENDAR_FULL_TIMEOUT;
+  state.timers.calendarFullTimeout = setTimeout(hideCalendarFull, INTERVALS.CALENDAR_FULL_TIMEOUT);
 }
 
 /**
- * Restore calendar to ambient (0.75) opacity after the full-opacity period ends.
+ * Restore calendar to ambient (0.75) opacity after the full-opacity window ends.
  *
- * Only applies when the Spotify box is hidden. Clears the timeout
- * reference so subsequent calls to `showCalendarFull` work correctly.
+ * Clears the window expiry timestamp so showCalendar() knows no window
+ * is active, then schedules the next cycle.
  */
 export function hideCalendarFull() {
   const spotifyBox = $(SELECTORS.spotifyBox);
@@ -250,23 +300,46 @@ export function hideCalendarFull() {
     setCalendarOpacity(0.75);
     updatePanelState({ calendarFullOpacity: false });
   }
+
   if (state.timers.calendarFullTimeout) {
     clearTimeout(state.timers.calendarFullTimeout);
     state.timers.calendarFullTimeout = null;
   }
+
+  state.timers.calendarWindowUntil = null;
+  scheduleCalendarCycle();
 }
 
 /**
- * Trigger full-opacity calendar display at the top of each hour.
+ * Schedule the next calendar full-opacity cycle.
  *
- * Called on every clock tick. Activates `showCalendarFull` only during
- * the first 5 seconds of the hour (minutes === 0, seconds < 5) and only
- * if full-opacity mode is not already active — preventing repeated
- * triggers within the same minute.
+ * Fires showCalendarFull() after INTERVALS.CALENDAR_CYCLE ms (30 min),
+ * then calls itself recursively to keep the cycle running indefinitely.
+ *
+ * Records the next trigger timestamp in `state.timers.calendarNextTrigger`
+ * so that showCalendar() can cancel the pending trigger and reset it to
+ * "now + 30 min" when Spotify hides, avoiding a long wait if Spotify was
+ * active for most of the cycle.
+ *
+ * Call once on app startup (from main.js). Do not call setInterval from
+ * main.js for this — the self-scheduling setTimeout approach is used so
+ * the 30-min gap is always measured from the *end* of the window, not
+ * from a fixed clock boundary.
  */
-export function checkHourlyCalendarDisplay() {
-  const now = new Date();
-  if (now.getMinutes() === 0 && now.getSeconds() < 5 && !state.panels.calendarFullOpacity) {
+export function scheduleCalendarCycle(delay = INTERVALS.CALENDAR_CYCLE) {
+  // Callers are responsible for clearing calendarFullTimeout before calling
+  // this. Two call sites:
+  //   - hideCalendarFull(): window just ended naturally, timeout already fired.
+  //   - showCalendar() else branch: Spotify hid with no active window;
+  //     timeout was explicitly cleared before this call, delay = 30 min from now.
+  state.timers.calendarNextTrigger = Date.now() + delay;
+
+  // Reuse the calendarFullTimeout slot — only one of (active window, pending
+  // trigger) can exist at a time, so one slot covers both cases.
+  state.timers.calendarFullTimeout = setTimeout(() => {
+    state.timers.calendarFullTimeout = null;
+    state.timers.calendarNextTrigger = null;
     showCalendarFull();
-  }
+    // hideCalendarFull() will call scheduleCalendarCycle() when the window ends.
+  }, delay);
 }

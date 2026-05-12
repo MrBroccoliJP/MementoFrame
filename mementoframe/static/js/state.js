@@ -141,18 +141,46 @@ export const state = {
     shuffled:        [],
     index:           0,
     thumbsContainer: null,
+    /**
+     * Promise that resolves when all thumbnails have finished loading.
+     * Set by preloadAllThumbs(); awaited by burstPhotos() to ensure
+     * all images are decoded before the animation starts.
+     * @type {Promise<void>|null}
+     */
+    thumbsReady:     null,
   },
 
   /**
-   * Cross-module timer handles.
+   * Cross-module timer handles and window timestamps.
    * @type {Object}
-   * @property {number|null} calendarFullTimeout - setTimeout handle for the calendar full-opacity
-   *                                              display period. Set by layout.showCalendarFull(),
-   *                                              cleared by layout.hideCalendarFull() and
-   *                                              layout.showSpotify(). Lives here because multiple
-   *                                              functions in layout.js need to read and clear it.
+   * @property {number|null} calendarFullTimeout - setTimeout handle for the active 10-min
+   *                                              full-opacity window. Cleared by hideCalendarFull()
+   *                                              and showSpotify().
+   * @property {number|null} calendarWindowUntil - Epoch ms when the current full-opacity window
+   *                                              expires. Null when no window is active. Read by
+   *                                              showCalendar() to resume the window correctly
+   *                                              after Spotify hides.
+   * @property {number|null} calendarNextTrigger - Epoch ms when the next 30-min cycle is due.
+   *                                              Stored so showCalendar() can reschedule the
+   *                                              cycle from "now + 30 min" when Spotify hides
+   *                                              instead of waiting for the original trigger.
    */
   timers: {
     calendarFullTimeout: null,
+    /**
+     * Timestamp (ms) when the current full-opacity window expires.
+     * Null when no window is active. Used by showCalendar() to decide
+     * whether to resume full opacity when Spotify hides.
+     * @type {number|null}
+     */
+    calendarWindowUntil: null,
+    /**
+     * Timestamp (ms) when the next calendar cycle is scheduled to fire.
+     * Set by scheduleCalendarCycle() so that showCalendar() can reschedule
+     * the cycle from "now + 30 min" when Spotify hides, rather than
+     * waiting for the original trigger time.
+     * @type {number|null}
+     */
+    calendarNextTrigger: null,
   },
 };
