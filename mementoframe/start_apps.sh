@@ -1,3 +1,4 @@
+#!/bin/bash
 # MementoFrame - Raspberry Pi Smart Photo Frame
 # Copyright (c) 2026 João Fernandes
 #
@@ -7,7 +8,7 @@
 
 #This is used to start the necessary Python apps when the system boots up. It should be set to run at startup using a systemd service or similar mechanism.
 
-#!/bin/bash
+
 # activate virtualenv
 source /home/mementoframe/mementoframe/venv/bin/activate
 

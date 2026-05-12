@@ -39,7 +39,7 @@ from dotenv import load_dotenv
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import RPi.GPIO as GPIO
-from mementoframe.updater import PROJECT_ROOT
+from updater import PROJECT_ROOT
 from version_info import VERSIONS
 
 

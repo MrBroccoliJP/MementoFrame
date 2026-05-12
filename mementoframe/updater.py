@@ -68,7 +68,13 @@ RUNTIME_DIR = PROJECT_ROOT / "runtime"
 STATE_FILE = RUNTIME_DIR / "update_state.json"
 BACKUP_ROOT = PROJECT_ROOT.parent / "mementoframe_backups"
 DEFAULT_UPDATE_TIME = "05:00"
-DEFAULT_PRESERVE = ["config.json", ".env", "resources/userdata", "runtime"]
+DEFAULT_PRESERVE = [
+    "config.json",
+    ".env", 
+    "resources/userdata",
+    "resources/userdata/Photos",
+    "runtime",
+]
 DEFAULT_SERVICES = [
     "mementoframe-dashboard.service",
     "mementoframe-display.service",
@@ -264,10 +270,10 @@ def should_preserve(rel: str, preserve: list[str]) -> bool:
     return any(rel == p.strip("/") or rel.startswith(p.strip("/") + "/") for p in preserve)
 
 
-def copy_tree_contents(src: Path, dst: Path, preserve: list[str]) -> None:
+def copy_tree_contents(src: Path, dst: Path, preserve: list[str], _rel_prefix: str = "") -> None:
     for item in src.iterdir():
         name = item.name
-        rel = name
+        rel = f"{_rel_prefix}{name}" if _rel_prefix else name
         if name in EXCLUDE_DURING_COPY or should_preserve(rel, preserve):
             continue
         target = dst / name
@@ -338,11 +344,21 @@ def backup_current() -> Path:
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = BACKUP_ROOT / f"mementoframe-{installed_version()}-{stamp}"
-    shutil.copytree(
-        PROJECT_ROOT,
-        dest,
-        ignore=shutil.ignore_patterns("venv", "__pycache__", ".git", "runtime/update_state.json"),
-    )
+
+    base_ignore = shutil.ignore_patterns("venv", "__pycache__", ".git", "runtime/update_state.json")
+
+    def ignore_all(directory, names):
+        ignored = base_ignore(directory, names)
+        for name in names:
+            path = Path(directory) / name
+            try:
+                if path.exists() and not (path.is_file() or path.is_dir() or path.is_symlink()):
+                    ignored.add(name)
+            except Exception:
+                ignored.add(name)
+        return ignored
+
+    shutil.copytree(PROJECT_ROOT, dest, ignore=ignore_all, ignore_dangling_symlinks=True)
     return dest
 
 
