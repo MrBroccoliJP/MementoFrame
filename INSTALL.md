@@ -31,18 +31,37 @@ The recommended setup is the one-command installer. It creates/uses the `memento
 
 ## Recommended One-Command Install
 
-From a fresh Raspberry Pi OS install:
+From a fresh Raspberry Pi OS install, download the installer from the latest GitHub Release and run it:
 
 ```bash
 cd ~
-git clone https://github.com/MrBroccoliJP/MementoFrame.git
-cd MementoFrame
+curl -fL https://github.com/MrBroccoliJP/MementoFrame/releases/latest/download/install.sh -o install.sh
 sudo bash install.sh
 ```
 
 The installer must be run with `sudo` because it installs apt packages, creates users, writes systemd services, edits boot display config, and configures limited sudo permissions for Wi-Fi/update/reboot actions.
 
-You can also install from a local checkout by setting `SRC_DIR`:
+By default, `install.sh` downloads and installs the latest stable GitHub Release. It does **not** install from the moving `main` branch.
+
+Install a specific release tag:
+
+```bash
+sudo INSTALL_TAG=v1.25.22.21.21.13 bash install.sh
+```
+
+Install the newest non-draft pre-release/release instead of only the latest stable release:
+
+```bash
+sudo INSTALL_CHANNEL=pre-release bash install.sh
+```
+
+Install from a fork or different repository:
+
+```bash
+sudo INSTALL_REPO=owner/repository bash install.sh
+```
+
+Developer-only local checkout override:
 
 ```bash
 sudo SRC_DIR="$(pwd)" bash install.sh
@@ -56,7 +75,7 @@ The runtime app is installed to:
 /home/mementoframe/mementoframe
 ```
 
-The full Git checkout is only used as install source. The Pi runtime does not run from the repository root.
+The Pi runtime does not run from the installer location or from a full Git checkout.
 
 ---
 
@@ -91,7 +110,7 @@ The installed runtime app folder contains the split-service layout:
 6. Configures display boot settings in `/boot/firmware/config.txt`.
 7. Configures quiet boot arguments in `/boot/firmware/cmdline.txt` while preserving the single-line format.
 8. Configures X permissions in `/etc/X11/Xwrapper.config`.
-9. Copies the inner app folder to `/home/mementoframe/mementoframe`.
+9. Downloads the selected GitHub Release, then copies the inner app folder to `/home/mementoframe/mementoframe`.
 10. Runs `python3 updater.py install` as the `mementoframe` user.
 11. Creates `/usr/local/bin/mementoframe-kiosk.sh`.
 12. Creates the split systemd services.
@@ -105,7 +124,7 @@ The installed runtime app folder contains the split-service layout:
 | Path | Purpose |
 |---|---|
 | `/home/mementoframe/mementoframe` | Runtime app root. |
-| `/tmp/mementoframe-install-src` | Default temporary full repo checkout used during install. |
+| `/tmp/mementoframe-install-src` | Temporary extracted GitHub Release source used during install. |
 | `/home/mementoframe/mementoframe/resources/userdata` | Persistent user data. Preserved by updates. |
 | `/home/mementoframe/mementoframe/runtime` | Runtime update/config state. Preserved by updates. |
 | `/home/mementoframe/mementoframe/.env` | Local secrets and optional GitHub token. Preserved by updates. |
@@ -371,6 +390,8 @@ systemctl status mementoframe-kiosk.service
 
 Updates are handled by `updater.py` and GitHub Releases.
 
+Each GitHub Release should include `install.sh` as a release asset so first-time users can install the latest tested release without cloning the repository.
+
 GitHub release tags should use the composite version from `version_info.py`:
 
 ```text
@@ -416,10 +437,13 @@ sudo apt install -y \
 sudo adduser --disabled-password --gecos "MementoFrame" mementoframe || true
 sudo usermod -aG video,input,gpio,netdev mementoframe
 
-cd /home/mementoframe
-git clone https://github.com/MrBroccoliJP/MementoFrame.git MementoFrame-src
-rm -rf /home/mementoframe/mementoframe
-cp -a /home/mementoframe/MementoFrame-src/mementoframe /home/mementoframe/mementoframe
+cd /tmp
+curl -fL https://github.com/MrBroccoliJP/MementoFrame/releases/latest/download/install.sh -o install.sh
+# If the one-command installer itself failed after dependencies, rerun it:
+sudo bash install.sh
+
+# Or manually use a full release/source checkout that contains the inner mementoframe folder:
+# cp -a /path/to/release-or-checkout/mementoframe /home/mementoframe/mementoframe
 sudo chown -R mementoframe:mementoframe /home/mementoframe/mementoframe
 
 cd /home/mementoframe/mementoframe

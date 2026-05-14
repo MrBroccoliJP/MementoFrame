@@ -8,7 +8,9 @@ APP_USER="${APP_USER:-mementoframe}"
 APP_HOME="${APP_HOME:-/home/${APP_USER}}"
 APP_DIR="${APP_DIR:-${APP_HOME}/mementoframe}"
 SRC_DIR="${SRC_DIR:-}"
-REPO_URL="${REPO_URL:-https://github.com/MrBroccoliJP/MementoFrame.git}"
+INSTALL_REPO="${INSTALL_REPO:-MrBroccoliJP/MementoFrame}"
+INSTALL_CHANNEL="${INSTALL_CHANNEL:-stable}"
+INSTALL_TAG="${INSTALL_TAG:-}"
 REPO_TMP="${REPO_TMP:-/tmp/mementoframe-install-src}"
 KIOSK_SCRIPT="/usr/local/bin/mementoframe-kiosk.sh"
 CONFIG_SERVICE="/etc/systemd/system/mementoframe-config.service"
@@ -20,11 +22,6 @@ SUDOERS_FILE="/etc/sudoers.d/mementoframe-updater"
 BOOT_CONFIG="/boot/firmware/config.txt"
 BOOT_CMDLINE="/boot/firmware/cmdline.txt"
 XWRAPPER_CONFIG="/etc/X11/Xwrapper.config"
-
-OLD_SERVICES=(
-  mementoframe.service
-  mementoframe-ap.service
-)
 
 ALL_SERVICES=(
   mementoframe-kiosk.service
@@ -239,20 +236,109 @@ configure_boot_and_x11
 
 log "Preparing source"
 rm -rf "${REPO_TMP}"
+mkdir -p "${REPO_TMP}"
+
 if [[ -n "${SRC_DIR}" ]]; then
+  log "Using local source from SRC_DIR=${SRC_DIR}"
   if [[ ! -d "${SRC_DIR}/mementoframe" ]]; then
     echo "ERROR: SRC_DIR must point to the repo root containing mementoframe/" >&2
     exit 1
   fi
-  cp -a "${SRC_DIR}" "${REPO_TMP}"
-elif [[ -d "$(pwd)/mementoframe" && -f "$(pwd)/mementoframe/updater.py" ]]; then
-  cp -a "$(pwd)" "${REPO_TMP}"
+  cp -a "${SRC_DIR}" "${REPO_TMP}/repo"
 else
-  git clone "${REPO_URL}" "${REPO_TMP}"
+  log "Downloading MementoFrame release from GitHub"
+  INSTALL_REPO="${INSTALL_REPO}" \
+  INSTALL_CHANNEL="${INSTALL_CHANNEL}" \
+  INSTALL_TAG="${INSTALL_TAG}" \
+  REPO_TMP="${REPO_TMP}" \
+  GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
+  python3 - <<'PY_RELEASE_DOWNLOAD'
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import sys
+import urllib.parse
+import urllib.request
+import zipfile
+from pathlib import Path
+
+repo = os.environ.get("INSTALL_REPO", "").strip()
+channel = os.environ.get("INSTALL_CHANNEL", "stable").strip().lower()
+tag = os.environ.get("INSTALL_TAG", "").strip()
+repo_tmp = Path(os.environ["REPO_TMP"])
+token = os.environ.get("GITHUB_TOKEN", "").strip()
+
+if not repo or "/" not in repo:
+    raise SystemExit("ERROR: INSTALL_REPO must be owner/repository, for example MrBroccoliJP/MementoFrame")
+
+headers = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "MementoFrame-Installer",
+}
+if token:
+    headers["Authorization"] = f"Bearer {token}"
+
+
+def http_json(url: str):
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+
+def parse_version(value: str) -> tuple[int, ...]:
+    parts = re.findall(r"\d+", str(value).strip().lstrip("vV"))
+    return tuple(int(p) for p in parts) or (0,)
+
+if tag:
+    encoded_tag = urllib.parse.quote(tag, safe="")
+    release_url = f"https://api.github.com/repos/{repo}/releases/tags/{encoded_tag}"
+    release = http_json(release_url)
+elif channel in {"pre-release", "prerelease", "pre_release"}:
+    releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=30")
+    candidates = [r for r in releases if not r.get("draft") and r.get("tag_name")]
+    if not candidates:
+        raise SystemExit("ERROR: no non-draft GitHub releases found")
+    release = max(candidates, key=lambda r: parse_version(r.get("tag_name") or ""))
+else:
+    release = http_json(f"https://api.github.com/repos/{repo}/releases/latest")
+
+zipball_url = release.get("zipball_url")
+if not zipball_url:
+    raise SystemExit("ERROR: selected GitHub release does not include a zipball_url")
+
+print(f"Selected release: {release.get('tag_name') or release.get('name')}")
+archive = repo_tmp / "release.zip"
+req = urllib.request.Request(zipball_url, headers={"User-Agent": "MementoFrame-Installer", **({"Authorization": f"Bearer {token}"} if token else {})})
+with urllib.request.urlopen(req, timeout=120) as res, archive.open("wb") as f:
+    shutil.copyfileobj(res, f)
+
+extract_dir = repo_tmp / "extract"
+extract_dir.mkdir(parents=True, exist_ok=True)
+with zipfile.ZipFile(archive) as zf:
+    bad = zf.testzip()
+    if bad:
+        raise SystemExit(f"ERROR: corrupt release archive member: {bad}")
+    zf.extractall(extract_dir)
+
+candidates = []
+for path in extract_dir.rglob("mementoframe"):
+    if path.is_dir() and (path / "updater.py").is_file():
+        candidates.append(path.parent)
+
+if not candidates:
+    raise SystemExit("ERROR: release archive does not contain mementoframe/updater.py")
+
+source_root = sorted(candidates, key=lambda p: len(p.parts))[0]
+shutil.copytree(source_root, repo_tmp / "repo")
+PY_RELEASE_DOWNLOAD
 fi
 
+
 for required in updater.py version_info.py config_portal_service.py display_service.py network_manager_service.py requirements.txt; do
-  if [[ ! -f "${REPO_TMP}/mementoframe/${required}" ]]; then
+  if [[ ! -f "${REPO_TMP}/repo/mementoframe/${required}" ]]; then
     echo "ERROR: source does not contain mementoframe/${required}" >&2
     echo "The split-service layout requires config_portal_service.py, display_service.py, and network_manager_service.py." >&2
     exit 1
@@ -264,16 +350,12 @@ for svc in "${ALL_SERVICES[@]}"; do
   stop_service_if_exists "$svc"
 done
 
-for svc in "${OLD_SERVICES[@]}"; do
-  disable_service_if_exists "$svc"
-done
-
 if [[ -d "${APP_DIR}" ]]; then
   BACKUP="${APP_HOME}/mementoframe.preinstall.$(date +%Y%m%d-%H%M%S)"
   warn "Existing app directory found. Moving it to ${BACKUP}"
   mv "${APP_DIR}" "${BACKUP}"
 fi
-cp -a "${REPO_TMP}/mementoframe" "${APP_DIR}"
+cp -a "${REPO_TMP}/repo/mementoframe" "${APP_DIR}"
 chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 
 log "Running app bootstrap"
@@ -417,9 +499,6 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF_KIOSK_SERVICE
 
-log "Cleaning old service files"
-rm -f /etc/systemd/system/mementoframe.service /etc/systemd/system/mementoframe-ap.service
-
 log "Enabling services"
 systemctl daemon-reload
 for svc in "${NEW_SERVICES[@]}"; do
@@ -435,3 +514,4 @@ echo "App root: ${APP_DIR}"
 echo "Edit local secrets: sudo -u ${APP_USER} nano ${APP_DIR}/.env"
 echo "Admin dashboard: http://<pi-ip>:5000"
 echo "Logs: journalctl -u mementoframe-config.service -f"
+echo "A reboot is recommended after install so boot/display settings take effect."
