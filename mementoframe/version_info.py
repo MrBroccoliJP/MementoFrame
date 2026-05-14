@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 14, #auto updates and repo config added
+        "version": 15, #removed shebang fixing logic
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },

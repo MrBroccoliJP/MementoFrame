@@ -473,25 +473,6 @@ def repair_runtime_permissions() -> list[str]:
     return fixed
 
 
-def ensure_start_script_shebang() -> bool:
-    path = PROJECT_ROOT / "start_apps.sh"
-    if not path.exists():
-        return False
-    try:
-        text = path.read_text(encoding="utf-8")
-        lines = text.splitlines()
-        first = lines[0].strip() if lines else ""
-        correct = "#!/bin/bash"
-        if first == correct:
-            return False
-        if first.startswith("#!"):
-            lines = lines[1:]
-        path.write_text(correct + "\n" + "\n".join(lines).lstrip("\n") + "\n", encoding="utf-8")
-        return True
-    except Exception:
-        return False
-
-
 def install_requirements() -> None:
     req = PROJECT_ROOT / "requirements.txt"
     if not req.exists():
@@ -521,7 +502,6 @@ def apply_update() -> dict[str, Any]:
     copied: list[str] = []
     restored_preserved: list[str] = []
     fixed_permissions: list[str] = []
-    shebang_fixed = False
     removed_special_files: list[str] = []
 
     try:
@@ -545,7 +525,6 @@ def apply_update() -> dict[str, Any]:
             backup = backup_current()
             copied = copy_tree_contents(release_root, PROJECT_ROOT, preserve)
             restored_preserved = restore_preserved_from_backup(backup, preserve)
-            shebang_fixed = ensure_start_script_shebang()
             fixed_permissions = repair_runtime_permissions()
             install_requirements()
 
@@ -565,7 +544,6 @@ def apply_update() -> dict[str, Any]:
             restored_preserved=restored_preserved,
             removed_special_files=removed_special_files,
             fixed_permissions=fixed_permissions,
-            start_apps_shebang_fixed=shebang_fixed,
             last_error=None,
         )
     except Exception as exc:
@@ -667,7 +645,6 @@ def install() -> dict[str, Any]:
     if not venv.exists():
         run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=300)
     removed_special_files = cleanup_special_files(PROJECT_ROOT)
-    shebang_fixed = ensure_start_script_shebang()
     fixed_permissions = repair_runtime_permissions()
     install_requirements()
     return replace_state(
@@ -676,7 +653,6 @@ def install() -> dict[str, Any]:
         env_created=env_created,
         removed_special_files=removed_special_files,
         fixed_permissions=fixed_permissions,
-        start_apps_shebang_fixed=shebang_fixed,
         last_error=None,
     )
 

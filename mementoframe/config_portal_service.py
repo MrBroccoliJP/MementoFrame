@@ -60,6 +60,87 @@ from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 ENV_FILE = Path(".env")
 
 
+def read_env_values():
+    """Read simple KEY=value pairs from .env without exposing unrelated parsing complexity."""
+    values = {}
+    if not ENV_FILE.exists():
+        return values
+
+    try:
+        for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    except Exception as e:
+        print(f"⚠️ Could not read .env: {e}")
+
+    return values
+
+
+def write_env_values(updates):
+    """Update or append selected .env values while preserving unrelated lines."""
+    existing_lines = []
+    seen = set()
+
+    if ENV_FILE.exists():
+        existing_lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+
+    new_lines = []
+    for raw in existing_lines:
+        line = raw.strip()
+
+        if not line or line.startswith("#") or "=" not in line:
+            new_lines.append(raw)
+            continue
+
+        key, _value = line.split("=", 1)
+        key = key.strip()
+
+        if key in updates:
+            new_lines.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            new_lines.append(raw)
+
+    for key, value in updates.items():
+        if key not in seen:
+            new_lines.append(f"{key}={value}")
+
+    ENV_FILE.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+    try:
+        ENV_FILE.chmod(0o600)
+    except Exception:
+        pass
+
+    for key, value in updates.items():
+        os.environ[key] = value
+
+
+def spotify_credentials_configured():
+    """Return True when Spotify app credentials are configured."""
+    return bool(os.getenv("SPOTIFY_CLIENT_ID") and os.getenv("SPOTIFY_CLIENT_SECRET"))
+
+
+def restart_runtime_services_after_env_change():
+    """Restart services that need .env values reloaded.
+
+    Use separate sudo calls because sudoers command matching is argument-specific.
+    The config service restart is delayed so this HTTP response can finish first.
+    """
+    subprocess.Popen(
+        ["sudo", "systemctl", "restart", "mementoframe-display.service"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.Popen(
+        ["sh", "-c", "sleep 2; sudo systemctl restart mementoframe-config.service"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def ensure_flask_secret_key():
     """Return a stable Flask session secret, creating and saving one when missing."""
     key = os.getenv("FLASK_SECRET_KEY")
@@ -376,10 +457,13 @@ def scan_networks():
 # =============================================================================
 def get_spotify_oauth():
     """Build the Spotify OAuth helper using environment credentials and cache path."""
+    if not spotify_credentials_configured():
+        return None
+
     return SpotifyOAuth(
         client_id=os.getenv("SPOTIFY_CLIENT_ID"),
         client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
-        redirect_uri="https://httpbin.org/anything",
+        redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
         scope="user-read-playback-state user-read-currently-playing user-library-read",
         cache_path=SPOTIFY_CACHE
     )
@@ -388,9 +472,13 @@ def get_spotify_user():
     """Return the connected Spotify user profile when cached credentials are valid."""
     try:
         oauth = get_spotify_oauth()
+        if not oauth:
+            return None
+
         token_info = oauth.get_cached_token()
         if not token_info:
             return None
+
         sp = spotipy.Spotify(auth=token_info["access_token"])
         return sp.current_user()
     except Exception:
@@ -511,6 +599,10 @@ def dashboard():
     networks = scan_networks()
     spotify_user = get_spotify_user()
     spotify_msg = request.args.get("msg")
+    spotify_env = read_env_values()
+    spotify_configured = bool(
+        spotify_env.get("SPOTIFY_CLIENT_ID") and spotify_env.get("SPOTIFY_CLIENT_SECRET")
+    )
     config = load_config()
 
     if request.method == "POST" and "ssid" in request.form:
@@ -520,13 +612,15 @@ def dashboard():
         return redirect(url_for("dashboard", msg=msg))
 
     return render_template(
-        "backend.html",
+        "config_portal.html",
         mode=mode,
         ip=ip,
         networks=networks,
         photos=photos,
         spotify_user=spotify_user,
         spotify_msg=spotify_msg,
+        spotify_env=spotify_env,
+        spotify_configured=spotify_configured,
         update_state=load_update_state(),
         config=config,
     )
@@ -721,16 +815,42 @@ def versions():
     """Return component version information as JSON."""
     return jsonify(VERSION_INFO)
 
+@app.route("/save_spotify_settings", methods=["POST"])
+def save_spotify_settings():
+    """Save Spotify app credentials to .env and restart services so they reload."""
+    client_id = request.form.get("spotify_client_id", "").strip()
+    client_secret = request.form.get("spotify_client_secret", "").strip()
+    redirect_uri = request.form.get("spotify_redirect_uri", "").strip() or "https://httpbin.org/anything"
+
+    write_env_values({
+        "SPOTIFY_CLIENT_ID": client_id,
+        "SPOTIFY_CLIENT_SECRET": client_secret,
+        "SPOTIFY_REDIRECT_URI": redirect_uri,
+    })
+
+    restart_runtime_services_after_env_change()
+
+    return redirect(url_for(
+        "dashboard",
+        msg="Spotify app settings saved. Services are restarting; refresh the page in a few seconds."
+    ))
+
+
 @app.route("/spotify/connect")
 def spotify_connect():
     """Redirect the user to Spotify authorization."""
     oauth = get_spotify_oauth()
+    if not oauth:
+        return redirect(url_for("dashboard", msg="Spotify Client ID and Client Secret must be saved first."))
     return redirect(oauth.get_authorize_url())
 
 
 @app.route("/spotify/manual", methods=["POST"])
 def spotify_manual():
     """Extract the Spotify callback code from a pasted URL and cache the access token."""
+    if not spotify_credentials_configured():
+        return redirect(url_for("dashboard", msg="Spotify Client ID and Client Secret must be saved first."))
+
     pasted_url = request.form.get("spotify_url")
     if not pasted_url:
         return redirect(url_for("dashboard", msg="No URL provided"))
@@ -747,6 +867,9 @@ def spotify_manual():
 
     try:
         oauth = get_spotify_oauth()
+        if not oauth:
+            return redirect(url_for("dashboard", msg="Spotify Client ID and Client Secret must be saved first."))
+
         oauth.get_access_token(code)
         user = get_spotify_user()
         if user:

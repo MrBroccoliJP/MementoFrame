@@ -244,7 +244,7 @@ def get_local_ip():
 @app.route("/")
 def home():
     """Render the main photo-frame frontend."""
-    return render_template("index.html")
+    return render_template("kiosk_display.html")
 
 @app.route("/assets/<path:filename>")
 def serve_assets(filename):

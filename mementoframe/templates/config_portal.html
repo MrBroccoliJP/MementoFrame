@@ -14,7 +14,7 @@
   <meta charset="utf-8">
   <title>MementoFrame Configuration</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="static/backend.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='config_portal.css') }}">
 
   <script>
     function toggleClock2Region() {
@@ -223,30 +223,66 @@
     </details>
 
     <!-- Spotify -->
+    <!-- Spotify -->
     <details class="section">
       <summary>🎵 Spotify Integration</summary>
+
       {% if spotify_msg %}
       <div class="message">{{ spotify_msg }}</div>
       {% endif %}
+
+      <p class="setting-hint">
+        To use Spotify, create an app in the
+        <strong>Spotify Developer Dashboard</strong>, then copy the Client ID and Client Secret here.
+        In the Spotify app settings, add this Redirect URI:
+      </p>
+
+      <code>https://httpbin.org/anything</code>
+
+      <form action="{{ url_for('save_spotify_settings') }}" method="POST">
+        <label>Spotify Client ID</label>
+        <input type="text" name="spotify_client_id" placeholder="Paste Spotify Client ID"
+          value="{{ spotify_env.SPOTIFY_CLIENT_ID or '' }}">
+
+        <label>Spotify Client Secret</label>
+        <input type="password" name="spotify_client_secret" placeholder="Paste Spotify Client Secret"
+          value="{{ spotify_env.SPOTIFY_CLIENT_SECRET or '' }}">
+
+        <label>Spotify Redirect URI</label>
+        <input type="text" name="spotify_redirect_uri"
+          value="{{ spotify_env.SPOTIFY_REDIRECT_URI or 'https://httpbin.org/anything' }}">
+
+        <button type="submit">Save Spotify App Settings</button>
+      </form>
+
+      {% if spotify_configured %}
       {% if spotify_user %}
       <p>Connected as <strong>{{ spotify_user.display_name or spotify_user.id }}</strong></p>
       <form action="{{ url_for('spotify_disconnect') }}" method="POST">
         <button class="disconnect-btn">Disconnect</button>
       </form>
       {% else %}
-      <p>Not connected</p>
+      <p>Spotify app credentials are saved, but the frame is not connected to a Spotify account yet.</p>
       <ol>
         <li>Click <strong>Connect to Spotify</strong>.</li>
-        <li>After login, copy the redirect URL (e.g. <code>https://httpbin.org/anything?code=...</code>).</li>
-        <li>Paste it below:</li>
+        <li>Log in and approve the app.</li>
+        <li>After redirect, copy the full URL from the browser address bar.</li>
+        <li>Paste it below and submit.</li>
       </ol>
+
       <form action="{{ url_for('spotify_manual') }}" method="POST">
         <input type="text" name="spotify_url" placeholder="Paste the full redirect URL here" required>
-        <button type="submit">Submit URL</button>
+        <button type="submit">Submit Spotify Redirect URL</button>
       </form>
+
       <form action="{{ url_for('spotify_connect') }}" method="GET" style="margin-top:10px;">
         <button>Connect to Spotify</button>
       </form>
+      {% endif %}
+      {% else %}
+      <p class="setting-hint">
+        Save Spotify Client ID and Client Secret first. The connect button will appear after credentials are configured.
+      </p>
       {% endif %}
     </details>
 
@@ -312,8 +348,8 @@
 
         <label>Update Channel</label>
         <select name="update_channel">
-          <option value="stable" {% if updates.channel == 'stable' %}selected{% endif %}>Stable</option>
-          <option value="pre-release" {% if updates.channel == 'pre-release' %}selected{% endif %}>Pre-release</option>
+          <option value="stable" {% if updates.channel=='stable' %}selected{% endif %}>Stable</option>
+          <option value="pre-release" {% if updates.channel=='pre-release' %}selected{% endif %}>Pre-release</option>
         </select>
 
         <button type="submit">Save Update Settings</button>
@@ -321,7 +357,8 @@
 
       <div class="update-actions">
         <button type="button" onclick="checkForUpdates()">Check for Updates</button>
-        <button type="button" class="update-install-btn" onclick="installUpdateNow()" {% if not us.available or us.update_in_progress %}disabled{% endif %}>
+        <button type="button" class="update-install-btn" onclick="installUpdateNow()" {% if not us.available or
+          us.update_in_progress %}disabled{% endif %}>
           Install Update Now
         </button>
       </div>
