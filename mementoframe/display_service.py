@@ -40,7 +40,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import RPi.GPIO as GPIO
 from updater import PROJECT_ROOT
-from version_info import VERSIONS
+from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 
 
 # =============================================================================
@@ -101,7 +101,7 @@ def load_update_state():
     state.setdefault("available", False)
     state.setdefault("pending_restart", False)
     state.setdefault("update_in_progress", False)
-    state.setdefault("installed_version", VERSIONS.get("MementoFrame") or VERSIONS.get("Global App Version"))
+    state.setdefault("installed_version", GLOBAL_APP_VERSION)
     state["auto_update"] = bool(updates_cfg.get("auto_update", False))
     return state
 
@@ -350,7 +350,7 @@ def get_ip():
 @app.route("/versions")
 def versions():
     """Return component version information as JSON."""
-    return jsonify(VERSIONS)
+    return jsonify(VERSION_INFO)
 
 
 @app.route("/update_status.json")

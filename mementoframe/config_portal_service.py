@@ -52,7 +52,7 @@ from PIL import Image, ImageOps
 import RPi.GPIO as GPIO
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
-from version_info import VERSIONS
+from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 
 # =============================================================================
 # Environment and Flask initialization
@@ -450,7 +450,7 @@ def load_update_state():
 
     cfg = load_config()
     updates_cfg = cfg.get("updates", {})
-    state.setdefault("installed_version", VERSIONS.get("MementoFrame") or VERSIONS.get("Global App Version"))
+    state.setdefault("installed_version", GLOBAL_APP_VERSION)
     state.setdefault("available", False)
     state.setdefault("pending_restart", False)
     state.setdefault("update_in_progress", False)
@@ -719,7 +719,7 @@ def save_update_settings():
 @app.route("/versions")
 def versions():
     """Return component version information as JSON."""
-    return jsonify(VERSIONS)
+    return jsonify(VERSION_INFO)
 
 @app.route("/spotify/connect")
 def spotify_connect():

@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import runpy
 import os
 import re
 import shutil
@@ -21,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-UPDATER_BUILD = "2026-05-12-permissions-preserve-v10"
+UPDATER_BUILD = "2026-05-14-split-services-v2"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
@@ -30,7 +31,12 @@ STATE_FILE = RUNTIME_DIR / "update_state.json"
 BACKUP_ROOT = PROJECT_ROOT.parent / "mementoframe_backups"
 DEFAULT_UPDATE_TIME = "05:00"
 DEFAULT_PRESERVE = ["config.json", ".env", "resources/userdata", "runtime"]
-DEFAULT_SERVICES = ["mementoframe.service", "kiosk.service"]
+DEFAULT_SERVICES = [
+    "mementoframe-config.service",
+    "mementoframe-display.service",
+    "mementoframe-network.service",
+    "mementoframe-kiosk.service",
+]
 HEALTH_URLS = ["http://127.0.0.1:5000/health", "http://127.0.0.1:5001/health"]
 APP_SUBDIR = "mementoframe"
 
@@ -42,7 +48,6 @@ EXCLUDE_DURING_COPY = {
     "node_modules",
     "runtime",
 }
-
 SPECIAL_FILE_CLEANUP_SKIP = {
     ".git",
     "venv",
@@ -54,24 +59,6 @@ SPECIAL_FILE_CLEANUP_SKIP = {
 
 def now_ts() -> int:
     return int(time.time())
-
-
-def load_dotenv() -> None:
-    for env_path in [PROJECT_ROOT / ".env", PROJECT_ROOT.parent / ".env"]:
-        if not env_path.exists():
-            continue
-        try:
-            for raw in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key and key not in os.environ:
-                    os.environ[key] = value
-        except Exception:
-            pass
 
 
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
@@ -91,19 +78,65 @@ def read_json(path: Path, fallback: dict[str, Any] | None = None) -> dict[str, A
         return {**fallback, "_read_error": str(exc)}
 
 
-def installed_version() -> str:
-    version_file = PROJECT_ROOT / "version_info.py"
+def load_dotenv() -> None:
+    for env_path in [PROJECT_ROOT / ".env", PROJECT_ROOT.parent / ".env"]:
+        if not env_path.exists():
+            continue
+        try:
+            for lineno, raw in enumerate(env_path.read_text(encoding="utf-8").splitlines(), 1):
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    print(f"⚠️ .env line {lineno}: ignored malformed entry: {line!r}", file=sys.stderr)
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+        except Exception:
+            pass
+
+
+def ensure_env_file() -> bool:
+    """Create a starter .env if missing. Existing files are never overwritten."""
+    env_path = PROJECT_ROOT / ".env"
+    if env_path.exists():
+        return False
+    repo_hint = os.getenv("MEMENTOFRAME_UPDATE_REPO", "MrBroccoliJP/MementoFrame")
+    env_path.write_text(
+        "# MementoFrame local secrets and optional update settings\n"
+        "# Leave Spotify values blank to keep Spotify disconnected.\n"
+        "SPOTIFY_CLIENT_ID=\n"
+        "SPOTIFY_CLIENT_SECRET=\n"
+        "SPOTIFY_REDIRECT_URI=https://httpbin.org/anything\n"
+        "\n"
+        "# Optional. Needed for private GitHub repositories or higher API limits.\n"
+        "GITHUB_TOKEN=\n"
+        "\n"
+        "# Optional. Overrides config.json updates.repo when set.\n"
+        f"MEMENTOFRAME_UPDATE_REPO={repo_hint}\n",
+        encoding="utf-8",
+    )
     try:
-        text = version_file.read_text(encoding="utf-8")
-        m = re.search(r'^GLOBAL_APP_VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
-        if m:
-            return m.group(1)
-        m = re.search(r'["\'](?:MementoFrame|Global App Version)["\']\s*:\s*["\']([^"\']+)["\']', text)
-        if m:
-            return m.group(1)
+        env_path.chmod(0o600)
     except Exception:
         pass
-    return "0.0.0"
+    return True
+
+
+def installed_version() -> str:
+    """Read the generated composite version from version_info.py without import cache."""
+    version_file = PROJECT_ROOT / "version_info.py"
+    try:
+        data = runpy.run_path(str(version_file))
+        version = data.get("GLOBAL_APP_VERSION")
+        if version:
+            return str(version)
+    except Exception:
+        pass
+    return "0.0.0.0.0.0"
 
 
 def base_state(**updates: Any) -> dict[str, Any]:
@@ -156,9 +189,10 @@ def load_config() -> dict[str, Any]:
     updates = cfg["updates"]
     updates.setdefault("auto_update", False)
     updates.setdefault("repo", os.getenv("MEMENTOFRAME_UPDATE_REPO", ""))
+    if os.getenv("MEMENTOFRAME_UPDATE_REPO"):
+        updates["repo"] = os.getenv("MEMENTOFRAME_UPDATE_REPO", "")
     updates.setdefault("channel", "stable")
     updates.setdefault("preserve", DEFAULT_PRESERVE)
-    # Project service names are fixed; no user config required.
     updates["service_names"] = DEFAULT_SERVICES
     return cfg
 
@@ -168,8 +202,9 @@ def save_config(cfg: dict[str, Any]) -> None:
 
 
 def parse_version(v: str) -> tuple[int, ...]:
+    """Parse all numeric segments of tags like v1.25.22.21.21.13."""
     parts = re.findall(r"\d+", str(v).strip().lstrip("vV"))
-    return tuple(int(p) for p in parts[:4]) or (0,)
+    return tuple(int(p) for p in parts) or (0,)
 
 
 def version_newer(latest: str, current: str) -> bool:
@@ -192,22 +227,14 @@ def http_json(url: str, timeout: int = 15) -> Any:
 def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
     if not repo or "/" not in repo:
         raise RuntimeError("Update repo is not configured. Set updates.repo or MEMENTOFRAME_UPDATE_REPO.")
-
     if channel in {"pre-release", "prerelease", "pre_release"}:
         releases = http_json(f"https://api.github.com/repos/{repo}/releases?per_page=30")
         if not isinstance(releases, list) or not releases:
             raise RuntimeError("No GitHub releases found.")
-
-        candidates = [
-            r for r in releases
-            if not r.get("draft") and r.get("tag_name")
-        ]
-
+        candidates = [r for r in releases if not r.get("draft") and r.get("tag_name")]
         if not candidates:
             raise RuntimeError("No non-draft releases found.")
-
         return max(candidates, key=lambda r: parse_version(str(r.get("tag_name") or "")))
-
     return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
 
 
@@ -229,6 +256,7 @@ def check_for_update() -> dict[str, Any]:
             release_notes=release.get("body") or "",
             release_url=release.get("html_url"),
             zipball_url=release.get("zipball_url"),
+            release_assets=release.get("assets") or [],
             available=available,
             checked_at=now_ts(),
             last_error=None,
@@ -239,7 +267,7 @@ def check_for_update() -> dict[str, Any]:
 
 def should_preserve(rel: str, preserve: list[str]) -> bool:
     rel = rel.strip("/")
-    return any(rel == p.strip("/") or rel.startswith(p.strip("/") + "/") for p in preserve)
+    return any(rel == p.strip("/") or rel.startswith(p.strip("/") + "/") for p in preserve if p.strip("/"))
 
 
 def is_excluded(rel: str) -> bool:
@@ -263,8 +291,6 @@ def cleanup_special_files(root: Path = PROJECT_ROOT) -> list[str]:
             rel_dir = str(current.relative_to(root)).strip(".")
         except Exception:
             rel_dir = ""
-
-        # Prevent descending into ignored runtime/heavy folders.
         keep_dirs = []
         for d in dirnames:
             rel = f"{rel_dir}/{d}".strip("/") if rel_dir else d
@@ -272,7 +298,6 @@ def cleanup_special_files(root: Path = PROJECT_ROOT) -> list[str]:
                 continue
             keep_dirs.append(d)
         dirnames[:] = keep_dirs
-
         for name in filenames:
             path = current / name
             try:
@@ -291,17 +316,13 @@ def copy_one(src: Path, dst: Path, rel: str, preserve: list[str], copied_top: se
         return
     if is_special_file(src):
         return
-
     top = rel.split("/", 1)[0]
     copied_top.add(top)
-
     if src.is_dir() and not src.is_symlink():
         dst.mkdir(parents=True, exist_ok=True)
         for child in src.iterdir():
-            child_rel = f"{rel}/{child.name}"
-            copy_one(child, dst / child.name, child_rel, preserve, copied_top)
+            copy_one(child, dst / child.name, f"{rel}/{child.name}", preserve, copied_top)
         return
-
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists() and dst.is_dir():
         shutil.rmtree(dst)
@@ -365,10 +386,10 @@ def find_release_app_root(extract_dir: Path) -> Path:
     candidates: list[Path] = []
     for root, _dirs, files in os.walk(extract_dir):
         p = Path(root)
-        if "app.py" in files and "api_service.py" in files:
+        if "config_portal_service.py" in files and "display_service.py" in files:
             candidates.append(p)
     if not candidates:
-        raise RuntimeError("Could not find app.py + api_service.py inside release archive.")
+        raise RuntimeError("Could not find config_portal_service.py + display_service.py inside release archive.")
     for candidate in candidates:
         if candidate.name == APP_SUBDIR:
             return candidate
@@ -393,7 +414,7 @@ def restart_services(services: list[str]) -> None:
             print(f"⚠️ systemctl restart {svc}: {proc.stderr.strip() or proc.stdout.strip()}")
 
 
-def download_file(url: str, dest: Path, timeout: int = 60) -> str:
+def download_file(url: str, dest: Path, timeout: int = 60, expected_sha256: str | None = None) -> str:
     headers = {"User-Agent": "MementoFrame-Updater"}
     token = os.getenv("GITHUB_TOKEN", "").strip()
     if token:
@@ -407,12 +428,40 @@ def download_file(url: str, dest: Path, timeout: int = 60) -> str:
                 break
             h.update(chunk)
             f.write(chunk)
-    return h.hexdigest()
+    digest = h.hexdigest()
+    if expected_sha256 and digest != expected_sha256.lower():
+        dest.unlink(missing_ok=True)
+        raise RuntimeError(f"SHA-256 mismatch: expected {expected_sha256.lower()!r}, got {digest!r}")
+    return digest
+
+
+def fetch_release_checksum(release_assets: list[dict[str, Any]], filename: str) -> str | None:
+    for asset in release_assets:
+        name = str(asset.get("name") or "").lower()
+        if name in {"checksums.txt", "sha256sums.txt", "checksums.sha256"}:
+            url = asset.get("browser_download_url") or asset.get("url")
+            if not url:
+                continue
+            try:
+                headers = {"User-Agent": "MementoFrame-Updater"}
+                token = os.getenv("GITHUB_TOKEN", "").strip()
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=15) as res:
+                    text = res.read().decode("utf-8", errors="replace")
+                for line in text.splitlines():
+                    parts = line.split()
+                    if len(parts) == 2 and parts[1].lstrip("*") == filename:
+                        return parts[0].lower()
+            except Exception:
+                pass
+    return None
 
 
 def repair_runtime_permissions() -> list[str]:
     fixed: list[str] = []
-    for rel in ["start_apps.sh", "updater.py", "ap_mode_manager.py", "app.py", "api_service.py"]:
+    for rel in ["updater.py", "network_manager_service.py", "config_portal_service.py", "display_service.py"]:
         path = PROJECT_ROOT / rel
         if not path.exists():
             continue
@@ -430,10 +479,14 @@ def ensure_start_script_shebang() -> bool:
         return False
     try:
         text = path.read_text(encoding="utf-8")
-        if text.startswith("#!"):
+        lines = text.splitlines()
+        first = lines[0].strip() if lines else ""
+        correct = "#!/bin/bash"
+        if first == correct:
             return False
-        lines = [line for line in text.splitlines() if not line.strip().startswith("#!")]
-        path.write_text("#!/bin/bash\n" + "\n".join(lines).lstrip("\n") + "\n", encoding="utf-8")
+        if first.startswith("#!"):
+            lines = lines[1:]
+        path.write_text(correct + "\n" + "\n".join(lines).lstrip("\n") + "\n", encoding="utf-8")
         return True
     except Exception:
         return False
@@ -452,9 +505,7 @@ def install_requirements() -> None:
 
 def apply_update() -> dict[str, Any]:
     cfg = load_config()
-    updates = cfg.get("updates", {})
-    preserve = list(updates.get("preserve") or DEFAULT_PRESERVE)
-
+    preserve = list(cfg.get("updates", {}).get("preserve") or DEFAULT_PRESERVE)
     state = read_json(STATE_FILE, {})
     if not state.get("zipball_url") or not state.get("available"):
         state = check_for_update()
@@ -477,7 +528,9 @@ def apply_update() -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="mementoframe-update-") as td:
             tmp = Path(td)
             archive = tmp / "release.zip"
-            sha256 = download_file(str(state["zipball_url"]), archive)
+            release_assets: list[dict[str, Any]] = state.get("release_assets") or []
+            expected_sha256 = fetch_release_checksum(release_assets, "release.zip")
+            sha256 = download_file(str(state["zipball_url"]), archive, expected_sha256=expected_sha256)
             extract_dir = tmp / "extract"
             extract_dir.mkdir()
             with zipfile.ZipFile(archive) as zf:
@@ -607,6 +660,9 @@ def install() -> dict[str, Any]:
         path.mkdir(parents=True, exist_ok=True)
     if not CONFIG_FILE.exists():
         save_config(cfg)
+    env_created = ensure_env_file()
+    # reload after creating .env so diagnose/check can see values immediately if present
+    load_dotenv()
     venv = PROJECT_ROOT / "venv"
     if not venv.exists():
         run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=300)
@@ -617,6 +673,7 @@ def install() -> dict[str, Any]:
     return replace_state(
         installed_version=installed_version(),
         installed_at=now_ts(),
+        env_created=env_created,
         removed_special_files=removed_special_files,
         fixed_permissions=fixed_permissions,
         start_apps_shebang_fixed=shebang_fixed,
@@ -629,7 +686,11 @@ def diagnose() -> dict[str, Any]:
     updates = cfg.get("updates", {})
     repo = updates.get("repo", "")
     channel = updates.get("channel", "stable")
-    url = f"https://api.github.com/repos/{repo}/releases?per_page=10" if str(channel).startswith("pre") else f"https://api.github.com/repos/{repo}/releases/latest"
+    url = (
+        f"https://api.github.com/repos/{repo}/releases?per_page=10"
+        if str(channel).startswith("pre")
+        else f"https://api.github.com/repos/{repo}/releases/latest"
+    )
     out: dict[str, Any] = {
         "updater_build": UPDATER_BUILD,
         "project_root": str(PROJECT_ROOT),
@@ -638,7 +699,14 @@ def diagnose() -> dict[str, Any]:
         "channel": channel,
         "url": url,
         "github_token_loaded": bool(os.getenv("GITHUB_TOKEN", "").strip()),
-        "start_apps_executable": os.access(PROJECT_ROOT / "start_apps.sh", os.X_OK),
+        "env_exists": (PROJECT_ROOT / ".env").exists(),
+        "service_files_exist": {
+            "config_portal_service.py": (PROJECT_ROOT / "config_portal_service.py").exists(),
+            "display_service.py": (PROJECT_ROOT / "display_service.py").exists(),
+            "network_manager_service.py": (PROJECT_ROOT / "network_manager_service.py").exists(),
+        },
+        "services": DEFAULT_SERVICES,
+        "version_schema": "release.frontend.config.display.network.updater",
     }
     try:
         data = http_json(url)
@@ -661,7 +729,6 @@ def main() -> int:
     parser.add_argument("command", choices=["install", "status", "check", "update", "autoupdate", "post-reboot-check", "reboot", "diagnose"])
     parser.add_argument("--no-reboot", action="store_true", help="Do not reboot after update/autoupdate")
     args = parser.parse_args()
-
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     try:
         if args.command == "install":

@@ -87,7 +87,7 @@ function ensureReadable(color) {
   const value = color.trim();
 
   // Do not parse hsl(...) as rgb(...).
-  // Browser can use HSL directly, and your randomPastel() already returns light colours.
+  // Browser can use HSL directly, and your randomColor() already returns light colours.
   if (value.startsWith("hsl")) {
     return value;
   }
@@ -162,14 +162,14 @@ function applyAccent(color, transition = true) {
 }
 
 /**
- * Generate a random pastel colour in HSL space.
+ * Generate a random color colour in HSL space.
  *
  * @returns {string} HSL colour string.
  */
-function randomPastel() {
+function randomColor() {
   const hue   = Math.floor(Math.random() * 360);
-  const sat   = 70 + Math.random() * 10;
-  const light = 80 + Math.random() * 10;
+  const sat   = 55 + Math.floor(Math.random() * 20);   // 55–75%
+  const light = 45 + Math.floor(Math.random() * 20);   // 45–65%
   return `hsl(${hue}, ${sat}%, ${light}%)`;
 }
 
@@ -179,9 +179,9 @@ function randomPastel() {
 function startAccentColorCycle() {
   if (state.spotify.accentTimer) return;
 
-  applyAccent(randomPastel(), false);
+  applyAccent(randomColor(), false);
   state.spotify.accentTimer = setInterval(
-    () => applyAccent(randomPastel(), true),
+    () => applyAccent(randomColor(), true),
     30*60*1000
   );
 }
@@ -259,7 +259,7 @@ export async function updateSpotify() {
           state.spotify.hideTimeout = null;
           cancelArtworkRender({ clearClasses: true });
           stopAccentColorCycle();
-          applyAccent(randomPastel(), true);
+          applyAccent(randomColor(), true);
           startAccentColorCycle();
           showCalendar();
         }, 30000);
