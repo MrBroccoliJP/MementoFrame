@@ -211,6 +211,10 @@ cat > "${KIOSK_SCRIPT}" <<'EOF_KIOSK'
 #!/usr/bin/env bash
 export DISPLAY=:0
 
+openbox-session &
+
+sleep 1
+
 xset -dpms || true
 xset s off || true
 xset s noblank || true
@@ -218,9 +222,11 @@ xsetroot -solid black || true
 
 unclutter -idle 0.1 -root &
 
-openbox-session &
-
 mkdir -p /dev/shm/chromium-cache 2>/dev/null || true
+
+xset -dpms || true
+xset s off || true
+xset s noblank || true
 
 exec chromium \
   --kiosk \

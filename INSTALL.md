@@ -431,7 +431,7 @@ sudo apt update
 sudo apt install -y \
   python3 python3-pip python3-venv git \
   network-manager wireless-tools iw iproute2 \
-  chromium-browser unclutter xserver-xorg xinit openbox x11-xserver-utils \
+  chromium unclutter xserver-xorg xinit openbox x11-xserver-utils \
   libjpeg-dev zlib1g-dev python3-rpi.gpio
 
 sudo adduser --disabled-password --gecos "MementoFrame" mementoframe || true
