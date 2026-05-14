@@ -35,7 +35,7 @@ COMPONENTS = {
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 22,
+        "version": 23, #nmcli using root permissions to rescan wifi networks
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },

@@ -363,7 +363,7 @@ def get_mode():
 def scan_networks():
     """Rescan nearby Wi-Fi networks and return unique SSIDs."""
     try:
-        subprocess.run(["nmcli", "dev", "wifi", "rescan"], check=True)
+        subprocess.run(["sudo", "nmcli", "dev", "wifi", "rescan", "ifname", "wlan0"], check=True)
         time.sleep(2)
         result = subprocess.check_output(["nmcli", "-t", "-f", "SSID", "dev", "wifi", "list"]).decode()
         ssids = [line for line in result.splitlines() if line.strip()]
