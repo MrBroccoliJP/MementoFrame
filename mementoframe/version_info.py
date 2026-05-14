@@ -1,7 +1,7 @@
 # MementoFrame version metadata.
 #
 # Versioning model:
-#   release.frontend.app.api.ap.updater
+#   release.frontend.config.display.network.updater
 #
 # Example:
 #   1.25.22.21.21.13
@@ -9,9 +9,9 @@
 # Meaning:
 #   1  = release counter
 #   25 = frontend version
-#   22 = dashboard app.py version
-#   21 = api_service.py version
-#   21 = ap_mode_manager.py version
+#   22 = config portal service version
+#   21 = display service version
+#   21 = network manager service version
 #   13 = updater.py version
 #
 # GitHub release tags should use:
@@ -21,34 +21,34 @@ RELEASE_COUNTER = 1
 
 VERSION_ORDER = [
     "frontend",
-    "app",
-    "api_service",
-    "ap_mode_manager",
+    "config_portal",
+    "display_service",
+    "network_manager",
     "updater",
 ]
 
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 25,
+        "version": 26,
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
-    "app": {
-        "label": "Dashboard App",
+    "config_portal": {
+        "label": "Config Portal",
         "version": 22,
-        "file": "app.py",
+        "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
-    "api_service": {
-        "label": "Display API",
+    "display_service": {
+        "label": "Display Service",
         "version": 21,
-        "file": "api_service.py",
+        "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
-    "ap_mode_manager": {
-        "label": "AP Mode Manager",
+    "network_manager": {
+        "label": "Network Manager",
         "version": 21,
-        "file": "ap_mode_manager.py",
+        "file": "network_manager_service.py",
         "description": "NetworkManager Wi-Fi/AP fallback watchdog",
     },
     "updater": {
@@ -59,7 +59,7 @@ COMPONENTS = {
     },
 }
 
-VERSION_SCHEMA = "release.frontend.app.api.ap.updater"
+VERSION_SCHEMA = "release.frontend.config.display.network.updater"
 
 
 def build_global_version() -> str:
