@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 26,
+        "version": 27, #changed naming to match the app and updated to use new kiosk_display.html template and styles
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 23, #nmcli using root permissions to rescan wifi networks
+        "version": 24, #updated to handle spotify credentials on config-portal e
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 22, #updated to use chromium and handle spotify without permissions
+        "version": 23, #updated to use chromium and handle spotify without permissions
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 15, #removed shebang fixing logic
+        "version": 15, 
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },
