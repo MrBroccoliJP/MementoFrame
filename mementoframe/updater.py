@@ -187,8 +187,8 @@ def load_config() -> dict[str, Any]:
     cfg = read_json(CONFIG_FILE, {})
     cfg.setdefault("updates", {})
     updates = cfg["updates"]
-    updates.setdefault("auto_update", False)
-    updates.setdefault("repo", os.getenv("MEMENTOFRAME_UPDATE_REPO", ""))
+    updates.setdefault("auto_update", True)
+    updates.setdefault("repo", os.getenv("MEMENTOFRAME_UPDATE_REPO", "MrBroccoliJP/MementoFrame"))
     if os.getenv("MEMENTOFRAME_UPDATE_REPO"):
         updates["repo"] = os.getenv("MEMENTOFRAME_UPDATE_REPO", "")
     updates.setdefault("channel", "stable")

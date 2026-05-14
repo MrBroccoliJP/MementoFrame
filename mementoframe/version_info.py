@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 13,
+        "version": 14, #auto updates and repo config added
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },
