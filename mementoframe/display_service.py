@@ -47,6 +47,7 @@ from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 # Hardware setup
 # =============================================================================
 SCREEN_PIN = 26
+GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
 
@@ -110,13 +111,35 @@ config = load_config()
 # =============================================================================
 # Spotify client setup
 # =============================================================================
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=os.getenv("SPOTIFY_CLIENT_ID"),
-    client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
-    redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
-    scope="user-read-playback-state user-read-currently-playing user-library-read",
-    cache_path=SPOTIFY_CACHE
-))
+def spotify_credentials_configured():
+    """Return True when the display service has enough Spotify credentials to start OAuth."""
+    return bool(os.getenv("SPOTIFY_CLIENT_ID") and os.getenv("SPOTIFY_CLIENT_SECRET"))
+
+
+def create_spotify_client():
+    """Create the Spotify client only when credentials are configured.
+
+    Spotipy raises SpotifyOauthError at construction time when credentials are
+    missing. The display service must still start without Spotify configured,
+    so this returns None instead of failing the whole Flask service.
+    """
+    if not spotify_credentials_configured():
+        return None
+
+    try:
+        return spotipy.Spotify(auth_manager=SpotifyOAuth(
+            client_id=os.getenv("SPOTIFY_CLIENT_ID"),
+            client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
+            redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
+            scope="user-read-playback-state user-read-currently-playing user-library-read",
+            cache_path=SPOTIFY_CACHE
+        ))
+    except Exception as e:
+        print(f"⚠️ Spotify disabled: {e}")
+        return None
+
+
+sp = create_spotify_client()
 
 # =============================================================================
 # Weather configuration
@@ -242,9 +265,12 @@ def serve_config():
 @app.route("/spotify.json")
 def spotify_status():
     """Return current playback metadata and liked-state information."""
+    if sp is None:
+        return jsonify({"isPlaying": False, "spotifyConfigured": False})
+
     data = safe_spotify_call("playback", sp.current_playback)
     if not data or not data.get("item"):
-        return jsonify({"isPlaying": False})
+        return jsonify({"isPlaying": False, "spotifyConfigured": True})
 
     track = data["item"]["name"]
     artist = ", ".join(a["name"] for a in data["item"]["artists"])
@@ -420,8 +446,8 @@ def _autoupdate_worker():
 threading.Thread(target=_autoupdate_worker, daemon=True).start()            
 
 if __name__ == "__main__":
-    if not os.getenv("SPOTIFY_CLIENT_ID") or not os.getenv("SPOTIFY_CLIENT_SECRET"):
-        print("⚠️  Spotify credentials missing — endpoints disabled.")
+    if sp is None:
+        print("⚠️  Spotify credentials missing or invalid — Spotify endpoint will return disconnected state.")
     else:
         print("✅ Spotify credentials loaded.")
 

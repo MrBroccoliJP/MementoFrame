@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 1
+RELEASE_COUNTER = 0
 
 VERSION_ORDER = [
     "frontend",
@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 21,
+        "version": 22, #updated to use chromium and handle spotify without permissions
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

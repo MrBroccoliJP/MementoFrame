@@ -221,10 +221,8 @@ apt install -y \
   zlib1g-dev \
   python3-rpi.gpio
 
-if ! command -v chromium-browser >/dev/null 2>&1 && ! command -v chromium >/dev/null 2>&1; then
-  if ! apt install -y chromium-browser; then
-    apt install -y chromium
-  fi
+if ! command -v chromium >/dev/null 2>&1; then
+  apt install -y chromium
 fi
 
 log "Enabling NetworkManager"
@@ -466,11 +464,7 @@ xset s noblank || true
 
 openbox-session &
 
-if command -v chromium-browser >/dev/null 2>&1; then
-  CHROME=chromium-browser
-else
-  CHROME=chromium
-fi
+CHROME=chromium
 
 exec "$CHROME" \
   --kiosk \
