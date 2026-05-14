@@ -12,7 +12,7 @@ The recommended setup is the one-command installer. It creates/uses the `memento
 |---|---|
 | Raspberry Pi | 3B+ |
 | OS | Raspberry Pi OS Lite 13 (trixie) 32-bit |
-| Python | 3.11 |
+| Python | System Python from Raspberry Pi OS, tested with Python 3.13 on Trixie |
 | Display | GeekPi 7" HDMI, 1024×600 |
 
 ---
@@ -26,6 +26,7 @@ The recommended setup is the one-command installer. It creates/uses the `memento
 - GPIO pins for display power and brightness pulses
 - `updater.py` for first-time app bootstrap and future GitHub Release updates
 - Separate systemd services for config, display, network, kiosk, and post-reboot update validation
+- WebP image conversion/thumbnails through Pillow with system WebP libraries
 
 ---
 
@@ -41,7 +42,7 @@ sudo bash install.sh
 
 The installer must be run with `sudo` because it installs apt packages, creates users, writes systemd services, edits boot display config, and configures limited sudo permissions for Wi-Fi/update/reboot actions.
 
-By default, `install.sh` downloads and installs the latest stable GitHub Release. It does **not** install from the moving `main` branch.
+By default, `install.sh` downloads and installs the latest stable GitHub Release. It does **not** install from the moving `main` branch. At the end of a normal install it reboots automatically so boot, HDMI, X11, and service settings take effect. For development/testing, skip the final reboot with `SKIP_REBOOT=1`.
 
 Install a specific release tag:
 
@@ -53,6 +54,12 @@ Install the newest non-draft pre-release/release instead of only the latest stab
 
 ```bash
 sudo INSTALL_CHANNEL=pre-release bash install.sh
+```
+
+Run the installer without rebooting at the end, useful while testing installer changes:
+
+```bash
+sudo SKIP_REBOOT=1 bash install.sh
 ```
 
 Install from a fork or different repository:
@@ -105,17 +112,20 @@ The installed runtime app folder contains the split-service layout:
 1. Requires root/sudo.
 2. Creates the `mementoframe` user if it does not already exist.
 3. Adds the user to only the required hardware groups: `video`, `input`, `gpio`, and `netdev`.
-4. Installs system dependencies.
-5. Enables NetworkManager and disables/masks `dhcpcd` if present.
-6. Configures display boot settings in `/boot/firmware/config.txt`.
-7. Configures quiet boot arguments in `/boot/firmware/cmdline.txt` while preserving the single-line format.
-8. Configures X permissions in `/etc/X11/Xwrapper.config`.
-9. Downloads the selected GitHub Release, then copies the inner app folder to `/home/mementoframe/mementoframe`.
-10. Runs `python3 updater.py install` as the `mementoframe` user.
-11. Creates `/usr/local/bin/mementoframe-kiosk.sh`.
-12. Creates the split systemd services.
-13. Creates `/etc/sudoers.d/mementoframe-updater` with only the limited permissions required by Wi-Fi setup, updater restarts, and reboot.
-14. Enables and starts the services.
+4. Stops any existing MementoFrame split services early, before touching Wi-Fi/NetworkManager, so a previous install cannot interfere.
+5. Installs system dependencies, including Chromium, NetworkManager, X/Openbox, GPIO support, and WebP image support.
+6. Enables NetworkManager, disables/masks `dhcpcd` if present, unblocks Wi-Fi with `rfkill`, and enables the Wi-Fi radio with `nmcli`.
+7. Configures display boot settings in `/boot/firmware/config.txt`.
+8. Configures quiet boot arguments in `/boot/firmware/cmdline.txt` while preserving the single-line format.
+9. Configures X permissions in `/etc/X11/Xwrapper.config` and masks `getty@tty1.service` to prevent login text flashing before Chromium starts.
+10. Downloads the selected GitHub Release, then copies the inner app folder to `/home/mementoframe/mementoframe`.
+11. Runs `python3 updater.py install` as the `mementoframe` user.
+12. Forces update settings in `config.json` so auto-update is enabled and the repository/channel match the installer selection.
+13. Creates `/usr/local/bin/mementoframe-kiosk.sh` with DPMS/screen blanking disabled and Raspberry Pi Chromium flags.
+14. Creates the split systemd services.
+15. Creates `/etc/sudoers.d/mementoframe-updater` with only the limited permissions required by Wi-Fi setup, updater restarts, and reboot.
+16. Enables and starts the services.
+17. Reboots automatically unless `SKIP_REBOOT=1` is set.
 
 ---
 
@@ -166,11 +176,13 @@ hdmi_cvt=1024 600 60 6 0 0 0
 config_hdmi_boost=7
 ```
 
-It also ensures `/boot/firmware/cmdline.txt` remains a single line and includes these tokens only if missing:
+It also ensures `/boot/firmware/cmdline.txt` remains a single line. It removes earlier/undesired tokens such as `console=tty1`, `fsck.mode=skip`, `systemd.show_status=...`, `rd.systemd.show_status=...`, and `plymouth.ignore-serial-consoles`, then ensures these values:
 
 ```text
-quiet splash console=tty3 loglevel=0 logo.nologo vt.global_cursor_default=0
+console=tty3 quiet splash loglevel=1 logo.nologo vt.global_cursor_default=0 consoleblank=0
 ```
+
+`fsck.repair=yes` is preserved when already present. The installer does not add `fsck.mode=skip`, because skipping filesystem checks is less safe for Raspberry Pi devices that may lose power.
 
 And it writes `/etc/X11/Xwrapper.config`:
 
@@ -179,13 +191,20 @@ allowed_users=anybody
 needs_root_rights=yes
 ```
 
+It also disables and masks the tty1 login prompt:
+
+```bash
+systemctl disable --now getty@tty1.service
+systemctl mask getty@tty1.service
+```
+
 ---
 
-## Configure `.env`
+## Configure `.env` and Spotify
 
 The installer runs `updater.py install`, which creates `.env` if missing.
 
-Edit it after install:
+You can edit it manually:
 
 ```bash
 sudo -u mementoframe nano /home/mementoframe/mementoframe/.env
@@ -199,6 +218,12 @@ SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=https://httpbin.org/anything
 GITHUB_TOKEN=
 MEMENTOFRAME_UPDATE_REPO=MrBroccoliJP/MementoFrame
+```
+
+Spotify can also be configured from the web configuration portal. Create an app in the Spotify Developer Dashboard, add this redirect URI to that Spotify app, then paste the Client ID and Client Secret into the Spotify section of the portal:
+
+```text
+https://httpbin.org/anything
 ```
 
 Spotify remains disconnected until credentials are configured. Private GitHub repository updates require `GITHUB_TOKEN`.
@@ -286,6 +311,8 @@ ExecStart=/usr/bin/startx /usr/local/bin/mementoframe-kiosk.sh -- :0
 After=mementoframe-display.service
 Requires=mementoframe-display.service
 ```
+
+The kiosk launcher disables X screen saver/DPMS every time X starts. This prevents HDMI from going to “No Signal” after the default 10-minute X timeout. It also hides the cursor with `unclutter`, sets the X root background black, stores Chromium cache in `/dev/shm`, and uses GPU/compositing flags for smoother image fades.
 
 ### `mementoframe-post-reboot.service`
 
@@ -384,6 +411,21 @@ systemctl status mementoframe-network.service
 systemctl status mementoframe-kiosk.service
 ```
 
+Check Wi-Fi radio state:
+
+```bash
+nmcli radio wifi
+nmcli device status
+```
+
+After the kiosk starts, verify X screen blanking is disabled:
+
+```bash
+DISPLAY=:0 xset q
+```
+
+Expected values include `timeout: 0` under Screen Saver and `DPMS is Disabled`.
+
 ---
 
 ## Updating
@@ -430,9 +472,9 @@ Use this only if the one-command installer fails.
 sudo apt update
 sudo apt install -y \
   python3 python3-pip python3-venv git \
-  network-manager wireless-tools iw iproute2 \
+  network-manager wireless-tools iw iproute2 rfkill curl ca-certificates \
   chromium unclutter xserver-xorg xinit openbox x11-xserver-utils \
-  libjpeg-dev zlib1g-dev python3-rpi.gpio
+  libjpeg-dev zlib1g-dev libwebp-dev webp python3-rpi.gpio
 
 sudo adduser --disabled-password --gecos "MementoFrame" mementoframe || true
 sudo usermod -aG video,input,gpio,netdev mementoframe
@@ -459,7 +501,9 @@ Then create the services and sudoers as described above.
 If editing on Windows, Git may not preserve Unix executable bits automatically. Mark shell scripts executable in Git before releasing:
 
 ```bash
-git update-index --chmod=+x mementoframe/install.sh
+git update-index --chmod=+x install.sh
+# or, if the installer lives inside the inner app folder in your repo:
+# git update-index --chmod=+x mementoframe/install.sh
 ```
 ---
 

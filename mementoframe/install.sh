@@ -29,8 +29,6 @@ ALL_SERVICES=(
   mementoframe-network.service
   mementoframe-display.service
   mementoframe-config.service
-  mementoframe-ap.service
-  mementoframe.service
 )
 
 NEW_SERVICES=(
@@ -278,6 +276,12 @@ usermod -aG video,input,gpio,netdev "${APP_USER}" || true
 mkdir -p "${APP_HOME}"
 chown "${APP_USER}:${APP_USER}" "${APP_HOME}"
 
+log "Stopping existing MementoFrame services"
+systemctl daemon-reload || true
+for svc in "${ALL_SERVICES[@]}"; do
+  stop_service_if_exists "$svc"
+done
+
 log "Installing system dependencies"
 apt update
 apt install -y \
@@ -427,13 +431,6 @@ for required in updater.py version_info.py config_portal_service.py display_serv
 done
 
 log "Installing app to ${APP_DIR}"
-for svc in "${ALL_SERVICES[@]}"; do
-  stop_service_if_exists "$svc"
-done
-
-for svc in "${OLD_SERVICES[@]}"; do
-  disable_service_if_exists "$svc"
-done
 
 if [[ -d "${APP_DIR}" ]]; then
   BACKUP="${APP_HOME}/mementoframe.preinstall.$(date +%Y%m%d-%H%M%S)"
