@@ -20,9 +20,11 @@ export async function loadVersions() {
     const el = document.getElementById("versions");
     if (!el) return;
 
-    el.innerHTML = Object.entries(data)
-      .map(([k, v]) => `<span>${k} ${v}</span>`)
-      .join("");
+    const version = data.tag || (data.version ? `v${data.version}` : null);
+
+    el.innerHTML = version
+      ? `<span>MementoFrame ${version}</span>`
+      : "";
   } catch (e) {
     console.warn("versions failed", e);
   }

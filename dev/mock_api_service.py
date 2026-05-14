@@ -52,16 +52,20 @@ from mock_shared import (
     TEMPLATES_DIR,
     USERDATA_DIR,
     cache_spotify_token_from_url,
+    check_for_updates_mock,
     clear_spotify_cache,
     current_track_payload,
     get_or_create_config_portal_pin_record,
     get_spotify_authorize_url,
     load_config,
     load_state,
+    load_update_state,
+    mock_install_update_blocked,
     next_track as shared_next_track,
     pin_response_payload,
     remove_config_portal_pin,
     save_config,
+    set_mock_pending_update,
     save_state,
 )
 
@@ -88,6 +92,7 @@ def mock_management_html():
     config = load_config()
     pin = pin_response_payload()
     track = current_track_payload()
+    update_state = load_update_state()
     weather = state["weather"]
     networks = "\n".join(state.get("known_networks", []))
     return f"""
@@ -143,6 +148,21 @@ def mock_management_html():
       <form class="row" method="post" action="/mock/pin/create"><button>Create/show PIN</button></form>
       <form class="row" method="post" action="/mock/pin/clear"><button class="danger">Clear PIN</button></form>
       <p class="muted">Supports <code>/config_portal_pin.json</code>, <code>/config_pin.json</code>, <code>/frame_pin.json</code>, and <code>/ap_pin.json</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2>Software updates</h2>
+      <p>Installed: <code>{update_state.get('installed_version') or 'unknown'}</code></p>
+      <p>Latest: <code>{update_state.get('latest_version') or update_state.get('latest_tag') or 'not checked'}</code></p>
+      <p>Status: <code>{'mock pending update' if update_state.get('mock_pending_update') else ('available' if update_state.get('available') else 'not available')}</code></p>
+      <form class="row" method="post" action="/mock/update/pending">
+        <label><input type="checkbox" name="mock_pending_update" {'checked' if update_state.get('mock_pending_update') else ''}> Mock pending update</label>
+        <button>Save mock flag</button>
+      </form>
+      <form class="row" method="post" action="/update/check"><button>Check GitHub releases</button></form>
+      <form class="row" method="post" action="/update/install"><button class="secondary">Install endpoint test</button></form>
+      {f'<p class="muted">{update_state.get("last_error")}</p>' if update_state.get('last_error') else ''}
+      <p class="muted">The mock pending flag forces <code>available: true</code> for styling tests. Mocks never install or reboot.</p>
     </section>
 
     <section class="card">
@@ -336,6 +356,39 @@ def screen_off():
     state["screen"] = "off"
     save_state(state)
     return jsonify({"status": "off"})
+
+
+@app.route("/update_status.json")
+def update_status_json():
+    """Read-only display update state. Used by the frontend update indicator."""
+    return jsonify(load_update_state())
+
+
+@app.route("/update/status")
+def update_status():
+    return jsonify(load_update_state())
+
+
+@app.route("/update/check", methods=["POST"])
+def update_check():
+    state = check_for_updates_mock()
+    return jsonify({"status": "ok" if not state.get("last_error") else "error", "updater": state})
+
+
+@app.route("/update/install", methods=["POST"])
+def update_install():
+    state = mock_install_update_blocked()
+    return jsonify({
+        "status": "blocked",
+        "message": "Mock environment: update install/reboot is disabled.",
+        "updater": state,
+    })
+
+
+@app.route("/mock/update/pending", methods=["POST"])
+def mock_update_pending():
+    state = set_mock_pending_update("mock_pending_update" in request.form)
+    return jsonify(state) if request.accept_mimetypes.best == "application/json" else redirect(url_for("mock_management"))
 
 
 @app.route("/dev/state", methods=["GET", "POST"])

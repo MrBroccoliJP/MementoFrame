@@ -29,6 +29,9 @@ Endpoints:
     POST /screen/off               - Turn the display output off.
 
 """
+import sys
+import threading
+
 from flask import Flask, jsonify, render_template, send_from_directory, Response
 from flask_cors import CORS
 import os, json, time, socket, threading, subprocess, requests
@@ -36,12 +39,15 @@ from dotenv import load_dotenv
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import RPi.GPIO as GPIO
-from version_info import VERSIONS
+from updater import PROJECT_ROOT
+from version_info import GLOBAL_APP_VERSION, VERSION_INFO
+
 
 # =============================================================================
 # Hardware setup
 # =============================================================================
 SCREEN_PIN = 26
+GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
 
@@ -63,6 +69,7 @@ PHOTO_JSON = os.path.join(USERDATA_DIR, "Photos/photos.json")
 SPOTIFY_CACHE = os.path.join(USERDATA_DIR, "cache/.cache_spotify")
 RUNTIME_DIR = "runtime"
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
+UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
 
 # =============================================================================
 # Configuration loading
@@ -78,18 +85,61 @@ def load_config():
         print(f"Error loading config.json: {e}")
         return {}
 
+
+def load_update_state():
+    """Return updater runtime state merged with config/update defaults for display UI."""
+    state = {}
+    try:
+        with open(UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        state = {}
+    except Exception as e:
+        state = {"last_error": f"Unable to read update state: {e}"}
+
+    cfg = load_config()
+    updates_cfg = cfg.get("updates", {}) if isinstance(cfg, dict) else {}
+    state.setdefault("available", False)
+    state.setdefault("pending_restart", False)
+    state.setdefault("update_in_progress", False)
+    state.setdefault("installed_version", GLOBAL_APP_VERSION)
+    state["auto_update"] = bool(updates_cfg.get("auto_update", False))
+    return state
+
 config = load_config()
 
 # =============================================================================
 # Spotify client setup
 # =============================================================================
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=os.getenv("SPOTIFY_CLIENT_ID"),
-    client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
-    redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
-    scope="user-read-playback-state user-read-currently-playing user-library-read",
-    cache_path=SPOTIFY_CACHE
-))
+def spotify_credentials_configured():
+    """Return True when the display service has enough Spotify credentials to start OAuth."""
+    return bool(os.getenv("SPOTIFY_CLIENT_ID") and os.getenv("SPOTIFY_CLIENT_SECRET"))
+
+
+def create_spotify_client():
+    """Create the Spotify client only when credentials are configured.
+
+    Spotipy raises SpotifyOauthError at construction time when credentials are
+    missing. The display service must still start without Spotify configured,
+    so this returns None instead of failing the whole Flask service.
+    """
+    if not spotify_credentials_configured():
+        return None
+
+    try:
+        return spotipy.Spotify(auth_manager=SpotifyOAuth(
+            client_id=os.getenv("SPOTIFY_CLIENT_ID"),
+            client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
+            redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
+            scope="user-read-playback-state user-read-currently-playing user-library-read",
+            cache_path=SPOTIFY_CACHE
+        ))
+    except Exception as e:
+        print(f"⚠️ Spotify disabled: {e}")
+        return None
+
+
+sp = create_spotify_client()
 
 # =============================================================================
 # Weather configuration
@@ -194,7 +244,7 @@ def get_local_ip():
 @app.route("/")
 def home():
     """Render the main photo-frame frontend."""
-    return render_template("index.html")
+    return render_template("kiosk_display.html")
 
 @app.route("/assets/<path:filename>")
 def serve_assets(filename):
@@ -215,9 +265,12 @@ def serve_config():
 @app.route("/spotify.json")
 def spotify_status():
     """Return current playback metadata and liked-state information."""
+    if sp is None:
+        return jsonify({"isPlaying": False, "spotifyConfigured": False})
+
     data = safe_spotify_call("playback", sp.current_playback)
     if not data or not data.get("item"):
-        return jsonify({"isPlaying": False})
+        return jsonify({"isPlaying": False, "spotifyConfigured": True})
 
     track = data["item"]["name"]
     artist = ", ".join(a["name"] for a in data["item"]["artists"])
@@ -323,7 +376,13 @@ def get_ip():
 @app.route("/versions")
 def versions():
     """Return component version information as JSON."""
-    return jsonify(VERSIONS)
+    return jsonify(VERSION_INFO)
+
+
+@app.route("/update_status.json")
+def update_status_json():
+    """Return read-only software update state for the display UI."""
+    return jsonify(load_update_state())
 
 @app.route("/config/stream")
 def config_stream():
@@ -366,9 +425,29 @@ def screen_off():
     GPIO.output(SCREEN_PIN, GPIO.LOW)
     return jsonify({"status": "off"})
 
+def _autoupdate_worker():
+    while True:
+        time.sleep(60 * 60)
+        try:
+            # Don't spawn if an update is already running
+            state = load_update_state()
+            if state.get("update_in_progress"):
+                continue
+            subprocess.run(
+                [sys.executable, "updater.py", "autoupdate"],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except Exception as e:
+            print(f"[autoupdate] error: {e}")
+
+threading.Thread(target=_autoupdate_worker, daemon=True).start()            
+
 if __name__ == "__main__":
-    if not os.getenv("SPOTIFY_CLIENT_ID") or not os.getenv("SPOTIFY_CLIENT_SECRET"):
-        print("⚠️  Spotify credentials missing — endpoints disabled.")
+    if sp is None:
+        print("⚠️  Spotify credentials missing or invalid — Spotify endpoint will return disconnected state.")
     else:
         print("✅ Spotify credentials loaded.")
 

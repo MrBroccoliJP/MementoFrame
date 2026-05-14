@@ -44,7 +44,7 @@ Flow chart:
                                   Spotify auth, brightness, and config persistence
 """
 from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
-import subprocess, os, json, socket, threading, time, uuid, shlex, secrets
+import subprocess, os, json, socket, threading, time, uuid, shlex, secrets, sys
 from pathlib import Path
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
@@ -52,12 +52,93 @@ from PIL import Image, ImageOps
 import RPi.GPIO as GPIO
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
-from version_info import VERSIONS
+from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 
 # =============================================================================
 # Environment and Flask initialization
 # =============================================================================
 ENV_FILE = Path(".env")
+
+
+def read_env_values():
+    """Read simple KEY=value pairs from .env without exposing unrelated parsing complexity."""
+    values = {}
+    if not ENV_FILE.exists():
+        return values
+
+    try:
+        for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    except Exception as e:
+        print(f"⚠️ Could not read .env: {e}")
+
+    return values
+
+
+def write_env_values(updates):
+    """Update or append selected .env values while preserving unrelated lines."""
+    existing_lines = []
+    seen = set()
+
+    if ENV_FILE.exists():
+        existing_lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
+
+    new_lines = []
+    for raw in existing_lines:
+        line = raw.strip()
+
+        if not line or line.startswith("#") or "=" not in line:
+            new_lines.append(raw)
+            continue
+
+        key, _value = line.split("=", 1)
+        key = key.strip()
+
+        if key in updates:
+            new_lines.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            new_lines.append(raw)
+
+    for key, value in updates.items():
+        if key not in seen:
+            new_lines.append(f"{key}={value}")
+
+    ENV_FILE.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+    try:
+        ENV_FILE.chmod(0o600)
+    except Exception:
+        pass
+
+    for key, value in updates.items():
+        os.environ[key] = value
+
+
+def spotify_credentials_configured():
+    """Return True when Spotify app credentials are configured."""
+    return bool(os.getenv("SPOTIFY_CLIENT_ID") and os.getenv("SPOTIFY_CLIENT_SECRET"))
+
+
+def restart_runtime_services_after_env_change():
+    """Restart services that need .env values reloaded.
+
+    Use separate sudo calls because sudoers command matching is argument-specific.
+    The config service restart is delayed so this HTTP response can finish first.
+    """
+    subprocess.Popen(
+        ["sudo", "systemctl", "restart", "mementoframe-display.service"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.Popen(
+        ["sh", "-c", "sleep 2; sudo systemctl restart mementoframe-config.service"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def ensure_flask_secret_key():
@@ -121,6 +202,7 @@ RUNTIME_DIR = "runtime"
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
+UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
 CONFIG_PORTAL_PIN_LENGTH = 6
 CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
 
@@ -129,6 +211,7 @@ CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS = {
     "config_portal_pin_submit",
     "static",
     "serve_assets",
+    "health_check",
 }
 
 
@@ -361,7 +444,7 @@ def get_mode():
 def scan_networks():
     """Rescan nearby Wi-Fi networks and return unique SSIDs."""
     try:
-        subprocess.run(["nmcli", "dev", "wifi", "rescan"], check=True)
+        subprocess.run(["sudo", "nmcli", "dev", "wifi", "rescan", "ifname", "wlan0"], check=True)
         time.sleep(2)
         result = subprocess.check_output(["nmcli", "-t", "-f", "SSID", "dev", "wifi", "list"]).decode()
         ssids = [line for line in result.splitlines() if line.strip()]
@@ -374,10 +457,13 @@ def scan_networks():
 # =============================================================================
 def get_spotify_oauth():
     """Build the Spotify OAuth helper using environment credentials and cache path."""
+    if not spotify_credentials_configured():
+        return None
+
     return SpotifyOAuth(
         client_id=os.getenv("SPOTIFY_CLIENT_ID"),
         client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
-        redirect_uri="https://httpbin.org/anything",
+        redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
         scope="user-read-playback-state user-read-currently-playing user-library-read",
         cache_path=SPOTIFY_CACHE
     )
@@ -386,9 +472,13 @@ def get_spotify_user():
     """Return the connected Spotify user profile when cached credentials are valid."""
     try:
         oauth = get_spotify_oauth()
+        if not oauth:
+            return None
+
         token_info = oauth.get_cached_token()
         if not token_info:
             return None
+
         sp = spotipy.Spotify(auth=token_info["access_token"])
         return sp.current_user()
     except Exception:
@@ -406,6 +496,14 @@ def load_config():
         "weather_region": "",
         "brightness": 80,
         "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
+        "updates": {
+            "auto_update": False,
+            "repo": os.getenv("MEMENTOFRAME_UPDATE_REPO", ""),
+            "channel": "stable",
+            "last_checked": None,
+            "available_version": None,
+            "available": False,
+        },
     }
     if not os.path.exists(CONFIG_FILE):
         return default
@@ -414,6 +512,9 @@ def load_config():
             cfg = json.load(f)
         for key, val in default.items():
             cfg.setdefault(key, val)
+            if isinstance(val, dict) and isinstance(cfg.get(key), dict):
+                for sub_key, sub_val in val.items():
+                    cfg[key].setdefault(sub_key, sub_val)
         return cfg
     except Exception as e:
         print(f"⚠️ Error loading config.json: {e}")
@@ -423,6 +524,47 @@ def save_config(cfg):
     """Persist frame configuration to config.json."""
     with open(CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
+
+
+def load_update_state():
+    """Read updater runtime state and merge it with config/version defaults."""
+    try:
+        with open(UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        state = {}
+    except Exception as e:
+        state = {"last_error": f"Unable to read update state: {e}"}
+
+    cfg = load_config()
+    updates_cfg = cfg.get("updates", {})
+    state.setdefault("installed_version", GLOBAL_APP_VERSION)
+    state.setdefault("available", False)
+    state.setdefault("pending_restart", False)
+    state.setdefault("update_in_progress", False)
+    state["auto_update"] = bool(updates_cfg.get("auto_update", False))
+    state["repo"] = updates_cfg.get("repo", "")
+    state["channel"] = updates_cfg.get("channel", "stable")
+    return state
+
+
+def run_updater(command, background=False):
+    """Run updater.py with a controlled command from the config portal."""
+    cmd = [sys.executable, "updater.py", command]
+    if background:
+        subprocess.Popen(cmd, cwd=os.getcwd(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"status": "started", "command": command}
+
+    proc = subprocess.run(cmd, cwd=os.getcwd(), capture_output=True, text=True, timeout=90)
+    payload = {"status": "ok" if proc.returncode == 0 else "error", "returncode": proc.returncode}
+    if proc.stdout.strip():
+        try:
+            payload["updater"] = json.loads(proc.stdout)
+        except Exception:
+            payload["stdout"] = proc.stdout.strip()
+    if proc.stderr.strip():
+        payload["stderr"] = proc.stderr.strip()
+    return payload
 
 # =============================================================================
 # Brightness controls
@@ -457,6 +599,10 @@ def dashboard():
     networks = scan_networks()
     spotify_user = get_spotify_user()
     spotify_msg = request.args.get("msg")
+    spotify_env = read_env_values()
+    spotify_configured = bool(
+        spotify_env.get("SPOTIFY_CLIENT_ID") and spotify_env.get("SPOTIFY_CLIENT_SECRET")
+    )
     config = load_config()
 
     if request.method == "POST" and "ssid" in request.form:
@@ -466,13 +612,16 @@ def dashboard():
         return redirect(url_for("dashboard", msg=msg))
 
     return render_template(
-        "backend.html",
+        "config_portal.html",
         mode=mode,
         ip=ip,
         networks=networks,
         photos=photos,
         spotify_user=spotify_user,
         spotify_msg=spotify_msg,
+        spotify_env=spotify_env,
+        spotify_configured=spotify_configured,
+        update_state=load_update_state(),
         config=config,
     )
 
@@ -625,21 +774,83 @@ def save_weather_api():
     save_config(config)
     return redirect(url_for("dashboard"))
 
+
+@app.route("/health")
+def health_check():
+    """Return a basic health-check response for post-update validation."""
+    return jsonify({"status": "ok", "service": "dashboard", "timestamp": time.time()})
+
+
+@app.route("/update/status")
+def update_status():
+    """Return current software update state for the config portal."""
+    return jsonify(load_update_state())
+
+
+@app.route("/update/check", methods=["POST"])
+def update_check():
+    """Check GitHub releases for an available MementoFrame update."""
+    return jsonify(run_updater("check", background=False))
+
+
+@app.route("/update/install", methods=["POST"])
+def update_install():
+    """Start a software update. updater.py handles the reboot when complete."""
+    return jsonify(run_updater("update", background=True))
+
+
+@app.route("/save_update_settings", methods=["POST"])
+def save_update_settings():
+    """Save software-update preferences from the configuration dashboard."""
+    config = load_config()
+    updates = config.setdefault("updates", {})
+    updates["auto_update"] = "auto_update" in request.form
+    updates["repo"] = request.form.get("update_repo", updates.get("repo", "")).strip()
+    updates["channel"] = request.form.get("update_channel", updates.get("channel", "stable")).strip() or "stable"
+    save_config(config)
+    return redirect(url_for("dashboard", msg="Update settings saved."))
+
 @app.route("/versions")
 def versions():
     """Return component version information as JSON."""
-    return jsonify(VERSIONS)
+    return jsonify(VERSION_INFO)
+
+@app.route("/save_spotify_settings", methods=["POST"])
+def save_spotify_settings():
+    """Save Spotify app credentials to .env and restart services so they reload."""
+    client_id = request.form.get("spotify_client_id", "").strip()
+    client_secret = request.form.get("spotify_client_secret", "").strip()
+    redirect_uri = request.form.get("spotify_redirect_uri", "").strip() or "https://httpbin.org/anything"
+
+    write_env_values({
+        "SPOTIFY_CLIENT_ID": client_id,
+        "SPOTIFY_CLIENT_SECRET": client_secret,
+        "SPOTIFY_REDIRECT_URI": redirect_uri,
+    })
+
+    restart_runtime_services_after_env_change()
+
+    return redirect(url_for(
+        "dashboard",
+        msg="Spotify app settings saved. Services are restarting; refresh the page in a few seconds."
+    ))
+
 
 @app.route("/spotify/connect")
 def spotify_connect():
     """Redirect the user to Spotify authorization."""
     oauth = get_spotify_oauth()
+    if not oauth:
+        return redirect(url_for("dashboard", msg="Spotify Client ID and Client Secret must be saved first."))
     return redirect(oauth.get_authorize_url())
 
 
 @app.route("/spotify/manual", methods=["POST"])
 def spotify_manual():
     """Extract the Spotify callback code from a pasted URL and cache the access token."""
+    if not spotify_credentials_configured():
+        return redirect(url_for("dashboard", msg="Spotify Client ID and Client Secret must be saved first."))
+
     pasted_url = request.form.get("spotify_url")
     if not pasted_url:
         return redirect(url_for("dashboard", msg="No URL provided"))
@@ -656,6 +867,9 @@ def spotify_manual():
 
     try:
         oauth = get_spotify_oauth()
+        if not oauth:
+            return redirect(url_for("dashboard", msg="Spotify Client ID and Client Secret must be saved first."))
+
         oauth.get_access_token(code)
         user = get_spotify_user()
         if user:

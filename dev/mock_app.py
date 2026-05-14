@@ -50,17 +50,21 @@ from mock_shared import (
     TEMPLATES_DIR,
     USERDATA_DIR,
     cache_spotify_token_from_url,
+    check_for_updates_mock,
     clear_spotify_cache,
     current_track_payload,
     get_or_create_config_portal_pin_record,
     get_spotify_authorize_url,
     load_state,
+    load_update_state,
+    mock_install_update_blocked,
     next_track as shared_next_track,
     pin_response_payload,
     read_config_portal_pin_record,
     real_spotify_user,
     remove_config_portal_pin,
     save_state,
+    set_mock_pending_update,
 )
 
 # ---------- Project paths ----------
@@ -103,6 +107,10 @@ CONFIG_PIN_EXEMPT_ENDPOINTS = {
     "config_portal_pin_page",
     "config_portal_pin_submit",
     "config_pin_json",
+    "update_status",
+    "update_check",
+    "update_install",
+    "mock_update_pending",
     "static",
     "serve_assets",
 }
@@ -251,6 +259,7 @@ def load_config():
         "weather_region": "",
         "brightness": 80,
         "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
+        "updates": {"auto_update": False, "repo": "", "channel": "stable", "mock_pending_update": False},
     }
     if not os.path.exists(CONFIG_FILE):
         return default
@@ -274,6 +283,7 @@ def dashboard():
     config      = load_config()
     photos      = load_photos()
     spotify_msg = request.args.get("msg")
+    update_state  = load_update_state()
 
     if request.method == "POST" and "ssid" in request.form:
         ssid = request.form["ssid"].strip()
@@ -292,8 +302,9 @@ def dashboard():
             spotify_user = (real_spotify_user() if state.get("spotify", {}).get("source") == "real" else ({"display_name": "Mock User", "id": "mockuser"} if state.get("spotify", {}).get("connected", True) else None)),
             spotify_msg  = spotify_msg,
             config       = config,
+            update_state  = update_state,
         )
-    return render_template_string(MOCK_ADMIN_TEMPLATE, state=state, config=config, photos=photos, networks=networks, spotify_msg=spotify_msg, track=current_track_payload(), pin=pin_response_payload(), tracks=MOCK_TRACKS)
+    return render_template_string(MOCK_ADMIN_TEMPLATE, state=state, config=config, photos=photos, networks=networks, spotify_msg=spotify_msg, track=current_track_payload(), pin=pin_response_payload(), tracks=MOCK_TRACKS, update_state=update_state)
 
 
 MOCK_ADMIN_TEMPLATE = """
@@ -323,6 +334,7 @@ MOCK_ADMIN_TEMPLATE = """
     <form method="post" action="/mock/state"><label>Mode</label><select name="mode"><option value="client" {% if state.mode=='client' %}selected{% endif %}>client</option><option value="ap" {% if state.mode=='ap' %}selected{% endif %}>ap</option><option value="unknown" {% if state.mode=='unknown' %}selected{% endif %}>unknown</option></select><label>IP</label><input name="ip" value="{{ state.ip }}"><label>Wi-Fi SSID</label><input name="wifi_ssid" value="{{ state.wifi_ssid }}"><label>AP SSID</label><input name="ap_ssid" value="{{ state.ap_ssid }}"><label>Known networks</label><textarea name="known_networks" rows="4">{{ networks|join('\n') }}</textarea><button>Save state</button></form>
   </section>
   <section class="card"><h2>PIN</h2><p>Active PIN: <code>{{ pin.pin or 'none' }}</code>{% if pin.active %} — {{ pin.seconds_remaining }}s{% endif %}</p><form method="post" action="/mock/pin/create"><button>Create/show PIN</button></form><form method="post" action="/mock/pin/clear"><button class="danger">Clear PIN</button></form></section>
+  <section class="card"><h2>Software updates</h2><p>Installed: <code>{{ update_state.installed_version or 'unknown' }}</code></p><p>Latest: <code>{{ update_state.latest_version or update_state.latest_tag or 'not checked' }}</code></p><p>Status: <code>{% if update_state.mock_pending_update %}mock pending update{% elif update_state.available %}available{% else %}not available{% endif %}</code></p><form method="post" action="/mock/update/pending"><label><input type="checkbox" name="mock_pending_update" {% if update_state.mock_pending_update %}checked{% endif %}> Mock pending update</label><button>Save mock flag</button></form><form method="post" action="/update/check"><button>Check GitHub releases</button></form><form method="post" action="/update/install"><button class="secondary">Install endpoint test</button></form>{% if update_state.last_error %}<p class="muted">{{ update_state.last_error }}</p>{% endif %}<p class="muted">Forces the frontend update indicator without installing or rebooting.</p></section>
   <section class="card"><h2>Spotify</h2><p>Source <code>{{ state.spotify.source or 'mock' }}</code></p><p><code>{{ track.track or 'not playing' }}</code> {{ track.artist or '' }}</p>{% if track.error %}<p class="muted">{{ track.error }}</p>{% endif %}<form method="post" action="/mock/spotify"><label>Data source</label><select name="source"><option value="mock" {% if (state.spotify.source or 'mock') == 'mock' %}selected{% endif %}>mock data</option><option value="real" {% if state.spotify.source == 'real' %}selected{% endif %}>real Spotify</option></select><label><input type="checkbox" name="connected" {% if state.spotify.connected %}checked{% endif %}> Connected</label><label><input type="checkbox" name="playing" {% if state.spotify.playing %}checked{% endif %}> Playing</label><label>Track</label><select name="track_index">{% for t in tracks %}<option value="{{ loop.index0 }}" {% if loop.index0 == state.spotify.track_index %}selected{% endif %}>{{ t.track }} — {{ t.artist }}</option>{% endfor %}</select><button>Save Spotify</button></form><form method="post" action="/mock/spotify/next"><button class="secondary">Next track</button></form><form method="get" action="/spotify/connect"><button>Connect real Spotify</button></form><form method="post" action="/spotify/manual"><label>Paste Spotify callback URL</label><input name="spotify_url" placeholder="https://httpbin.org/anything?code=..."><button>Save real Spotify token</button></form><form method="post" action="/spotify/disconnect"><button class="danger">Disconnect Spotify</button></form></section>
   <section class="card"><h2>Weather</h2><form method="post" action="/mock/weather"><label><input type="checkbox" name="enabled" {% if state.weather.enabled %}checked{% endif %}> Enabled</label><label>City</label><input name="city" value="{{ state.weather.city }}"><label>Temperature</label><input type="number" step="0.1" name="temperature" value="{{ state.weather.temperature }}"><label>Condition</label><input name="condition" value="{{ state.weather.condition }}"><label>Humidity</label><input type="number" name="humidity" value="{{ state.weather.humidity }}"><label>Wind kph</label><input type="number" step="0.1" name="windSpeed" value="{{ state.weather.windSpeed }}"><label>Icon URL</label><input name="icon" value="{{ state.weather.icon }}"><button>Save weather</button></form></section>
   <section class="card"><h2>Photos</h2><p>{{ photos|length }} photo(s) loaded.</p><form method="post" action="/upload" enctype="multipart/form-data"><input type="file" name="photos" multiple><button>Upload photos</button></form></section>
@@ -333,7 +345,7 @@ MOCK_ADMIN_TEMPLATE = """
 @app.route("/mock")
 def mock_admin():
     state = load_state()
-    return render_template_string(MOCK_ADMIN_TEMPLATE, state=state, config=load_config(), photos=load_photos(), networks=state.get("known_networks", []), spotify_msg=request.args.get("msg"), track=current_track_payload(), pin=pin_response_payload(), tracks=MOCK_TRACKS)
+    return render_template_string(MOCK_ADMIN_TEMPLATE, state=state, config=load_config(), photos=load_photos(), networks=state.get("known_networks", []), spotify_msg=request.args.get("msg"), track=current_track_payload(), pin=pin_response_payload(), tracks=MOCK_TRACKS, update_state=update_state)
 
 @app.route("/mock/state", methods=["POST"])
 def mock_save_state():
@@ -581,6 +593,56 @@ def spotify_disconnect():
     state["spotify"]["playing"] = False
     save_state(state)
     return redirect(url_for("dashboard", msg="Spotify disconnected."))
+
+
+@app.route("/health")
+def health_check():
+    return jsonify({"status": "ok", "timestamp": time.time(), "service": "mock_app"})
+
+
+@app.route("/update/status")
+def update_status():
+    """Return mock software-update state for the config portal."""
+    return jsonify(load_update_state())
+
+
+@app.route("/update/check", methods=["POST"])
+def update_check():
+    """Check GitHub releases but never install anything in mock mode."""
+    state = check_for_updates_mock()
+    return jsonify({"status": "ok" if not state.get("last_error") else "error", "updater": state})
+
+
+@app.route("/update/install", methods=["POST"])
+def update_install():
+    """No-op in mocks: expose endpoint compatibility without applying updates."""
+    state = mock_install_update_blocked()
+    return jsonify({
+        "status": "blocked",
+        "message": "Mock environment: update install/reboot is disabled.",
+        "updater": state,
+    })
+
+
+@app.route("/mock/update/pending", methods=["POST"])
+def mock_update_pending():
+    """Toggle mock-only pending update state for styling tests."""
+    state = set_mock_pending_update("mock_pending_update" in request.form)
+    return jsonify(state) if request.accept_mimetypes.best == "application/json" else redirect(url_for("dashboard", msg="Mock pending update flag saved."))
+
+
+@app.route("/save_update_settings", methods=["POST"])
+def save_update_settings():
+    config = load_config()
+    updates = config.setdefault("updates", {})
+    updates["auto_update"] = "auto_update" in request.form
+    updates["repo"] = request.form.get("update_repo", updates.get("repo", "")).strip()
+    updates["channel"] = request.form.get("update_channel", updates.get("channel", "stable")).strip() or "stable"
+    updates["mock_pending_update"] = "mock_pending_update" in request.form
+    save_config(config)
+    set_mock_pending_update(updates["mock_pending_update"])
+    return redirect(url_for("dashboard", msg="Mock update settings saved."))
+
 
 @app.route("/versions")
 def versions():

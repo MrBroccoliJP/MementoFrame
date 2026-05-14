@@ -424,3 +424,33 @@ dev/runtime/config_portal_pin.json
 ```
 
 Then restart the mock environment.
+
+---
+
+# Mock update styling flag
+
+The mock environment includes a safe UI-testing flag for update styling.
+
+In the mock management UI:
+
+```txt
+http://localhost:5001/mock
+```
+
+Enable:
+
+```txt
+Software updates → Mock pending update
+```
+
+When enabled, the mock update status endpoints return `available: true` and `mock_pending_update: true` so the frontend update badge/rounded div is shown. This does not install updates, set a real pending restart, or reboot.
+
+Relevant endpoints:
+
+```txt
+GET  /update_status.json       # display/frontend read-only status
+GET  /update/status            # dashboard read-only status
+POST /update/check             # checks GitHub releases if repo is configured
+POST /update/install           # mock no-op; always blocked
+POST /mock/update/pending      # toggles the mock pending update flag
+```
