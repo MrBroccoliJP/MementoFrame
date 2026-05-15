@@ -43,23 +43,60 @@
       }
 
       try {
-        const res = await fetch(url, { method: 'POST' });
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'fetch' },
+          cache: 'no-store'
+        });
         const data = await res.json();
         const ok = res.ok && data.status !== 'error';
+        const errorText = data.stderr || data.stdout || data?.updater?.last_error || data?.message || 'Update action failed.';
+
         if (status) {
-          status.textContent = ok
-            ? 'Done. Refreshing update status…'
-            : (data.stderr || data.stdout || data?.updater?.last_error || 'Update action failed.');
+          status.textContent = ok ? 'Done.' : errorText;
           status.className = ok
             ? 'update-action-status update-action-status--ok'
             : 'update-action-status update-action-status--error';
         }
-        setTimeout(() => window.location.reload(), ok ? 1200 : 2500);
+
+        await refreshUpdateStatus();
       } catch (e) {
         if (status) {
           status.textContent = 'Update action failed: ' + e;
           status.className = 'update-action-status update-action-status--error';
         }
+      }
+    }
+
+    async function refreshUpdateStatus() {
+      try {
+        const res = await fetch('/update/status', { cache: 'no-store' });
+        if (!res.ok) return;
+        const state = await res.json();
+
+        const latest = document.querySelector('#update_latest_value');
+        const statusValue = document.querySelector('#update_status_value');
+        const installButton = document.querySelector('#update_install_button');
+
+        if (latest) {
+          latest.textContent = state.latest_version || state.latest_tag || 'not checked';
+        }
+
+        if (statusValue) {
+          statusValue.textContent = state.update_in_progress
+            ? 'Updating'
+            : state.pending_restart
+              ? 'Restart pending'
+              : state.available
+                ? 'Available'
+                : 'Up to date';
+        }
+
+        if (installButton) {
+          installButton.disabled = !state.available || state.update_in_progress;
+        }
+      } catch (_e) {
+        // Keep the existing rendered state if the endpoint is unavailable.
       }
     }
 
@@ -71,12 +108,71 @@
       runUpdateAction('/update/install', 'Starting update. The frame may restart automatically…');
     }
 
+
+    async function runPortalAction(url, label, needsConfirm = false) {
+      if (needsConfirm && !window.confirm('Restart the frame display services now?')) {
+        return;
+      }
+
+      const status = document.querySelector('#portal_save_status');
+      const buttons = document.querySelectorAll('.portal-action-btn');
+      buttons.forEach((button) => button.disabled = true);
+
+      if (status) {
+        status.textContent = label;
+        status.className = 'portal-save-status portal-save-status--busy visible';
+      }
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'fetch' },
+          cache: 'no-store'
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.status === 'error') {
+          throw new Error(data.message || data.error || `HTTP ${res.status}`);
+        }
+        if (status) {
+          status.textContent = data.message || 'Done.';
+          status.className = 'portal-save-status portal-save-status--ok visible';
+          setTimeout(() => {
+            status.textContent = '';
+            status.className = 'portal-save-status';
+          }, 2800);
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = 'Action failed: ' + error;
+          status.className = 'portal-save-status portal-save-status--error visible';
+        }
+      } finally {
+        buttons.forEach((button) => button.disabled = false);
+      }
+    }
+
   </script>
 </head>
 
 <body class="frame-theme">
   <div class="container">
     <h2>MementoFrame Configuration</h2>
+    <div id="portal_save_status" class="portal-save-status" aria-live="polite"></div>
+
+    <div class="portal-actions" aria-label="Frame quick controls">
+      <button type="button" class="portal-action-btn" onclick="runPortalAction('/display/reload', 'Reloading display…')">
+        <span class="portal-action-btn__icon">↻</span>
+        <span>Reload Display</span>
+      </button>
+      <button type="button" class="portal-action-btn portal-action-btn--warn" onclick="runPortalAction('/frame/restart', 'Restarting frame services…', true)">
+        <span class="portal-action-btn__icon">⏻</span>
+        <span>Restart Frame</span>
+      </button>
+      <button type="button" class="portal-action-btn" onclick="runPortalAction('/screen/on', 'Turning screen on…')">
+        <span class="portal-action-btn__icon">☀</span>
+        <span>Screen On</span>
+      </button>
+    </div>
 
     <!-- Wi-Fi -->
     <details open class="section">
@@ -200,9 +296,10 @@
     <!-- Photos -->
     <details class="section">
       <summary>🖼 Photo Manager</summary>
-      <form action="{{ url_for('upload_photo') }}" method="POST" enctype="multipart/form-data">
-        <input type="file" name="photos" accept="image/*" multiple required>
-        <button type="submit">Upload Selected Photos</button>
+      <form id="photo_upload_form" action="{{ url_for('upload_photo') }}" method="POST" enctype="multipart/form-data">
+        <input id="photo_upload_input" type="file" name="photos" accept="image/*" multiple required>
+        <button id="photo_upload_button" type="submit">Upload Selected Photos</button>
+        <p id="photo_upload_status" class="setting-hint" style="display:none;"></p>
       </form>
 
       <form action="{{ url_for('delete_selected_photos') }}" method="POST">
@@ -212,17 +309,17 @@
         </label>
         <div class="photo-grid">
           {% for photo in photos %}
-          <div class="photo-item">
+          <label class="photo-item photo-select">
             <input type="checkbox" class="photo-checkbox" name="selected_photos" value="{{ photo }}">
             <img src="{{ url_for('serve_thumb', filename=photo) }}" alt="{{ photo }}">
-          </div>
+            <span class="photo-selected-overlay">Selected</span>
+          </label>
           {% endfor %}
         </div>
         <button class="delete-selected-btn" type="submit">Delete Selected</button>
       </form>
     </details>
 
-    <!-- Spotify -->
     <!-- Spotify -->
     <details class="section">
       <summary>🎵 Spotify Integration</summary>
@@ -231,59 +328,75 @@
       <div class="message">{{ spotify_msg }}</div>
       {% endif %}
 
-      <p class="setting-hint">
-        To use Spotify, create an app in the
-        <strong>Spotify Developer Dashboard</strong>, then copy the Client ID and Client Secret here.
-        In the Spotify app settings, add this Redirect URI:
-      </p>
-
-      <code>https://httpbin.org/anything</code>
-
-      <form action="{{ url_for('save_spotify_settings') }}" method="POST">
-        <label>Spotify Client ID</label>
-        <input type="text" name="spotify_client_id" placeholder="Paste Spotify Client ID"
-          value="{{ spotify_env.SPOTIFY_CLIENT_ID or '' }}">
-
-        <label>Spotify Client Secret</label>
-        <input type="password" name="spotify_client_secret" placeholder="Paste Spotify Client Secret"
-          value="{{ spotify_env.SPOTIFY_CLIENT_SECRET or '' }}">
-
-        <label>Spotify Redirect URI</label>
-        <input type="text" name="spotify_redirect_uri"
-          value="{{ spotify_env.SPOTIFY_REDIRECT_URI or 'https://httpbin.org/anything' }}">
-
-        <button type="submit">Save Spotify App Settings</button>
-      </form>
-
-      {% if spotify_configured %}
       {% if spotify_user %}
-      <p>Connected as <strong>{{ spotify_user.display_name or spotify_user.id }}</strong></p>
-      <form action="{{ url_for('spotify_disconnect') }}" method="POST">
-        <button class="disconnect-btn">Disconnect</button>
-      </form>
+      <div class="compact-status-card">
+        <span>Connected as</span>
+        <strong>{{ spotify_user.display_name or spotify_user.id }}</strong>
+      </div>
+      {% elif spotify_configured %}
+      <div class="compact-status-card">
+        <span>Status</span>
+        <strong>Credentials saved, account not connected</strong>
+      </div>
       {% else %}
-      <p>Spotify app credentials are saved, but the frame is not connected to a Spotify account yet.</p>
-      <ol>
-        <li>Click <strong>Connect to Spotify</strong>.</li>
-        <li>Log in and approve the app.</li>
-        <li>After redirect, copy the full URL from the browser address bar.</li>
-        <li>Paste it below and submit.</li>
-      </ol>
-
-      <form action="{{ url_for('spotify_manual') }}" method="POST">
-        <input type="text" name="spotify_url" placeholder="Paste the full redirect URL here" required>
-        <button type="submit">Submit Spotify Redirect URL</button>
-      </form>
-
-      <form action="{{ url_for('spotify_connect') }}" method="GET" style="margin-top:10px;">
-        <button>Connect to Spotify</button>
-      </form>
+      <p class="setting-hint">Spotify is optional. Save app credentials first, then connect the frame to a Spotify account.</p>
       {% endif %}
-      {% else %}
-      <p class="setting-hint">
-        Save Spotify Client ID and Client Secret first. The connect button will appear after credentials are configured.
-      </p>
-      {% endif %}
+
+      <details class="subsection" {% if not spotify_configured %}open{% endif %}>
+        <summary>Spotify App Settings</summary>
+        <p class="setting-hint">
+          Create an app in the <strong>Spotify Developer Dashboard</strong>, then copy the Client ID and Client Secret here.
+          In the Spotify app settings, add this Redirect URI:
+        </p>
+
+        <code>https://httpbin.org/anything</code>
+
+        <form action="{{ url_for('save_spotify_settings') }}" method="POST">
+          <label>Spotify Client ID</label>
+          <input type="text" name="spotify_client_id" placeholder="Paste Spotify Client ID"
+            value="{{ spotify_env.SPOTIFY_CLIENT_ID or '' }}">
+
+          <label>Spotify Client Secret</label>
+          <input type="password" name="spotify_client_secret" placeholder="Paste Spotify Client Secret"
+            value="{{ spotify_env.SPOTIFY_CLIENT_SECRET or '' }}">
+
+          <label>Spotify Redirect URI</label>
+          <input type="text" name="spotify_redirect_uri"
+            value="{{ spotify_env.SPOTIFY_REDIRECT_URI or 'https://httpbin.org/anything' }}">
+
+          <button type="submit">Save Spotify App Settings</button>
+        </form>
+      </details>
+
+      <div class="inline-settings-block spotify-account-block">
+        <h3>Spotify Account Connection</h3>
+        {% if spotify_configured %}
+        {% if spotify_user %}
+        <p class="setting-hint">The frame is connected to Spotify. Disconnect only if you want to authorize a different account.</p>
+        <form action="{{ url_for('spotify_disconnect') }}" method="POST">
+          <button class="disconnect-btn">Disconnect</button>
+        </form>
+        {% else %}
+        <ol>
+          <li>Click <strong>Connect to Spotify</strong>.</li>
+          <li>Log in and approve the app.</li>
+          <li>After redirect, copy the full URL from the browser address bar.</li>
+          <li>Paste it below and submit.</li>
+        </ol>
+
+        <form action="{{ url_for('spotify_manual') }}" method="POST">
+          <input type="text" name="spotify_url" placeholder="Paste the full redirect URL here" required>
+          <button type="submit">Submit Spotify Redirect URL</button>
+        </form>
+
+        <form action="{{ url_for('spotify_connect') }}" method="GET" style="margin-top:10px;">
+          <button>Connect to Spotify</button>
+        </form>
+        {% endif %}
+        {% else %}
+        <p class="setting-hint">Save Spotify Client ID and Client Secret first. The connect button will appear after credentials are configured.</p>
+        {% endif %}
+      </div>
     </details>
 
 
@@ -321,11 +434,11 @@
         </div>
         <div class="update-status-item">
           <span>Latest</span>
-          <strong>{{ us.latest_version or us.latest_tag or 'not checked' }}</strong>
+          <strong id="update_latest_value">{{ us.latest_version or us.latest_tag or 'not checked' }}</strong>
         </div>
         <div class="update-status-item">
           <span>Status</span>
-          <strong>
+          <strong id="update_status_value">
             {% if us.update_in_progress %}Updating
             {% elif us.pending_restart %}Restart pending
             {% elif us.available %}Available
@@ -334,38 +447,44 @@
         </div>
       </div>
 
-      <form action="{{ url_for('save_update_settings') }}" method="POST">
-        <label>
-          <input type="checkbox" name="auto_update" {% if updates.auto_update %}checked{% endif %}>
-          Enable Automatic Updates
-        </label>
-        <p class="setting-hint">
-          Auto updates run near the end of the night schedule. If no display schedule is enabled, they run around 05:00.
-        </p>
+      <details class="subsection">
+        <summary>Automatic Update Settings</summary>
+        <form action="{{ url_for('save_update_settings') }}" method="POST">
+          <label>
+            <input type="checkbox" name="auto_update" {% if updates.auto_update %}checked{% endif %}>
+            Enable Automatic Updates
+          </label>
+          <p class="setting-hint">
+            Auto updates run near the end of the night schedule. If no display schedule is enabled, they run around 05:00.
+          </p>
 
-        <label>GitHub Repository</label>
-        <input type="text" name="update_repo" placeholder="owner/repository" value="{{ updates.repo or '' }}">
+          <label>GitHub Repository</label>
+          <input type="text" name="update_repo" placeholder="owner/repository" value="{{ updates.repo or '' }}">
 
-        <label>Update Channel</label>
-        <select name="update_channel">
-          <option value="stable" {% if updates.channel=='stable' %}selected{% endif %}>Stable</option>
-          <option value="pre-release" {% if updates.channel=='pre-release' %}selected{% endif %}>Pre-release</option>
-        </select>
+          <label>Update Channel</label>
+          <select name="update_channel">
+            <option value="stable" {% if updates.channel=='stable' %}selected{% endif %}>Stable</option>
+            <option value="pre-release" {% if updates.channel=='pre-release' %}selected{% endif %}>Pre-release</option>
+          </select>
 
-        <button type="submit">Save Update Settings</button>
-      </form>
+          <button type="submit">Save Update Settings</button>
+        </form>
+      </details>
 
-      <div class="update-actions">
-        <button type="button" onclick="checkForUpdates()">Check for Updates</button>
-        <button type="button" class="update-install-btn" onclick="installUpdateNow()" {% if not us.available or
-          us.update_in_progress %}disabled{% endif %}>
-          Install Update Now
-        </button>
+      <div class="inline-settings-block manual-update-actions">
+        <h3>Manual Update Actions</h3>
+        <div class="update-actions">
+          <button type="button" onclick="checkForUpdates()">Check for Updates</button>
+          <button id="update_install_button" type="button" class="update-install-btn" onclick="installUpdateNow()" {% if not us.available or
+            us.update_in_progress %}disabled{% endif %}>
+            Install Update Now
+          </button>
+        </div>
+        <div id="update_action_status" class="update-action-status"></div>
       </div>
-      <div id="update_action_status" class="update-action-status"></div>
 
       {% if us.release_notes %}
-      <details class="update-release-notes">
+      <details class="subsection update-release-notes">
         <summary>Release notes</summary>
         <pre>{{ us.release_notes }}</pre>
       </details>
@@ -377,6 +496,151 @@
       Mode: {{ mode.upper() }} | IP: <span>{{ ip }}</span>
     </footer>
   </div>
+
+  <script>
+    (() => {
+      const saveStatus = document.getElementById("portal_save_status");
+      const uploadForm = document.getElementById("photo_upload_form");
+      const uploadInput = document.getElementById("photo_upload_input");
+      const uploadButton = document.getElementById("photo_upload_button");
+      const uploadStatus = document.getElementById("photo_upload_status");
+
+      function setPortalStatus(message, kind = "ok") {
+        if (!saveStatus) return;
+        saveStatus.textContent = message || "";
+        saveStatus.className = message
+          ? `portal-save-status portal-save-status--${kind} visible`
+          : "portal-save-status";
+
+        if (message && kind === "ok") {
+          clearTimeout(setPortalStatus._timer);
+          setPortalStatus._timer = setTimeout(() => setPortalStatus(""), 2600);
+        }
+      }
+
+      function setButtonBusy(button, busy, busyText) {
+        if (!button) return;
+        if (!button.dataset.defaultText) {
+          button.dataset.defaultText = button.textContent.trim();
+        }
+        button.disabled = busy;
+        button.textContent = busy ? busyText : button.dataset.defaultText;
+      }
+
+      function actionFor(form) {
+        return form.getAttribute("action") || window.location.pathname;
+      }
+
+      async function submitFormWithoutReload(form) {
+        const button = form.querySelector('button[type="submit"], button:not([type])');
+        const label = button?.dataset.busyText || "Saving…";
+        setButtonBusy(button, true, label);
+        setPortalStatus(label, "busy");
+
+        try {
+          const response = await fetch(actionFor(form), {
+            method: (form.getAttribute("method") || "POST").toUpperCase(),
+            body: new FormData(form),
+            headers: { "X-Requested-With": "fetch" },
+            cache: "no-store"
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          setPortalStatus(button?.dataset.doneText || "Saved.", "ok");
+          return true;
+        } catch (error) {
+          setPortalStatus(`Save failed: ${error}`, "error");
+          return false;
+        } finally {
+          setButtonBusy(button, false);
+        }
+      }
+
+      function setUploadUi(label, disabled, message) {
+        if (uploadButton) {
+          uploadButton.textContent = label;
+          uploadButton.disabled = disabled;
+        }
+
+        if (uploadStatus) {
+          uploadStatus.style.display = message ? "block" : "none";
+          uploadStatus.textContent = message || "";
+        }
+      }
+
+      async function refreshUploadStatus() {
+        if (!uploadButton) return;
+
+        try {
+          const res = await fetch("/upload/status", { cache: "no-store" });
+          if (!res.ok) return;
+
+          const data = await res.json();
+
+          if (data.active) {
+            const queued = Number(data.queued || 0);
+            const processed = Number(data.processed || 0);
+            const failed = Number(data.failed || 0);
+            const message = queued > 0
+              ? `Processing photos: ${processed}/${queued}${failed ? `, ${failed} failed` : ""}`
+              : "Processing photos";
+
+            setUploadUi("Processing photos", true, message);
+            setTimeout(refreshUploadStatus, 1000);
+            return;
+          }
+
+          setUploadUi("Upload Selected Photos", false, data.last_message || "");
+        } catch (_e) {
+          setUploadUi("Upload Selected Photos", false, "");
+        }
+      }
+
+      if (uploadForm) {
+        uploadForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+
+          const count = uploadInput && uploadInput.files ? uploadInput.files.length : 0;
+          const plural = count === 1 ? "photo" : "photos";
+          setUploadUi(`Uploading ${plural}…`, true, "Uploading originals to the frame…");
+          setPortalStatus(`Uploading ${plural}…`, "busy");
+
+          const ok = await submitFormWithoutReload(uploadForm);
+          if (ok) {
+            uploadForm.reset();
+            setUploadUi("Processing photos", true, "Processing photos…");
+            setPortalStatus("Photos uploaded. Processing in the background.", "ok");
+            setTimeout(refreshUploadStatus, 700);
+          } else {
+            setUploadUi("Upload Selected Photos", false, "Upload failed.");
+          }
+        });
+      }
+
+      document.querySelectorAll('form[method="POST"], form[method="post"]').forEach((form) => {
+        if (form === uploadForm) return;
+        if (form.dataset.reload === "true") return;
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const ok = await submitFormWithoutReload(form);
+
+          if (ok && form.action.includes("delete_selected_photos")) {
+            form.querySelectorAll('.photo-checkbox:checked').forEach((checkbox) => {
+              checkbox.closest('.photo-item')?.remove();
+            });
+          }
+        });
+      });
+
+      refreshUploadStatus();
+      refreshUpdateStatus();
+    })();
+  </script>
+
 </body>
 
 </html>

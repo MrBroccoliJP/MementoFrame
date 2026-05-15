@@ -18,7 +18,8 @@ Endpoints:
     GET      /userdata/<filename>      - Serve persistent user data files.
     GET      /resources/Photos/full/<filename>   - Serve full-size uploaded photos.
     GET      /resources/Photos/thumbs/<filename> - Serve generated photo thumbnails.
-    POST     /upload                   - Upload photos and generate WebP images.
+    POST     /upload                   - Queue uploaded photos and process WebP images in background.
+    GET      /upload/status            - Return current background photo-processing state.
     POST     /delete_selected_photos   - Delete selected uploaded photos.
     POST     /test_brightness          - Start a background brightness test.
     POST     /save_clock_settings      - Save dashboard clock settings.
@@ -170,6 +171,7 @@ USERDATA_DIR = "resources/userdata"
 PHOTO_DIR = os.path.join(USERDATA_DIR, "Photos")
 FULL_DIR = os.path.join(PHOTO_DIR, "full")
 THUMB_DIR = os.path.join(PHOTO_DIR, "thumbs")
+PHOTO_TMP_DIR = os.path.join(PHOTO_DIR, "tmp_uploads")
 PHOTO_JSON = os.path.join(PHOTO_DIR, "photos.json")
 PHOTO_JS = os.path.join(PHOTO_DIR, "photos.js")
 CACHE_DIR = os.path.join(USERDATA_DIR, "cache")
@@ -177,7 +179,7 @@ SPOTIFY_CACHE = os.path.join(CACHE_DIR, ".cache_spotify")
 
 ASSETS_DIR = "resources/assets"
 
-for d in [USERDATA_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, ASSETS_DIR]:
+for d in [USERDATA_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, PHOTO_TMP_DIR, CACHE_DIR, ASSETS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # =============================================================================
@@ -381,6 +383,151 @@ def sync_photo_js(photos=None):
     js_content = "window.photos = " + json.dumps(photos, indent=2) + ";"
     with open(PHOTO_JS, "w") as f:
         f.write(js_content)
+
+
+photo_processing_lock = threading.Lock()
+photo_processing_status_lock = threading.Lock()
+photo_processing_status = {
+    "active": False,
+    "queued": 0,
+    "processed": 0,
+    "failed": 0,
+    "last_batch_id": None,
+    "last_error": None,
+    "updated_at": None,
+}
+
+
+def update_photo_processing_status(**updates):
+    """Update the in-memory photo-processing status exposed to the config portal."""
+    with photo_processing_status_lock:
+        photo_processing_status.update(updates)
+        photo_processing_status["updated_at"] = time.time()
+
+
+def get_photo_processing_status():
+    """Return a copy of the current background photo-processing status."""
+    with photo_processing_status_lock:
+        return dict(photo_processing_status)
+
+
+def unique_temp_upload_path(batch_dir, filename):
+    """Return a collision-safe temporary upload path inside one batch directory."""
+    name, ext = os.path.splitext(filename)
+    counter = 1
+    candidate = os.path.join(batch_dir, filename)
+    while os.path.exists(candidate):
+        candidate = os.path.join(batch_dir, f"{name}_{counter}{ext}")
+        counter += 1
+    return candidate
+
+
+def unique_final_photo_name(original_filename, photos):
+    """Return a collision-safe final filename for the processed photo."""
+    name, ext = os.path.splitext(original_filename)
+    if not name:
+        name = f"photo_{uuid.uuid4().hex[:8]}"
+
+    counter = 1
+    webp_name = f"{name}.webp"
+    while webp_name in photos or os.path.exists(os.path.join(FULL_DIR, webp_name)):
+        webp_name = f"{name}_{counter}.webp"
+        counter += 1
+    return webp_name
+
+
+def unique_fallback_photo_name(original_filename, photos):
+    """Return a collision-safe fallback filename when image conversion fails."""
+    name, ext = os.path.splitext(original_filename)
+    ext = ext or ".bin"
+    if not name:
+        name = f"photo_{uuid.uuid4().hex[:8]}"
+
+    candidate = f"{name}{ext}"
+    counter = 1
+    while candidate in photos or os.path.exists(os.path.join(FULL_DIR, candidate)):
+        candidate = f"{name}_{counter}{ext}"
+        counter += 1
+    return candidate
+
+
+def process_uploaded_photo_batch(batch_id, batch_dir):
+    """Convert queued uploads to final WebP photos without blocking the request."""
+    processed = 0
+    failed = 0
+
+    with photo_processing_lock:
+        update_photo_processing_status(
+            active=True,
+            last_batch_id=batch_id,
+            last_error=None,
+        )
+
+        try:
+            temp_files = [
+                os.path.join(batch_dir, name)
+                for name in sorted(os.listdir(batch_dir))
+                if os.path.isfile(os.path.join(batch_dir, name))
+            ]
+        except FileNotFoundError:
+            update_photo_processing_status(active=False, last_error="Upload batch directory disappeared.")
+            return
+
+        photos = load_photos()
+
+        for temp_path in temp_files:
+            filename = os.path.basename(temp_path)
+            webp_name = unique_final_photo_name(filename, photos)
+            full_path = os.path.join(FULL_DIR, webp_name)
+            thumb_path = os.path.join(THUMB_DIR, webp_name)
+
+            try:
+                with Image.open(temp_path) as img:
+                    img = ImageOps.exif_transpose(img).convert("RGB")
+
+                    full_img = img.copy()
+                    full_img.thumbnail((1000, 1000))
+                    full_img.save(full_path, format="WEBP", quality=100, method=6)
+
+                    thumb = img.copy()
+                    thumb.thumbnail((250, 250))
+                    thumb.save(thumb_path, format="WEBP", quality=80, method=6)
+
+                os.remove(temp_path)
+                photos.append(webp_name)
+                processed += 1
+                update_photo_processing_status(processed=processed, failed=failed)
+
+            except Exception as e:
+                failed += 1
+                update_photo_processing_status(processed=processed, failed=failed, last_error=str(e))
+                print(f"Error processing queued upload {filename}: {e}")
+
+                try:
+                    fallback_name = unique_fallback_photo_name(filename, photos)
+                    fallback_full = os.path.join(FULL_DIR, fallback_name)
+                    os.replace(temp_path, fallback_full)
+                    photos.append(fallback_name)
+                except Exception as fallback_error:
+                    print(f"Error saving fallback upload {filename}: {fallback_error}")
+                    try:
+                        os.remove(temp_path)
+                    except FileNotFoundError:
+                        pass
+
+        save_photos(photos)
+
+        try:
+            os.rmdir(batch_dir)
+        except OSError:
+            pass
+
+        update_photo_processing_status(
+            active=False,
+            queued=0,
+            processed=processed,
+            failed=failed,
+        )
 
 # =============================================================================
 # Network helpers
@@ -587,6 +734,42 @@ def set_brightness(level):
         press(BRIGHTNESS_UP, 0.5)
         time.sleep(STEP_DELAY - 0.1)
 
+
+
+# =============================================================================
+# Frame/display quick controls
+# =============================================================================
+def reload_display_clients():
+    """Trigger the display frontend SSE reload by touching watched metadata files."""
+    touched = []
+    for path in [CONFIG_FILE, PHOTO_JSON]:
+        try:
+            if os.path.exists(path):
+                os.utime(path, None)
+                touched.append(path)
+        except Exception as e:
+            print(f"⚠️ Could not touch {path}: {e}")
+    return touched
+
+
+def restart_frame_services():
+    """Restart display-side services without restarting the config portal itself."""
+    subprocess.Popen(
+        [
+            "sh",
+            "-c",
+            "sleep 1; sudo systemctl restart mementoframe-display.service mementoframe-kiosk.service",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def set_screen_on():
+    """Wake the display using the same GPIO line as the display service."""
+    GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.output(SCREEN_PIN, GPIO.HIGH)
+
 # =============================================================================
 # Flask routes: dashboard, assets, photos, settings, versions, and Spotify
 # =============================================================================
@@ -647,47 +830,62 @@ def serve_thumb(filename):
 
 @app.route("/upload", methods=["POST"])
 def upload_photo():
-    """Accept uploaded images, convert them to WebP, create thumbnails, and update metadata."""
+    """Queue uploaded images quickly, then process WebP files in the background."""
     files = request.files.getlist("photos")
     if not files or all(f.filename == "" for f in files):
         return "No file", 400
-    photos = load_photos()
+
+    batch_id = uuid.uuid4().hex
+    batch_dir = os.path.join(PHOTO_TMP_DIR, batch_id)
+    os.makedirs(batch_dir, exist_ok=True)
+
+    queued = 0
     for file in files:
         filename = secure_filename(file.filename)
         if not filename:
             continue
-        name, ext = os.path.splitext(filename)
-        ext = ext.lower()
-        base_name = name
-        counter = 1
-        while True:
-            webp_name = f"{base_name}.webp"
-            full_path = os.path.join(FULL_DIR, webp_name)
-            thumb_path = os.path.join(THUMB_DIR, webp_name)
-            if not os.path.exists(full_path):
-                break
-            base_name = f"{name}_{counter}"
-            counter += 1
-        temp_path = os.path.join(FULL_DIR, f"temp_{uuid.uuid4().hex[:6]}{ext}")
+
+        _name, ext = os.path.splitext(filename)
+        if ext.lower() not in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}:
+            continue
+
+        temp_path = unique_temp_upload_path(batch_dir, filename)
         file.save(temp_path)
+        queued += 1
+
+    if queued == 0:
         try:
-            with Image.open(temp_path) as img:
-                img = ImageOps.exif_transpose(img).convert("RGB")
-                img.thumbnail((1000, 1000))
-                img.save(full_path, format="WEBP", quality=100, method=6)
-                thumb = img.copy()
-                thumb.thumbnail((250, 250))
-                thumb.save(thumb_path, format="WEBP", quality=80, method=6)
-            os.remove(temp_path)
-            photos.append(webp_name)
-        except Exception as e:
-            print(f"Error processing {filename}: {e}")
-            fallback_full = os.path.join(FULL_DIR, filename)
-            os.rename(temp_path, fallback_full)
-            if filename not in photos:
-                photos.append(filename)
-    save_photos(photos)
-    return redirect(url_for("dashboard"))
+            os.rmdir(batch_dir)
+        except OSError:
+            pass
+        return "No supported image files", 400
+
+    update_photo_processing_status(
+        active=True,
+        queued=queued,
+        processed=0,
+        failed=0,
+        last_batch_id=batch_id,
+        last_error=None,
+    )
+
+    threading.Thread(
+        target=process_uploaded_photo_batch,
+        args=(batch_id, batch_dir),
+        daemon=True,
+    ).start()
+
+    return redirect(url_for(
+        "dashboard",
+        msg=f"{queued} photo(s) uploaded. Processing in the background; the frame will reload when ready."
+    ))
+
+
+@app.route("/upload/status")
+def upload_status():
+    """Return current background photo-processing status."""
+    return jsonify(get_photo_processing_status())
+
 
 @app.route("/delete_selected_photos", methods=["POST"])
 def delete_selected_photos():
@@ -774,6 +972,36 @@ def save_weather_api():
     save_config(config)
     return redirect(url_for("dashboard"))
 
+
+
+
+@app.route("/display/reload", methods=["POST"])
+def display_reload():
+    """Ask connected display browser clients to reload via the existing SSE watcher."""
+    touched = reload_display_clients()
+    if not touched:
+        return jsonify({"status": "error", "message": "No watched display files could be touched."}), 500
+    return jsonify({"status": "ok", "message": "Display reload requested.", "touched": touched})
+
+
+@app.route("/frame/restart", methods=["POST"])
+def frame_restart():
+    """Restart display-side frame services. The config portal stays running."""
+    try:
+        restart_frame_services()
+        return jsonify({"status": "ok", "message": "Frame services are restarting."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Could not restart frame services: {e}"}), 500
+
+
+@app.route("/screen/on", methods=["POST"])
+def config_screen_on():
+    """Turn/wake the screen on from the config portal."""
+    try:
+        set_screen_on()
+        return jsonify({"status": "ok", "message": "Screen on requested."})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Could not turn screen on: {e}"}), 500
 
 @app.route("/health")
 def health_check():
