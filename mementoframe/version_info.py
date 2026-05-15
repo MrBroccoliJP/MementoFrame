@@ -30,12 +30,12 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 29, #spotify artwork fixes 
+        "version": 28, #Shows photo upload progress | config portal styling update
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 24, #updated to handle spotify credentials on config-portal e
+        "version": 25, #Photo uploads now upload to a tmp folder and then are processed in the device, to avoid the config portal to be stuck loading.
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },

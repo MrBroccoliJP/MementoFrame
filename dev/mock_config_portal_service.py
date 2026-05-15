@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -18,6 +20,7 @@ from werkzeug.utils import secure_filename
 from mock_shared import (
     ASSETS_DIR,
     CACHE_DIR,
+    CONFIG_FILE,
     FULL_DIR,
     MOCK_TRACKS,
     PHOTO_JSON,
@@ -57,11 +60,55 @@ app = Flask(__name__, template_folder=str(TEMPLATES_DIR), static_folder=str(STAT
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or "mementoframe-mock-secret"
 CORS(app)
 
+PHOTO_TMP_DIR = Path(USERDATA_DIR) / "Photos" / "tmp_uploads"
+PHOTO_TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+upload_status_lock = threading.Lock()
+upload_status = {
+    "active": False,
+    "queued": 0,
+    "processed": 0,
+    "failed": 0,
+    "last_batch_id": None,
+    "last_message": None,
+    "updated_at": None,
+}
+
 CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS = {"config_portal_pin_page", "config_portal_pin_submit", "static", "serve_assets", "health_check"}
 
 
 def bool_form(name: str) -> bool:
     return name in request.form
+
+
+def wants_json_response() -> bool:
+    """Return True for fetch/AJAX-style requests from the no-reload config portal UI."""
+    return (
+        request.headers.get("X-Requested-With") == "fetch"
+        or request.accept_mimetypes.best == "application/json"
+    )
+
+
+def json_or_redirect(payload: dict, endpoint: str = "dashboard"):
+    """Return JSON for fetch requests, otherwise keep classic redirect behaviour."""
+    if wants_json_response():
+        return jsonify(payload)
+    return redirect(url_for(endpoint, msg=payload.get("message")))
+
+
+def touch_for_display_reload() -> None:
+    """Touch files watched by the mock display SSE stream so the frontend reloads."""
+    now = time.time()
+
+    # The display mock watches config.json and photos.json. Touching either is
+    # enough to emit a reload without changing user settings.
+    for path in [Path(CONFIG_FILE), Path(PHOTO_JSON), Path(PHOTO_JS)]:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                os.utime(path, (now, now))
+        except Exception as exc:
+            print(f"[mock-display-reload] could not touch {path}: {exc}")
 
 
 def wake_screen() -> None:
@@ -181,44 +228,150 @@ def serve_thumb(filename):
     return send_from_directory(THUMB_DIR, filename)
 
 
+def _set_upload_status(**updates):
+    """Update mock upload progress in a thread-safe way."""
+    with upload_status_lock:
+        upload_status.update(updates)
+        upload_status["updated_at"] = time.time()
+
+
+def _snapshot_upload_status():
+    """Return a copy of the current mock upload progress."""
+    with upload_status_lock:
+        return dict(upload_status)
+
+
+def _unique_output_name(original_filename: str, existing_photos: list[str]) -> str:
+    """Return a collision-safe WebP filename for a processed upload."""
+    name = Path(original_filename).stem or "photo"
+    base_name = secure_filename(name) or "photo"
+    candidate_base = base_name
+    counter = 1
+    existing = set(existing_photos)
+
+    while True:
+        webp_name = f"{candidate_base}.webp"
+        if webp_name not in existing and not (FULL_DIR / webp_name).exists():
+            return webp_name
+        candidate_base = f"{base_name}_{counter}"
+        counter += 1
+
+
+def _process_uploaded_photo_batch(batch_dir: Path, saved_files: list[str], batch_id: str) -> None:
+    """Convert temp-uploaded originals to display-ready WebP files in the background."""
+    _set_upload_status(
+        active=True,
+        queued=len(saved_files),
+        processed=0,
+        failed=0,
+        last_batch_id=batch_id,
+        last_message="Processing uploaded photos…",
+    )
+
+    photos = load_photos()
+    processed = 0
+    failed = 0
+
+    for saved_name in saved_files:
+        temp_path = batch_dir / saved_name
+        original_name = saved_name.split("__", 1)[-1]
+
+        try:
+            webp_name = _unique_output_name(original_name, photos)
+            full_path = FULL_DIR / webp_name
+            thumb_path = THUMB_DIR / webp_name
+
+            with Image.open(temp_path) as img:
+                img = ImageOps.exif_transpose(img).convert("RGB")
+
+                full_img = img.copy()
+                full_img.thumbnail((1000, 1000))
+                full_img.save(full_path, format="WEBP", quality=100, method=6)
+
+                thumb_img = img.copy()
+                thumb_img.thumbnail((250, 250))
+                thumb_img.save(thumb_path, format="WEBP", quality=80, method=6)
+
+            photos.append(webp_name)
+            processed += 1
+            print(f"[upload:{batch_id}] processed {original_name} → {webp_name}")
+
+        except Exception as exc:
+            failed += 1
+            print(f"[upload:{batch_id}] failed to process {original_name}: {exc}")
+
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            _set_upload_status(processed=processed, failed=failed)
+
+    if processed:
+        save_photos(photos)
+
+    try:
+        shutil.rmtree(batch_dir, ignore_errors=True)
+    except Exception as exc:
+        print(f"[upload:{batch_id}] could not remove temp batch folder: {exc}")
+
+    _set_upload_status(
+        active=False,
+        processed=processed,
+        failed=failed,
+        last_message=f"Processed {processed} photo(s); {failed} failed.",
+    )
+
+
 @app.route("/upload", methods=["POST"])
 def upload_photo():
     files = request.files.getlist("photos")
     if not files or all(f.filename == "" for f in files):
         return "No file", 400
-    photos = load_photos()
+
+    batch_id = uuid.uuid4().hex[:12]
+    batch_dir = PHOTO_TMP_DIR / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_files = []
     for file in files:
         filename = secure_filename(file.filename)
         if not filename:
             continue
-        name, ext = os.path.splitext(filename)
-        base_name = name
-        counter = 1
-        while True:
-            webp_name = f"{base_name}.webp"
-            full_path = FULL_DIR / webp_name
-            thumb_path = THUMB_DIR / webp_name
-            if not full_path.exists():
-                break
-            base_name = f"{name}_{counter}"
-            counter += 1
-        temp_path = FULL_DIR / f"temp_{uuid.uuid4().hex[:8]}{ext.lower()}"
+
+        temp_name = f"{uuid.uuid4().hex[:8]}__{filename}"
+        temp_path = batch_dir / temp_name
         file.save(temp_path)
-        try:
-            with Image.open(temp_path) as img:
-                img = ImageOps.exif_transpose(img).convert("RGB")
-                full_img = img.copy(); full_img.thumbnail((1000, 1000)); full_img.save(full_path, format="WEBP", quality=100, method=6)
-                thumb_img = img.copy(); thumb_img.thumbnail((250, 250)); thumb_img.save(thumb_path, format="WEBP", quality=80, method=6)
-            temp_path.unlink(missing_ok=True)
-            photos.append(webp_name)
-        except Exception as exc:
-            print(f"[upload] keeping original because conversion failed for {filename}: {exc}")
-            fallback = FULL_DIR / filename
-            os.replace(temp_path, fallback)
-            if filename not in photos:
-                photos.append(filename)
-    save_photos(photos)
-    return redirect(url_for("dashboard"))
+        saved_files.append(temp_name)
+
+    if not saved_files:
+        shutil.rmtree(batch_dir, ignore_errors=True)
+        return "No valid files", 400
+
+    _set_upload_status(
+        active=True,
+        queued=len(saved_files),
+        processed=0,
+        failed=0,
+        last_batch_id=batch_id,
+        last_message=f"Queued {len(saved_files)} photo(s) for processing.",
+    )
+
+    threading.Thread(
+        target=_process_uploaded_photo_batch,
+        args=(batch_dir, saved_files, batch_id),
+        daemon=True,
+    ).start()
+
+    return redirect(url_for(
+        "dashboard",
+        msg=f"{len(saved_files)} photo(s) uploaded. Processing in the background; the frame will reload when ready.",
+    ))
+
+
+@app.route("/upload/status")
+def upload_status_json():
+    return jsonify(_snapshot_upload_status())
 
 
 @app.route("/delete_selected_photos", methods=["POST"])
@@ -355,6 +508,46 @@ def spotify_disconnect():
     clear_spotify_cache()
     state = load_state(); state["spotify"].update({"source": "mock", "connected": False, "playing": False}); save_state(state)
     return redirect(url_for("dashboard", msg="Spotify disconnected."))
+
+
+@app.route("/display/reload", methods=["POST"])
+def display_reload():
+    """Mock the config-portal Reload Display button by triggering the display SSE reload."""
+    touch_for_display_reload()
+    state = load_state()
+    state["display_reload_requested_at"] = time.time()
+    save_state(state)
+    return json_or_redirect({
+        "status": "ok",
+        "message": "Display reload requested.",
+        "mock": True,
+    })
+
+
+@app.route("/frame/restart", methods=["POST"])
+def frame_restart():
+    """Mock restarting the frame/display services without touching local processes."""
+    state = load_state()
+    state["frame_restart_requested_at"] = time.time()
+    state["display_reload_requested_at"] = time.time()
+    save_state(state)
+    touch_for_display_reload()
+    return json_or_redirect({
+        "status": "ok",
+        "message": "Mock frame restart requested. No local services were restarted.",
+        "mock": True,
+    })
+
+
+@app.route("/screen/on", methods=["POST"])
+def screen_on():
+    """Mock the Screen On button by setting the shared screen state to on."""
+    wake_screen()
+    return json_or_redirect({
+        "status": "on",
+        "message": "Screen set to on.",
+        "mock": True,
+    })
 
 
 # Local-only controls also exposed on port 5000 for convenience.
