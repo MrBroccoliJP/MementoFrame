@@ -1,33 +1,35 @@
+#!/usr/bin/env python3
+"""Run both updated MementoFrame mock services."""
+from __future__ import annotations
+
+import os
+import signal
 import subprocess
 import sys
-import os
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-
-procs = []
+SERVICES = ["mock_config_portal_service.py", "mock_display_service.py"]
+procs: list[subprocess.Popen] = []
 
 try:
-    procs.append(
-        subprocess.Popen([sys.executable, "mock_app.py"], cwd=BASE)
-    )
-
-    procs.append(
-        subprocess.Popen([sys.executable, "mock_api_service.py"], cwd=BASE)
-    )
-
+    for script in SERVICES:
+        procs.append(subprocess.Popen([sys.executable, script], cwd=BASE))
     print()
     print("MementoFrame mock environment running")
-    print("Admin dashboard : http://localhost:5000")
-    print("Frontend API    : http://localhost:5001")
-    print("Mock controls   : http://localhost:5001/mock")
+    print("Config portal : http://localhost:5000")
+    print("Display UI    : http://localhost:5001")
+    print("Mock controls : http://localhost:5001/mock")
+    print("Forced time   : http://localhost:5001/mock/time.json")
     print()
     print("Press CTRL+C to stop")
-
-    for p in procs:
-        p.wait()
-
+    for proc in procs:
+        proc.wait()
 except KeyboardInterrupt:
     print("\nStopping mocks...")
-
-    for p in procs:
-        p.terminate()
+    for proc in procs:
+        proc.terminate()
+    for proc in procs:
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()

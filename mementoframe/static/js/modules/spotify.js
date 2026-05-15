@@ -39,6 +39,7 @@ let spotifyRenderTimer = null;
 let spotifyFadeCleanupTimer = null;
 let lastRenderedArtworkKey = null;
 let lastRequestedArtworkKey = null;
+let lastPreloadedArtworkKey = null;
 
 // ─── Public Init ────────────────────────────────────────────────────────────
 
@@ -199,6 +200,26 @@ function stopAccentColorCycle() {
 // ─── Spotify Polling / Rendering ────────────────────────────────────────────
 
 /**
+ * Show the Spotify panel and hide the calendar panel.
+ * Used after the first album art + accent are ready, so the placeholder
+ * does not flash before the real cover appears.
+ */
+function showSpotifyPanelNow() {
+  setCalendarOpacity(1);
+  updatePanelState({ calendarFullOpacity: false, spotifyPlaying: true });
+
+  const spotifyBox  = $(SELECTORS.spotifyBox);
+  const calendarBox = $(SELECTORS.calendarBox);
+
+  calendarBox?.classList.add("hidden");
+  calendarBox?.classList.remove("visible");
+
+  spotifyBox?.classList.remove("hidden");
+  spotifyBox?.classList.add("visible");
+}
+
+
+/**
  * Fetch current Spotify playback state and update the UI.
  *
  * @async
@@ -276,33 +297,37 @@ export async function updateSpotify() {
     stopAccentColorCycle();
   }
 
-  if (isPlaying) {
-    setCalendarOpacity(1);
-    updatePanelState({ calendarFullOpacity: false, spotifyPlaying: true });
+  const spotifyBox = $(SELECTORS.spotifyBox);
+  const spotifyAlreadyVisible = spotifyBox?.classList.contains("visible");
 
-    const spotifyBox  = $(SELECTORS.spotifyBox);
-    const calendarBox = $(SELECTORS.calendarBox);
+  const needsArtworkRender =
+    isPlaying &&
+    artworkKey &&
+    artworkKey !== lastRenderedArtworkKey &&
+    artworkKey !== lastRequestedArtworkKey;
 
-    calendarBox?.classList.add("hidden");
-    calendarBox?.classList.remove("visible");
-    spotifyBox?.classList.remove("hidden");
-    spotifyBox?.classList.add("visible");
+  const revealSpotifyAfterArtwork =
+    needsArtworkRender && !spotifyAlreadyVisible;
+
+  if (isPlaying && !revealSpotifyAfterArtwork) {
+    showSpotifyPanelNow();
   }
 
   // Only render artwork/colour when the artwork actually changes. This avoids
   // repeated canvas work on every poll, which matters on Raspberry Pi 3.
-  if (isPlaying && artworkKey && artworkKey !== lastRenderedArtworkKey && artworkKey !== lastRequestedArtworkKey) {
+  if (needsArtworkRender) {
     renderArtworkAndAccent({
       albumArt,
       albumEl,
       artworkKey,
       transition: true,
-      fade: trackChanged,
+      fade: spotifyAlreadyVisible && trackChanged,
+      revealWhenReady: revealSpotifyAfterArtwork,
     });
   }
 
   // First paused track: preload the image for display, but keep ambient colour.
-  if (!isPlaying && firstTrack && albumArt && albumEl && artworkKey !== lastRenderedArtworkKey) {
+  if (!isPlaying && firstTrack && albumArt && albumEl && artworkKey !== lastPreloadedArtworkKey) {
     renderArtworkOnly({ albumArt, albumEl, artworkKey });
   }
 
@@ -420,8 +445,16 @@ function restartFadeIn(albumEl, trackInfoEl) {
  * @param {string} options.artworkKey
  * @param {boolean} options.transition
  * @param {boolean} options.fade
+ * @param {boolean} options.revealWhenReady
  */
-function renderArtworkAndAccent({ albumArt, albumEl, artworkKey, transition = true, fade = true }) {
+function renderArtworkAndAccent({
+  albumArt,
+  albumEl,
+  artworkKey,
+  transition = true,
+  fade = true,
+  revealWhenReady = false,
+}) {
   spotifyRenderSeq++;
   const seq = spotifyRenderSeq;
   lastRequestedArtworkKey = artworkKey;
@@ -475,7 +508,12 @@ function renderArtworkAndAccent({ albumArt, albumEl, artworkKey, transition = tr
         applyAccent(color, transition);
 
         lastRenderedArtworkKey = artworkKey;
+        lastPreloadedArtworkKey = artworkKey;
         lastRequestedArtworkKey = null;
+
+        if (revealWhenReady) {
+          showSpotifyPanelNow();
+        }
 
         if (fade) restartFadeIn(albumEl, trackInfoEl);
         else {
@@ -491,6 +529,10 @@ function renderArtworkAndAccent({ albumArt, albumEl, artworkKey, transition = tr
       albumEl?.classList.remove("fade-out", "fade-in");
       trackInfoEl?.classList.remove("fade-out", "fade-in");
       applyAccent(state.spotify.currentAccent || "rgb(80, 80, 80)", transition);
+
+      if (revealWhenReady) {
+        showSpotifyPanelNow();
+      }
     }
   }, minimumFadeMs);
 }
@@ -514,7 +556,7 @@ async function renderArtworkOnly({ albumArt, albumEl, artworkKey }) {
     if (seq !== spotifyRenderSeq) return;
 
     setAlbumImageNow(albumEl, loadedImg);
-    lastRenderedArtworkKey = artworkKey;
+    lastPreloadedArtworkKey = artworkKey;
     lastRequestedArtworkKey = null;
   } catch (err) {
     if (seq !== spotifyRenderSeq) return;
