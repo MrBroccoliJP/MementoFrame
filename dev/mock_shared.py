@@ -1,85 +1,75 @@
 #!/usr/bin/env python3
-"""Shared mock state helpers for local MementoFrame development."""
+# MementoFrame - Raspberry Pi Smart Photo Frame
+# Copyright (c) 2026 João Fernandes
+# Licensed under Creative Commons Attribution-NonCommercial 4.0 International.
+"""Shared helpers for the local MementoFrame mock services.
+
+These helpers intentionally keep all mock-only runtime state in dev/runtime while
+using the real project templates/static/userdata folders, so the config portal
+and display frontend can be tested locally without Raspberry Pi hardware.
+"""
+from __future__ import annotations
+
 import json
 import os
 import secrets
 import time
 from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-# ---------------------------------------------------------------------------
-# Folder layout
-# ---------------------------------------------------------------------------
-# These mock files are intended to live in:
-#
-#   repo-root/
-#   ├── mementoframe/   # real project files
-#   └── dev/            # mock files
-#
-# Mock runtime data stays inside dev/runtime so it is never mixed with the
-# Raspberry Pi production runtime files.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))          # repo-root/dev
-REPO_ROOT = os.path.dirname(BASE_DIR)                          # repo-root
-PROJECT_ROOT = os.path.join(REPO_ROOT, "mementoframe")         # repo-root/mementoframe
+BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent
+PROJECT_ROOT = REPO_ROOT / "mementoframe"
 
-RUNTIME_DIR = os.path.join(BASE_DIR, "runtime")
-os.makedirs(RUNTIME_DIR, exist_ok=True)
+# Allow running directly from a copied folder during quick testing.
+if not PROJECT_ROOT.exists():
+    PROJECT_ROOT = BASE_DIR
 
-CONFIG_FILE = os.path.join(PROJECT_ROOT, "config.json")
-STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
-TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
-USERDATA_DIR = os.path.join(PROJECT_ROOT, "resources", "userdata")
-ASSETS_DIR = os.path.join(PROJECT_ROOT, "resources", "assets")
+RUNTIME_DIR = BASE_DIR / "runtime"
+RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
-MOCK_STATE_FILE = os.path.join(RUNTIME_DIR, "mock_state.json")
-UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
-CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
-LEGACY_CONFIG_PIN_FILE = os.path.join(RUNTIME_DIR, "config_pin.txt")
+CONFIG_FILE = PROJECT_ROOT / "config.json"
+STATIC_DIR = PROJECT_ROOT / "static"
+TEMPLATES_DIR = PROJECT_ROOT / "templates"
+USERDATA_DIR = PROJECT_ROOT / "resources" / "userdata"
+ASSETS_DIR = PROJECT_ROOT / "resources" / "assets"
+PHOTO_DIR = USERDATA_DIR / "Photos"
+FULL_DIR = PHOTO_DIR / "full"
+THUMB_DIR = PHOTO_DIR / "thumbs"
+PHOTO_JSON = PHOTO_DIR / "photos.json"
+PHOTO_JS = PHOTO_DIR / "photos.js"
+CACHE_DIR = USERDATA_DIR / "cache"
+
+for folder in [USERDATA_DIR, ASSETS_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, RUNTIME_DIR]:
+    folder.mkdir(parents=True, exist_ok=True)
+
+MOCK_STATE_FILE = RUNTIME_DIR / "mock_state.json"
+UPDATE_STATE_FILE = RUNTIME_DIR / "update_state.json"
+CONFIG_PORTAL_PIN_FILE = RUNTIME_DIR / "config_portal_pin.json"
+SPOTIFY_CACHE = RUNTIME_DIR / ".cache_spotify"
 
 CONFIG_PORTAL_PIN_LENGTH = 6
 CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
 
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "clock1": {"label": "Lisbon", "timezone": "Europe/Lisbon"},
     "clock2": {"label": "Shanghai", "timezone": "Asia/Shanghai", "enabled": True},
-    "weather_api_key": "mock-key",
+    "weather_api_key": "",
     "weather_region": "Porto",
     "brightness": 80,
     "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
     "updates": {
         "auto_update": False,
-        "repo": "",
+        "repo": os.getenv("MEMENTOFRAME_UPDATE_REPO", ""),
         "channel": "stable",
-        "mock_pending_update": False,
-    },
-}
-
-DEFAULT_STATE = {
-    "screen": "on",
-    "mode": "client",
-    "ip": "192.168.1.42",
-    "ap_ssid": "MementoFrame",
-    "wifi_ssid": "MockNetwork_5G",
-    "known_networks": ["MockNetwork_2.4G", "MockNetwork_5G", "Neighbor_IoT"],
-    "clients_connected": 0,
-    "spotify": {
-        "source": "mock",
-        "connected": True,
-        "playing": True,
-        "track_index": 0,
-        "track_started_at": time.time(),
-        "manual_progress_ms": 0,
-    },
-    "weather": {
-        "enabled": True,
-        "temperature": 18.4,
-        "condition": "Partly cloudy",
-        "icon": "https://cdn.weatherapi.com/weather/64x64/day/116.png",
-        "humidity": 72,
-        "windSpeed": 14.4,
-        "city": "Porto",
+        "last_checked": None,
+        "available_version": None,
+        "available": False,
     },
 }
 
@@ -116,95 +106,173 @@ MOCK_TRACKS = [
     },
 ]
 
+DEFAULT_STATE: dict[str, Any] = {
+    "screen": "on",
+    "mode": "client",
+    "ip": "192.168.1.42",
+    "ap_ssid": "MementoFrame",
+    "wifi_ssid": "MockNetwork_5G",
+    "known_networks": ["MockNetwork_2.4G", "MockNetwork_5G", "Neighbor_IoT"],
+    "clients_connected": 0,
+    "brightness_test_level": None,
+    "spotify": {
+        "source": "mock",          # mock | real
+        "connected": True,
+        "playing": True,
+        "track_index": 0,
+        "track_started_at": time.time(),
+        "manual_progress_ms": 0,
+    },
+    "weather": {
+        "source": "mock",          # mock | real
+        "enabled": True,
+        "temperature": 18.4,
+        "condition": "Partly cloudy",
+        "icon": "https://cdn.weatherapi.com/weather/64x64/day/116.png",
+        "humidity": 72,
+        "windSpeed": 14.4,
+        "city": "Porto",
+    },
+    "time": {
+        "enabled": False,
+        "fixed_iso": "2026-05-15T10:08:00+01:00",
+        "tick": True,
+    },
+    "last_wifi_message": None,
+}
 
-def deep_merge(default, current):
-    merged = deepcopy(default)
-    if not isinstance(current, dict):
-        return merged
-    for key, value in current.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
 
-
-def atomic_write_json(path, data):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
 
 
-def load_state():
-    if not os.path.exists(MOCK_STATE_FILE):
-        save_state(DEFAULT_STATE)
-        return deepcopy(DEFAULT_STATE)
+def deep_merge(default: Any, current: Any) -> Any:
+    if isinstance(default, dict) and isinstance(current, dict):
+        merged = deepcopy(default)
+        for key, value in current.items():
+            merged[key] = deep_merge(merged.get(key), value) if key in merged else value
+        return merged
+    return deepcopy(current) if current is not None else deepcopy(default)
+
+
+def read_json(path: Path, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
-        with open(MOCK_STATE_FILE, encoding="utf-8") as f:
-            return deep_merge(DEFAULT_STATE, json.load(f))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return deepcopy(DEFAULT_STATE)
+        return deepcopy(fallback or {})
 
 
-def save_state(state):
-    os.makedirs(RUNTIME_DIR, exist_ok=True)
-    atomic_write_json(MOCK_STATE_FILE, state)
+def load_state() -> dict[str, Any]:
+    if not MOCK_STATE_FILE.exists():
+        save_state(deepcopy(DEFAULT_STATE))
+    return deep_merge(DEFAULT_STATE, read_json(MOCK_STATE_FILE, {}))
 
 
-def update_state(mutator):
-    state = load_state()
-    result = mutator(state)
-    save_state(state)
-    return state if result is None else result
+def save_state(state: dict[str, Any]) -> None:
+    atomic_write_json(MOCK_STATE_FILE, deep_merge(DEFAULT_STATE, state))
 
 
-def load_config():
-    if not os.path.exists(CONFIG_FILE):
-        save_config(DEFAULT_CONFIG)
-        return deepcopy(DEFAULT_CONFIG)
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            return deep_merge(DEFAULT_CONFIG, json.load(f))
-    except Exception:
-        return deepcopy(DEFAULT_CONFIG)
+def load_config() -> dict[str, Any]:
+    if not CONFIG_FILE.exists():
+        save_config(deepcopy(DEFAULT_CONFIG))
+    return deep_merge(DEFAULT_CONFIG, read_json(CONFIG_FILE, {}))
 
 
-def save_config(cfg):
+def save_config(cfg: dict[str, Any]) -> None:
     atomic_write_json(CONFIG_FILE, deep_merge(DEFAULT_CONFIG, cfg))
 
 
-def remove_config_portal_pin():
-    for path in [CONFIG_PORTAL_PIN_FILE, LEGACY_CONFIG_PIN_FILE]:
+def load_env_files() -> None:
+    for env_path in [REPO_ROOT / ".env", PROJECT_ROOT / ".env", BASE_DIR / ".env"]:
+        if not env_path.exists():
+            continue
         try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Could not remove {path}: {e}")
+            for raw in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        except Exception as exc:
+            print(f"[env] could not read {env_path}: {exc}")
 
 
-def read_config_portal_pin_record():
+def read_env_values() -> dict[str, str]:
+    load_env_files()
+    return {key: os.getenv(key, "") for key in ["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI", "WEATHER_API_KEY", "GITHUB_TOKEN", "MEMENTOFRAME_UPDATE_REPO"]}
+
+
+def write_env_values(updates: dict[str, str]) -> None:
+    env_path = PROJECT_ROOT / ".env"
+    existing = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    seen: set[str] = set()
+    lines: list[str] = []
+    for raw in existing:
+        if "=" not in raw or raw.strip().startswith("#"):
+            lines.append(raw)
+            continue
+        key, _old = raw.split("=", 1)
+        key = key.strip()
+        if key in updates:
+            lines.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            lines.append(raw)
+    for key, value in updates.items():
+        if key not in seen:
+            lines.append(f"{key}={value}")
+        os.environ[key] = value
+    env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Photos
+# ---------------------------------------------------------------------------
+def build_photo_list() -> list[str]:
+    exts = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+    return sorted([p.name for p in FULL_DIR.iterdir() if p.is_file() and p.suffix.lower() in exts])
+
+
+def load_photos() -> list[str]:
+    if not PHOTO_JSON.exists():
+        photos = build_photo_list()
+        save_photos(photos)
+        return photos
     try:
-        with open(CONFIG_PORTAL_PIN_FILE, encoding="utf-8") as f:
-            record = json.load(f)
-    except FileNotFoundError:
-        # Legacy fallback for any older mock process still writing config_pin.txt.
-        try:
-            with open(LEGACY_CONFIG_PIN_FILE, encoding="utf-8") as f:
-                pin = f.read().strip()
-            if not pin:
-                return None
-            age = time.time() - os.path.getmtime(LEGACY_CONFIG_PIN_FILE)
-            expires_at = time.time() + max(0, CONFIG_PORTAL_PIN_TTL_SECONDS - age)
-            return {"pin": pin, "created_at": time.time() - age, "expires_at": expires_at, "ttl_seconds": CONFIG_PORTAL_PIN_TTL_SECONDS}
-        except Exception:
-            return None
+        photos = json.loads(PHOTO_JSON.read_text(encoding="utf-8"))
+        if not isinstance(photos, list):
+            raise ValueError("photos.json is not a list")
+        if not photos:
+            photos = build_photo_list()
+            save_photos(photos)
+        return photos
     except Exception:
-        remove_config_portal_pin()
-        return None
+        photos = build_photo_list()
+        save_photos(photos)
+        return photos
 
+
+def save_photos(photos: list[str]) -> None:
+    PHOTO_JSON.parent.mkdir(parents=True, exist_ok=True)
+    PHOTO_JSON.write_text(json.dumps(photos, indent=2), encoding="utf-8")
+    PHOTO_JS.write_text("window.photos = " + json.dumps(photos, indent=2) + ";", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Config portal PIN
+# ---------------------------------------------------------------------------
+def remove_config_portal_pin() -> None:
+    try:
+        CONFIG_PORTAL_PIN_FILE.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def read_config_portal_pin_record() -> dict[str, Any] | None:
+    record = read_json(CONFIG_PORTAL_PIN_FILE, {})
     expires_at = float(record.get("expires_at") or 0)
     pin = str(record.get("pin") or "").strip()
     if not pin or not expires_at or time.time() >= expires_at:
@@ -213,76 +281,277 @@ def read_config_portal_pin_record():
     return record
 
 
-def create_config_portal_pin():
+def create_config_portal_pin() -> dict[str, Any]:
     now = time.time()
-    pin = "".join(secrets.choice("0123456789") for _ in range(CONFIG_PORTAL_PIN_LENGTH))
     record = {
-        "pin": pin,
+        "pin": "".join(secrets.choice("0123456789") for _ in range(CONFIG_PORTAL_PIN_LENGTH)),
         "created_at": now,
         "expires_at": now + CONFIG_PORTAL_PIN_TTL_SECONDS,
         "ttl_seconds": CONFIG_PORTAL_PIN_TTL_SECONDS,
     }
     atomic_write_json(CONFIG_PORTAL_PIN_FILE, record)
-    with open(LEGACY_CONFIG_PIN_FILE, "w", encoding="utf-8") as f:
-        f.write(pin)
-    try:
-        os.chmod(CONFIG_PORTAL_PIN_FILE, 0o600)
-        os.chmod(LEGACY_CONFIG_PIN_FILE, 0o600)
-    except Exception:
-        pass
-    print(f"[config-portal-pin] created temporary PIN: {pin}")
     return record
 
 
-def get_or_create_config_portal_pin_record():
+def get_or_create_config_portal_pin_record() -> dict[str, Any]:
     return read_config_portal_pin_record() or create_config_portal_pin()
 
 
-def pin_response_payload():
+def pin_response_payload() -> dict[str, Any]:
     record = read_config_portal_pin_record()
     if not record:
         return {"pin": None, "active": False}
-    remaining = max(0, int(float(record["expires_at"]) - time.time()))
-    return {"pin": record["pin"], "active": True, "expires_at": record["expires_at"], "seconds_remaining": remaining}
-
+    return {
+        "pin": record["pin"],
+        "active": True,
+        "expires_at": record["expires_at"],
+        "seconds_remaining": max(0, int(float(record["expires_at"]) - time.time())),
+    }
 
 
 # ---------------------------------------------------------------------------
-# Mock software-update helpers
+# Time override
 # ---------------------------------------------------------------------------
-def _global_app_version():
+def forced_time_payload() -> dict[str, Any]:
+    state = load_state()
+    cfg = state.get("time", {})
+    enabled = bool(cfg.get("enabled"))
+    fixed_iso = cfg.get("fixed_iso") or DEFAULT_STATE["time"]["fixed_iso"]
     try:
-        from version_info import GLOBAL_APP_VERSION
-        return str(GLOBAL_APP_VERSION)
+        fixed_dt = datetime.fromisoformat(str(fixed_iso).replace("Z", "+00:00"))
+        fixed_ms = int(fixed_dt.timestamp() * 1000)
     except Exception:
-        try:
-            from version_info import VERSIONS
-            return str(VERSIONS.get("MementoFrame") or VERSIONS.get("App") or "0.0.0")
-        except Exception:
-            return "0.0.0"
+        fixed_iso = DEFAULT_STATE["time"]["fixed_iso"]
+        fixed_ms = int(datetime.fromisoformat(fixed_iso).timestamp() * 1000)
+    return {"enabled": enabled, "fixed_iso": fixed_iso, "fixed_ms": fixed_ms, "tick": bool(cfg.get("tick", True)), "real_now_ms": int(time.time() * 1000)}
 
 
-def _normalize_version(value):
-    return str(value or "0.0.0").strip().lstrip("vV")
+def time_override_script() -> str:
+    payload = forced_time_payload()
+    if not payload["enabled"]:
+        return "// MementoFrame mock time override disabled\n"
+    data = json.dumps(payload)
+    return f"""
+(() => {{
+  const cfg = {data};
+  if (!cfg.enabled) return;
+  const NativeDate = Date;
+  const startedAt = NativeDate.now();
+  const fixedAt = Number(cfg.fixed_ms || startedAt);
+  function nowMs() {{ return cfg.tick ? fixedAt + (NativeDate.now() - startedAt) : fixedAt; }}
+  function MockDate(...args) {{ return args.length ? new NativeDate(...args) : new NativeDate(nowMs()); }}
+  MockDate.UTC = NativeDate.UTC;
+  MockDate.parse = NativeDate.parse;
+  MockDate.now = nowMs;
+  MockDate.prototype = NativeDate.prototype;
+  Object.setPrototypeOf(MockDate, NativeDate);
+  window.Date = MockDate;
+  window.__MEMENTOFRAME_MOCK_TIME__ = cfg;
+}})();
+""".lstrip()
 
 
-def _version_tuple(value):
-    parts = []
-    for chunk in _normalize_version(value).replace("-", ".").split("."):
-        digits = "".join(ch for ch in chunk if ch.isdigit())
-        parts.append(int(digits or 0))
-    while len(parts) < 4:
-        parts.append(0)
-    return tuple(parts[:4])  
+# ---------------------------------------------------------------------------
+# Spotify
+# ---------------------------------------------------------------------------
+def get_spotify_oauth():
+    load_env_files()
+    try:
+        from spotipy.oauth2 import SpotifyOAuth
+    except Exception as exc:
+        raise RuntimeError("spotipy is not installed. Run: pip install spotipy python-dotenv") from exc
+    client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything")
+    if not client_id or not client_secret:
+        raise RuntimeError("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET are missing from .env")
+    return SpotifyOAuth(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
+        scope="user-read-playback-state user-read-currently-playing user-library-read",
+        cache_path=str(SPOTIFY_CACHE),
+        open_browser=False,
+    )
 
 
-def default_update_state():
-    installed = _global_app_version()
+def get_spotify_authorize_url() -> str:
+    return get_spotify_oauth().get_authorize_url()
+
+
+def cache_spotify_token_from_url(pasted_url: str) -> dict[str, Any]:
+    code = parse_qs(urlparse(pasted_url or "").query).get("code", [None])[0]
+    if not code:
+        raise RuntimeError("No Spotify OAuth code found in pasted callback URL")
+    return get_spotify_oauth().get_access_token(code, as_dict=True)
+
+
+def clear_spotify_cache() -> None:
+    try:
+        SPOTIFY_CACHE.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def real_spotify_user() -> dict[str, Any] | None:
+    try:
+        import spotipy
+        oauth = get_spotify_oauth()
+        token = oauth.get_cached_token()
+        if not token:
+            return None
+        return spotipy.Spotify(auth=token["access_token"]).current_user()
+    except Exception as exc:
+        print(f"[spotify-user] {exc}")
+        return None
+
+
+def real_spotify_payload() -> dict[str, Any]:
+    try:
+        import spotipy
+        oauth = get_spotify_oauth()
+        token = oauth.get_cached_token()
+        if not token:
+            return {"isPlaying": False, "spotifyConfigured": True, "source": "real", "error": "No cached Spotify token. Use /spotify/connect first."}
+        sp = spotipy.Spotify(auth=token["access_token"])
+        data = sp.current_playback()
+        if not data or not data.get("item"):
+            return {"isPlaying": False, "spotifyConfigured": True, "source": "real"}
+        item = data["item"]
+        track_id = item.get("id")
+        liked = False
+        if track_id:
+            try:
+                liked_result = sp.current_user_saved_tracks_contains([track_id])
+                liked = bool(liked_result and liked_result[0])
+            except Exception as exc:
+                print(f"[spotify-liked] {exc}")
+        return {
+            "track": item.get("name"),
+            "artist": ", ".join(a.get("name", "") for a in item.get("artists", [])),
+            "albumArt": item.get("album", {}).get("images", [{}])[0].get("url") if item.get("album", {}).get("images") else None,
+            "isPlaying": bool(data.get("is_playing", False)),
+            "progress": int(data.get("progress_ms") or 0),
+            "duration": int(item.get("duration_ms") or 0),
+            "liked": liked,
+            "trackId": track_id,
+            "spotifyConfigured": True,
+            "source": "real",
+        }
+    except Exception as exc:
+        return {"isPlaying": False, "spotifyConfigured": False, "source": "real", "error": str(exc)}
+
+
+def current_track_payload() -> dict[str, Any]:
+    state = load_state()
+    spotify = state["spotify"]
+    if spotify.get("source") == "real":
+        return real_spotify_payload()
+    if not spotify.get("connected"):
+        return {"isPlaying": False, "spotifyConfigured": True, "source": "mock"}
+    if not spotify.get("playing"):
+        return {"isPlaying": False, "spotifyConfigured": True, "source": "mock"}
+    track = deepcopy(MOCK_TRACKS[int(spotify.get("track_index", 0)) % len(MOCK_TRACKS)])
+    elapsed = int((time.time() - float(spotify.get("track_started_at", time.time()))) * 1000)
+    base_progress = int(spotify.get("manual_progress_ms", track.get("progress", 0)))
+    track["progress"] = min(base_progress + elapsed, int(track["duration"]))
+    track["isPlaying"] = True
+    track["spotifyConfigured"] = True
+    track["source"] = "mock"
+    return track
+
+
+def next_track() -> dict[str, Any]:
+    state = load_state()
+    spotify = state["spotify"]
+    spotify["track_index"] = (int(spotify.get("track_index", 0)) + 1) % len(MOCK_TRACKS)
+    spotify["track_started_at"] = time.time()
+    spotify["manual_progress_ms"] = 0
+    spotify["connected"] = True
+    spotify["playing"] = True
+    save_state(state)
+    return current_track_payload()
+
+
+# ---------------------------------------------------------------------------
+# Weather
+# ---------------------------------------------------------------------------
+def real_weather_payload() -> dict[str, Any]:
+    load_env_files()
+    cfg = load_config()
+    key = cfg.get("weather_api_key") or os.getenv("WEATHER_API_KEY")
+    location = cfg.get("weather_region") or "Porto"
+    if not key:
+        return {"error": "Weather API key not configured"}
+    try:
+        import requests
+        res = requests.get("https://api.weatherapi.com/v1/current.json", params={"key": key, "q": location, "aqi": "no"}, timeout=5)
+        res.raise_for_status()
+        data = res.json()
+        return {
+            "temperature": round(float(data["current"]["temp_c"]), 1),
+            "condition": data["current"]["condition"]["text"],
+            "icon": "https:" + data["current"]["condition"]["icon"],
+            "humidity": int(data["current"]["humidity"]),
+            "windSpeed": float(data["current"]["wind_kph"]),
+            "city": data["location"]["name"],
+            "source": "real",
+        }
+    except Exception as exc:
+        return {"error": f"Weather request failed: {exc}", "source": "real"}
+
+
+def weather_payload() -> dict[str, Any]:
+    state = load_state()
+    weather = state.get("weather", {})
+    if weather.get("source") == "real":
+        return real_weather_payload()
+    if not weather.get("enabled", True):
+        return {"error": "Weather API key not configured"}
+    return {
+        "temperature": round(float(weather.get("temperature", 0)), 1),
+        "condition": weather.get("condition", "Clear"),
+        "icon": weather.get("icon"),
+        "humidity": int(float(weather.get("humidity", 0))),
+        "windSpeed": float(weather.get("windSpeed", 0)),
+        "city": weather.get("city", "Porto"),
+        "source": "mock",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Update mock
+# ---------------------------------------------------------------------------
+def global_app_version() -> str:
+    try:
+        import runpy
+        version_file = PROJECT_ROOT / "version_info.py"
+        data = runpy.run_path(str(version_file))
+        return str(data.get("GLOBAL_APP_VERSION") or data.get("VERSION") or "0.0.0")
+    except Exception:
+        return "0.0.0"
+
+
+def parse_version(value: str) -> tuple[int, ...]:
+    import re
+    parts = [int(x) for x in re.findall(r"\d+", str(value or "0"))]
+    return tuple(parts or [0])
+
+
+def version_newer(latest: str, current: str) -> bool:
+    a, b = parse_version(latest), parse_version(current)
+    n = max(len(a), len(b))
+    return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
+
+
+def default_update_state() -> dict[str, Any]:
+    installed = global_app_version()
     return {
         "installed_version": installed,
-        "current_version": installed,
         "latest_version": None,
         "latest_tag": None,
+        "release_name": None,
+        "release_url": None,
         "available": False,
         "mock_pending_update": False,
         "pending_restart": False,
@@ -297,313 +566,92 @@ def default_update_state():
     }
 
 
-def load_update_state():
-    """Return mock update state. The mock_pending_update flag forces available=True for UI testing."""
+def load_update_state() -> dict[str, Any]:
     state = default_update_state()
-    try:
-        if os.path.exists(UPDATE_STATE_FILE):
-            with open(UPDATE_STATE_FILE, encoding="utf-8") as f:
-                stored = json.load(f)
-            if isinstance(stored, dict):
-                state.update(stored)
-            # Always overwrite with the real value from version_info.py
-            state["installed_version"] = _global_app_version()  # ADD THIS
-            state["current_version"] = state["installed_version"]  # ADD THIS
-    except Exception as e:
-        state["last_error"] = f"Unable to read mock update state: {e}"
-
-    cfg = load_config()
-    updates_cfg = cfg.get("updates", {}) if isinstance(cfg, dict) else {}
-    state["auto_update"] = bool(updates_cfg.get("auto_update", False))
-    state["repo"] = updates_cfg.get("repo", state.get("repo", "")) or ""
-    state["channel"] = updates_cfg.get("channel", state.get("channel", "stable")) or "stable"
-
-    mock_pending = bool(updates_cfg.get("mock_pending_update", False) or state.get("mock_pending_update", False))
-    state["mock_pending_update"] = mock_pending
-    if mock_pending:
-        state.update({
-            "available": True,
-            "latest_version": state.get("latest_version") or "9.9.9-mock",
-            "latest_tag": state.get("latest_tag") or "v9.9.9-mock",
-            "last_error": None,
-        })
-
-    # Mocks never actually update/reboot.
-    state["update_in_progress"] = bool(state.get("update_in_progress", False))
-    state["pending_restart"] = bool(state.get("pending_restart", False))
+    state.update(read_json(UPDATE_STATE_FILE, {}))
+    state["installed_version"] = global_app_version()
+    cfg = load_config().get("updates", {})
+    state["auto_update"] = bool(cfg.get("auto_update", False))
+    state["repo"] = cfg.get("repo", state.get("repo", "")) or os.getenv("MEMENTOFRAME_UPDATE_REPO", "")
+    state["channel"] = cfg.get("channel", state.get("channel", "stable")) or "stable"
+    if bool(state.get("mock_pending_update")):
+        state.update({"available": True, "latest_version": state.get("latest_version") or "9.9.9-mock", "latest_tag": state.get("latest_tag") or "v9.9.9-mock", "last_error": None})
     return state
 
 
-def save_update_state(state):
-    os.makedirs(RUNTIME_DIR, exist_ok=True)
+def save_update_state(state: dict[str, Any]) -> None:
     atomic_write_json(UPDATE_STATE_FILE, state)
 
 
-def set_mock_pending_update(enabled):
-    """Toggle the mock-only pending update flag used to test display styling."""
-    cfg = load_config()
-    updates = cfg.setdefault("updates", {})
-    updates["mock_pending_update"] = bool(enabled)
-    save_config(cfg)
-
+def set_mock_pending_update(enabled: bool) -> dict[str, Any]:
     state = load_update_state()
     state["mock_pending_update"] = bool(enabled)
     if enabled:
-        state.update({
-            "available": True,
-            "latest_version": state.get("latest_version") or "9.9.9-mock",
-            "latest_tag": state.get("latest_tag") or "v9.9.9-mock",
-            "last_error": None,
-        })
+        state.update({"available": True, "latest_version": "9.9.9-mock", "latest_tag": "v9.9.9-mock", "last_error": None})
     else:
-        state.update({
-            "available": False,
-            "latest_version": None,
-            "latest_tag": None,
-        })
+        state.update({"available": False, "latest_version": None, "latest_tag": None})
     save_update_state(state)
     return load_update_state()
 
 
-def check_for_updates_mock():
-    """Check GitHub latest release when configured. Mocks only record status; they never install."""
+def check_for_updates_mock() -> dict[str, Any]:
     state = load_update_state()
-    repo = (state.get("repo") or os.getenv("MEMENTOFRAME_UPDATE_REPO", "")).strip()
     now = time.time()
-    state.update({
-        "checked_at": now,
-        "last_checked": now,
-        "update_in_progress": False,
-        "pending_restart": False,
-        "last_error": None,
-    })
-
+    state.update({"checked_at": now, "last_checked": now, "update_in_progress": False, "pending_restart": False, "last_error": None})
     if state.get("mock_pending_update"):
-        state.update({
-            "available": True,
-            "latest_version": state.get("latest_version") or "9.9.9-mock",
-            "latest_tag": state.get("latest_tag") or "v9.9.9-mock",
-        })
         save_update_state(state)
-        return state
-
+        return load_update_state()
+    repo = str(state.get("repo") or "").strip()
     if not repo or "/" not in repo:
-        state.update({
-            "available": False,
-            "latest_version": None,
-            "latest_tag": None,
-            "last_error": "No GitHub repository configured for mock update checks.",
-        })
+        state.update({"available": False, "latest_version": None, "latest_tag": None, "last_error": "No GitHub repository configured for mock update checks."})
         save_update_state(state)
         return state
-
-    channel = state.get("channel", "stable")
-    if channel == "pre-release":
-        url = f"https://api.github.com/repos/{repo}/releases?per_page=5"
-    else:
-        url = f"https://api.github.com/repos/{repo}/releases/latest"
-
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "MementoFrame-Mock-Updater",
-    }
+    url = f"https://api.github.com/repos/{repo}/releases/latest" if state.get("channel") != "pre-release" else f"https://api.github.com/repos/{repo}/releases?per_page=5"
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "MementoFrame-Mock-Updater"}
     token = os.getenv("GITHUB_TOKEN", "").strip()
     if token:
         headers["Authorization"] = f"Bearer {token}"
-
     try:
-        req = Request(url, headers=headers)
-        with urlopen(req, timeout=8) as res:
+        with urlopen(Request(url, headers=headers), timeout=8) as res:
             payload = json.loads(res.read().decode("utf-8"))
-
         if isinstance(payload, list):
-            if not payload:
-                raise RuntimeError("No releases found.")
-            payload = payload[0]
-
+            payload = next((r for r in payload if not r.get("draft") and r.get("tag_name")), payload[0] if payload else {})
         tag = str(payload.get("tag_name") or "").strip()
-        latest = _normalize_version(tag)
-        installed = _normalize_version(state.get("installed_version"))
-        available = bool(tag) and _version_tuple(latest) > _version_tuple(installed)
+        latest = tag.lstrip("vV")
+        installed = state.get("installed_version", "0.0.0")
         state.update({
             "latest_tag": tag or None,
-            "latest_version": latest if tag else None,
-            "available": available,
+            "latest_version": latest or None,
+            "available": bool(latest and version_newer(latest, installed)),
             "release_name": payload.get("name"),
             "release_url": payload.get("html_url"),
             "last_error": None,
         })
-    except HTTPError as e:
-        state.update({"available": False, "latest_version": None, "latest_tag": None, "last_error": f"GitHub update check failed: HTTP {e.code}"})
-    except (URLError, TimeoutError, json.JSONDecodeError, Exception) as e:
-        state.update({"available": False, "latest_version": None, "latest_tag": None, "last_error": f"GitHub update check failed: {e}"})
-
+    except HTTPError as exc:
+        state.update({"available": False, "latest_version": None, "latest_tag": None, "last_error": f"GitHub update check failed: HTTP {exc.code}"})
+    except (URLError, TimeoutError, json.JSONDecodeError, Exception) as exc:
+        state.update({"available": False, "latest_version": None, "latest_tag": None, "last_error": f"GitHub update check failed: {exc}"})
     save_update_state(state)
     return state
 
 
-def mock_install_update_blocked():
-    """No-op install endpoint. Mocks must never update files or reboot."""
+def mock_install_update_blocked() -> dict[str, Any]:
     state = load_update_state()
-    state.update({
-        "update_in_progress": False,
-        "pending_restart": False,
-        "last_error": "Mock environment: install/reboot is disabled.",
-    })
+    state.update({"update_in_progress": False, "pending_restart": False, "last_error": "Mock environment: install/reboot is disabled."})
     save_update_state(state)
     return state
 
 
-def load_local_env_files():
-    """Load local .env values from repo/project roots without requiring python-dotenv."""
-    for env_path in [os.path.join(REPO_ROOT, ".env"), os.path.join(PROJECT_ROOT, ".env")]:
-        if not os.path.exists(env_path):
-            continue
-        try:
-            with open(env_path, encoding="utf-8") as f:
-                for raw_line in f:
-                    line = raw_line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, value = line.split("=", 1)
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    if key and key not in os.environ:
-                        os.environ[key] = value
-        except Exception as e:
-            print(f"[env] could not load {env_path}: {e}")
-
-
-def spotify_cache_path():
-    """Return the dev-only Spotify cache path used by the mock environment."""
-    os.makedirs(RUNTIME_DIR, exist_ok=True)
-    return os.path.join(RUNTIME_DIR, ".cache_spotify")
-
-
-def get_spotify_oauth():
-    """Create a SpotifyOAuth helper using local .env credentials, when available."""
-    load_local_env_files()
-    try:
-        from spotipy.oauth2 import SpotifyOAuth
-    except Exception as e:
-        raise RuntimeError("spotipy is not installed. Run: pip install spotipy python-dotenv") from e
-
-    client_id = os.getenv("SPOTIFY_CLIENT_ID")
-    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything")
-
-    if not client_id or not client_secret:
-        raise RuntimeError("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET are missing from your local .env")
-
-    return SpotifyOAuth(
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri=redirect_uri,
-        scope="user-read-playback-state user-read-currently-playing user-library-read",
-        cache_path=spotify_cache_path(),
-        open_browser=False,
-    )
-
-
-def get_spotify_authorize_url():
-    """Return the Spotify authorization URL for the mock dashboard."""
-    return get_spotify_oauth().get_authorize_url()
-
-
-def cache_spotify_token_from_url(pasted_url):
-    """Extract an OAuth code from a pasted callback URL and save the token cache."""
-    query = urlparse(pasted_url or "").query
-    code = parse_qs(query).get("code", [None])[0]
-    if not code:
-        raise RuntimeError("No Spotify code found in pasted callback URL")
-    return get_spotify_oauth().get_access_token(code, as_dict=True)
-
-
-def clear_spotify_cache():
-    """Remove the dev-only Spotify token cache."""
-    try:
-        os.remove(spotify_cache_path())
-    except FileNotFoundError:
-        pass
-
-
-def real_spotify_user():
-    """Return the real Spotify user profile when local credentials/cache are valid."""
-    try:
-        import spotipy
-        oauth = get_spotify_oauth()
-        token_info = oauth.get_cached_token()
-        if not token_info:
-            return None
-        sp = spotipy.Spotify(auth=token_info["access_token"])
-        return sp.current_user()
-    except Exception as e:
-        print(f"[spotify-real-user] {e}")
-        return None
-
-
-def real_spotify_payload():
-    """Fetch the real current Spotify playback in the same shape as /spotify.json."""
-    try:
-        import spotipy
-        oauth = get_spotify_oauth()
-        token_info = oauth.get_cached_token()
-        if not token_info:
-            return {"isPlaying": False, "source": "real", "error": "Spotify is set to real, but no cached token exists. Use /spotify/connect first."}
-
-        sp = spotipy.Spotify(auth=token_info["access_token"])
-        data = sp.current_playback()
-        if not data or not data.get("item"):
-            return {"isPlaying": False, "source": "real"}
-
-        item = data["item"]
-        track_id = item.get("id")
-        liked = False
-        if track_id:
-            try:
-                liked_result = sp.current_user_saved_tracks_contains([track_id])
-                liked = bool(liked_result and liked_result[0])
-            except Exception as e:
-                print(f"[spotify-real-liked] {e}")
-
-        return {
-            "track": item.get("name"),
-            "artist": ", ".join(a.get("name", "") for a in item.get("artists", [])),
-            "albumArt": item.get("album", {}).get("images", [{}])[0].get("url") if item.get("album", {}).get("images") else None,
-            "isPlaying": bool(data.get("is_playing", False)),
-            "progress": int(data.get("progress_ms") or 0),
-            "duration": int(item.get("duration_ms") or 0),
-            "liked": liked,
-            "trackId": track_id,
-            "source": "real",
-        }
-    except Exception as e:
-        print(f"[spotify-real] {e}")
-        return {"isPlaying": False, "source": "real", "error": str(e)}
-
-def current_track_payload():
-    state = load_state()
-    spotify = state["spotify"]
-
-    if spotify.get("source", "mock") == "real":
-        return real_spotify_payload()
-
-    if not spotify.get("connected") or not spotify.get("playing"):
-        return {"isPlaying": False, "source": "mock"}
-    track = deepcopy(MOCK_TRACKS[int(spotify.get("track_index", 0)) % len(MOCK_TRACKS)])
-    elapsed = int((time.time() - float(spotify.get("track_started_at", time.time()))) * 1000)
-    progress = int(spotify.get("manual_progress_ms", track.get("progress", 0))) + elapsed
-    track["progress"] = min(progress, track["duration"])
-    track["isPlaying"] = True
-    track["source"] = "mock"
-    return track
-
-
-def next_track():
-    def mutate(state):
-        spotify = state["spotify"]
-        spotify["track_index"] = (int(spotify.get("track_index", 0)) + 1) % len(MOCK_TRACKS)
-        spotify["track_started_at"] = time.time()
-        spotify["manual_progress_ms"] = 0
-    update_state(mutate)
-    return current_track_payload()
+def mock_autoupdate() -> dict[str, Any]:
+    state = load_update_state()
+    if not state.get("auto_update"):
+        state.update({"last_autoupdate_check": time.time(), "auto_update_skipped": "disabled"})
+        save_update_state(state)
+        return state
+    checked = check_for_updates_mock()
+    if checked.get("available"):
+        checked["last_error"] = "Mock environment: autoupdate found an update but install/reboot is disabled."
+        checked["update_in_progress"] = False
+        checked["pending_restart"] = False
+        save_update_state(checked)
+    return load_update_state()
