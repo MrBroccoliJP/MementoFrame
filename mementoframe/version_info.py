@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 28, #changed naming to match the app and updated to use new kiosk_display.html template and styles
+        "version": 29, #spotify artwork fixes 
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {

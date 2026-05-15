@@ -18,10 +18,10 @@ from werkzeug.utils import secure_filename
 from mock_shared import (
     ASSETS_DIR,
     CACHE_DIR,
-    STATIC_DIR,
     FULL_DIR,
     MOCK_TRACKS,
     PHOTO_JSON,
+    STATIC_DIR,
     PHOTO_JS,
     THUMB_DIR,
     TEMPLATES_DIR,
@@ -53,12 +53,7 @@ from mock_shared import (
     read_env_values,
 )
 
-app = Flask(
-    __name__,
-    template_folder=str(TEMPLATES_DIR),
-    static_folder=str(STATIC_DIR),
-    static_url_path="/static",
-)
+app = Flask(__name__, template_folder=str(TEMPLATES_DIR), static_folder=str(STATIC_DIR), static_url_path="/static")
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or "mementoframe-mock-secret"
 CORS(app)
 

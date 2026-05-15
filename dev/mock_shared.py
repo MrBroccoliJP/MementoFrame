@@ -23,12 +23,22 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 BASE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BASE_DIR.parent
-PROJECT_ROOT = REPO_ROOT / "mementoframe"
 
-# Allow running directly from a copied folder during quick testing.
-if not PROJECT_ROOT.exists():
+# Resolve the real mementoframe project folder robustly.
+# Supported layouts:
+#   repo-root/dev/mock_*.py + repo-root/mementoframe/config_portal_service.py
+#   repo-root/mementoframe/dev/mock_*.py + repo-root/mementoframe/config_portal_service.py
+#   repo-root/mementoframe/mock_*.py beside the real service files
+if (BASE_DIR / "config_portal_service.py").exists() and (BASE_DIR / "display_service.py").exists():
     PROJECT_ROOT = BASE_DIR
+elif (BASE_DIR.parent / "config_portal_service.py").exists() and (BASE_DIR.parent / "display_service.py").exists():
+    PROJECT_ROOT = BASE_DIR.parent
+elif (BASE_DIR.parent / "mementoframe" / "config_portal_service.py").exists() and (BASE_DIR.parent / "mementoframe" / "display_service.py").exists():
+    PROJECT_ROOT = BASE_DIR.parent / "mementoframe"
+else:
+    PROJECT_ROOT = BASE_DIR.parent / "mementoframe"
+
+REPO_ROOT = PROJECT_ROOT.parent
 
 RUNTIME_DIR = BASE_DIR / "runtime"
 RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -195,7 +205,12 @@ def load_env_files() -> None:
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                # Let a project/dev .env fill values that were previously absent or blank.
+                # This avoids a repo-level blank SPOTIFY_CLIENT_ID blocking the real one.
+                if key and (key not in os.environ or os.environ.get(key, "") == ""):
+                    os.environ[key] = value
         except Exception as exc:
             print(f"[env] could not read {env_path}: {exc}")
 

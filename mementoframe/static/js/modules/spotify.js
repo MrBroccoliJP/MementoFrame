@@ -26,7 +26,7 @@ import { $, $$, fetchJson } from "../utils.js";
 import { showCalendar, setCalendarOpacity, updatePanelState } from "./layout.js";
 
 /** SVG markup for the play button icon. */
-const playSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M3 22v-20l18 10-18 10z"/></svg>`;
+const playSVG  = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M3 22v-20l18 10-18 10z"/></svg>`;
 
 /** SVG markup for the pause button icon. */
 const pauseSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M6 2h4v20h-4zm8 0h4v20h-4z"/></svg>`;
@@ -71,7 +71,7 @@ function startSpotifyPolling(ms) {
  */
 function setAccentVar(color) {
   document.documentElement.style.setProperty("--accent-color", color);
-  document.documentElement.style.setProperty("--accent-text", color);
+  document.documentElement.style.setProperty("--accent-text",  color);
   state.spotify.currentAccent = color;
 }
 
@@ -127,12 +127,12 @@ function applyAccent(color, transition = true) {
   color = ensureReadable(color);
   setAccentVar(color);
 
-  const spotify = $(SELECTORS.spotifyBox);
+  const spotify     = $(SELECTORS.spotifyBox);
   const calendarBox = $(SELECTORS.calendarBox);
-  const dualBox = $(SELECTORS.dualBox);
-  const clock1Box = $(SELECTORS.clock1Box);
-  const weatherBox = $(SELECTORS.weatherBox);
-  const dateBox = $(SELECTORS.dateBox);
+  const dualBox     = $(SELECTORS.dualBox);
+  const clock1Box   = $(SELECTORS.clock1Box);
+  const weatherBox  = $(SELECTORS.weatherBox);
+  const dateBox     = $(SELECTORS.dateBox);
 
   const ts = transition
     ? "background 1s ease, border-color 1s ease, color 1s ease"
@@ -156,10 +156,10 @@ function applyAccent(color, transition = true) {
     });
   }
 
-  if (dualBox) { dualBox.style.transition = ts; dualBox.style.borderBottom = `2px solid ${color}`; }
-  if (clock1Box) { clock1Box.style.transition = ts; clock1Box.style.borderRight = `1px solid ${color}`; }
-  if (weatherBox) { weatherBox.style.transition = ts; weatherBox.style.borderTop = `2px solid ${color}`; }
-  if (dateBox) { dateBox.style.transition = ts; dateBox.style.borderTop = `2px solid ${color}`; }
+  if (dualBox)    { dualBox.style.transition    = ts; dualBox.style.borderBottom = `2px solid ${color}`; }
+  if (clock1Box)  { clock1Box.style.transition  = ts; clock1Box.style.borderRight  = `1px solid ${color}`; }
+  if (weatherBox) { weatherBox.style.transition = ts; weatherBox.style.borderTop   = `2px solid ${color}`; }
+  if (dateBox)    { dateBox.style.transition    = ts; dateBox.style.borderTop      = `2px solid ${color}`; }
 }
 
 /**
@@ -168,8 +168,8 @@ function applyAccent(color, transition = true) {
  * @returns {string} HSL colour string.
  */
 function randomColor() {
-  const hue = Math.floor(Math.random() * 360);
-  const sat = 55 + Math.floor(Math.random() * 20);   // 55–75%
+  const hue   = Math.floor(Math.random() * 360);
+  const sat   = 55 + Math.floor(Math.random() * 20);   // 55–75%
   const light = 45 + Math.floor(Math.random() * 20);   // 45–65%
   return `hsl(${hue}, ${sat}%, ${light}%)`;
 }
@@ -183,7 +183,7 @@ function startAccentColorCycle() {
   applyAccent(randomColor(), false);
   state.spotify.accentTimer = setInterval(
     () => applyAccent(randomColor(), true),
-    30 * 60 * 1000
+    30*60*1000
   );
 }
 
@@ -208,7 +208,7 @@ function showSpotifyPanelNow() {
   setCalendarOpacity(1);
   updatePanelState({ calendarFullOpacity: false, spotifyPlaying: true });
 
-  const spotifyBox = $(SELECTORS.spotifyBox);
+  const spotifyBox  = $(SELECTORS.spotifyBox);
   const calendarBox = $(SELECTORS.calendarBox);
 
   calendarBox?.classList.add("hidden");
@@ -217,6 +217,7 @@ function showSpotifyPanelNow() {
   spotifyBox?.classList.remove("hidden");
   spotifyBox?.classList.add("visible");
 }
+
 
 /**
  * Fetch current Spotify playback state and update the UI.
@@ -238,28 +239,28 @@ export async function updateSpotify() {
 
   // Normalise field names for resilience against minor API changes.
   const isPlaying = !!data.isPlaying;
-  const trackId = data.trackId || data.trackIdSpotify || data.id || data.track || null;
-  const name = data.track || data.title || "";
-  const artist = data.artist || data.artists || "";
-  const albumArt = data.albumArt || data.album_art || null;
-  const liked = !!data.liked;
-  const duration = data.duration || data.duration_ms || 0;
-  const progress = data.progress || data.progress_ms || 0;
+  const trackId   = data.trackId  || data.trackIdSpotify || data.id || data.track || null;
+  const name      = data.track    || data.title  || "";
+  const artist    = data.artist   || data.artists || "";
+  const albumArt  = data.albumArt || data.album_art || null;
+  const liked     = !!data.liked;
+  const duration  = data.duration || data.duration_ms || 0;
+  const progress  = data.progress || data.progress_ms || 0;
 
   const statusEl = $(SELECTORS.trackStatus);
-  const albumEl = $(SELECTORS.albumCover);
-  const nameEl = $(SELECTORS.trackName);
+  const albumEl  = $(SELECTORS.albumCover);
+  const nameEl   = $(SELECTORS.trackName);
   const artistEl = $(SELECTORS.trackArtist);
-  const likedEl = $(SELECTORS.liked);
-  const barEl = $(SELECTORS.progressBar);
+  const likedEl  = $(SELECTORS.liked);
+  const barEl    = $(SELECTORS.progressBar);
 
   if (statusEl) statusEl.innerHTML = isPlaying ? pauseSVG : playSVG;
 
   // Text and progress update immediately. This prevents the Spotify panel from
   // appearing empty while artwork/colour extraction is still in flight.
-  if (nameEl) nameEl.textContent = name || "No track";
+  if (nameEl)   nameEl.textContent   = name   || "No track";
   if (artistEl) artistEl.textContent = artist || "Unknown";
-  if (likedEl) likedEl.style.display = liked ? "block" : "none";
+  if (likedEl)  likedEl.style.display = liked ? "block" : "none";
 
   if (barEl && duration && progress !== undefined) {
     barEl.style.width = `${Math.max(0, Math.min(100, (progress / duration) * 100))}%`;
@@ -296,22 +297,20 @@ export async function updateSpotify() {
     stopAccentColorCycle();
   }
 
-  if (isPlaying) {
-    const spotifyBox = $(SELECTORS.spotifyBox);
-    const spotifyAlreadyVisible = spotifyBox?.classList.contains("visible");
+  const spotifyBox = $(SELECTORS.spotifyBox);
+  const spotifyAlreadyVisible = spotifyBox?.classList.contains("visible");
 
-    const needsArtworkRender =
-      isPlaying &&
-      artworkKey &&
-      artworkKey !== lastRenderedArtworkKey &&
-      artworkKey !== lastRequestedArtworkKey;
+  const needsArtworkRender =
+    isPlaying &&
+    artworkKey &&
+    artworkKey !== lastRenderedArtworkKey &&
+    artworkKey !== lastRequestedArtworkKey;
 
-    const revealSpotifyAfterArtwork =
-      needsArtworkRender && !spotifyAlreadyVisible;
+  const revealSpotifyAfterArtwork =
+    needsArtworkRender && !spotifyAlreadyVisible;
 
-    if (isPlaying && !revealSpotifyAfterArtwork) {
-      showSpotifyPanelNow();
-    }
+  if (isPlaying && !revealSpotifyAfterArtwork) {
+    showSpotifyPanelNow();
   }
 
   // Only render artwork/colour when the artwork actually changes. This avoids
@@ -503,6 +502,8 @@ function renderArtworkAndAccent({
       if (seq !== spotifyRenderSeq) return;
 
       requestAnimationFrame(() => {
+        if (seq !== spotifyRenderSeq) return;
+
         setAlbumImageNow(albumEl, loadedImg);
         applyAccent(color, transition);
 
@@ -528,6 +529,10 @@ function renderArtworkAndAccent({
       albumEl?.classList.remove("fade-out", "fade-in");
       trackInfoEl?.classList.remove("fade-out", "fade-in");
       applyAccent(state.spotify.currentAccent || "rgb(80, 80, 80)", transition);
+
+      if (revealWhenReady) {
+        showSpotifyPanelNow();
+      }
     }
   }, minimumFadeMs);
 }
@@ -551,7 +556,7 @@ async function renderArtworkOnly({ albumArt, albumEl, artworkKey }) {
     if (seq !== spotifyRenderSeq) return;
 
     setAlbumImageNow(albumEl, loadedImg);
-    lastRenderedArtworkKey = artworkKey;
+    lastPreloadedArtworkKey = artworkKey;
     lastRequestedArtworkKey = null;
   } catch (err) {
     if (seq !== spotifyRenderSeq) return;
