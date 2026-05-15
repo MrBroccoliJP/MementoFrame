@@ -26,7 +26,7 @@ import { $, $$, fetchJson } from "../utils.js";
 import { showCalendar, setCalendarOpacity, updatePanelState } from "./layout.js";
 
 /** SVG markup for the play button icon. */
-const playSVG  = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M3 22v-20l18 10-18 10z"/></svg>`;
+const playSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M3 22v-20l18 10-18 10z"/></svg>`;
 
 /** SVG markup for the pause button icon. */
 const pauseSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M6 2h4v20h-4zm8 0h4v20h-4z"/></svg>`;
@@ -39,6 +39,7 @@ let spotifyRenderTimer = null;
 let spotifyFadeCleanupTimer = null;
 let lastRenderedArtworkKey = null;
 let lastRequestedArtworkKey = null;
+let lastPreloadedArtworkKey = null;
 
 // ─── Public Init ────────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ function startSpotifyPolling(ms) {
  */
 function setAccentVar(color) {
   document.documentElement.style.setProperty("--accent-color", color);
-  document.documentElement.style.setProperty("--accent-text",  color);
+  document.documentElement.style.setProperty("--accent-text", color);
   state.spotify.currentAccent = color;
 }
 
@@ -126,12 +127,12 @@ function applyAccent(color, transition = true) {
   color = ensureReadable(color);
   setAccentVar(color);
 
-  const spotify     = $(SELECTORS.spotifyBox);
+  const spotify = $(SELECTORS.spotifyBox);
   const calendarBox = $(SELECTORS.calendarBox);
-  const dualBox     = $(SELECTORS.dualBox);
-  const clock1Box   = $(SELECTORS.clock1Box);
-  const weatherBox  = $(SELECTORS.weatherBox);
-  const dateBox     = $(SELECTORS.dateBox);
+  const dualBox = $(SELECTORS.dualBox);
+  const clock1Box = $(SELECTORS.clock1Box);
+  const weatherBox = $(SELECTORS.weatherBox);
+  const dateBox = $(SELECTORS.dateBox);
 
   const ts = transition
     ? "background 1s ease, border-color 1s ease, color 1s ease"
@@ -155,10 +156,10 @@ function applyAccent(color, transition = true) {
     });
   }
 
-  if (dualBox)    { dualBox.style.transition    = ts; dualBox.style.borderBottom = `2px solid ${color}`; }
-  if (clock1Box)  { clock1Box.style.transition  = ts; clock1Box.style.borderRight  = `1px solid ${color}`; }
-  if (weatherBox) { weatherBox.style.transition = ts; weatherBox.style.borderTop   = `2px solid ${color}`; }
-  if (dateBox)    { dateBox.style.transition    = ts; dateBox.style.borderTop      = `2px solid ${color}`; }
+  if (dualBox) { dualBox.style.transition = ts; dualBox.style.borderBottom = `2px solid ${color}`; }
+  if (clock1Box) { clock1Box.style.transition = ts; clock1Box.style.borderRight = `1px solid ${color}`; }
+  if (weatherBox) { weatherBox.style.transition = ts; weatherBox.style.borderTop = `2px solid ${color}`; }
+  if (dateBox) { dateBox.style.transition = ts; dateBox.style.borderTop = `2px solid ${color}`; }
 }
 
 /**
@@ -167,8 +168,8 @@ function applyAccent(color, transition = true) {
  * @returns {string} HSL colour string.
  */
 function randomColor() {
-  const hue   = Math.floor(Math.random() * 360);
-  const sat   = 55 + Math.floor(Math.random() * 20);   // 55–75%
+  const hue = Math.floor(Math.random() * 360);
+  const sat = 55 + Math.floor(Math.random() * 20);   // 55–75%
   const light = 45 + Math.floor(Math.random() * 20);   // 45–65%
   return `hsl(${hue}, ${sat}%, ${light}%)`;
 }
@@ -182,7 +183,7 @@ function startAccentColorCycle() {
   applyAccent(randomColor(), false);
   state.spotify.accentTimer = setInterval(
     () => applyAccent(randomColor(), true),
-    30*60*1000
+    30 * 60 * 1000
   );
 }
 
@@ -197,6 +198,25 @@ function stopAccentColorCycle() {
 }
 
 // ─── Spotify Polling / Rendering ────────────────────────────────────────────
+
+/**
+ * Show the Spotify panel and hide the calendar panel.
+ * Used after the first album art + accent are ready, so the placeholder
+ * does not flash before the real cover appears.
+ */
+function showSpotifyPanelNow() {
+  setCalendarOpacity(1);
+  updatePanelState({ calendarFullOpacity: false, spotifyPlaying: true });
+
+  const spotifyBox = $(SELECTORS.spotifyBox);
+  const calendarBox = $(SELECTORS.calendarBox);
+
+  calendarBox?.classList.add("hidden");
+  calendarBox?.classList.remove("visible");
+
+  spotifyBox?.classList.remove("hidden");
+  spotifyBox?.classList.add("visible");
+}
 
 /**
  * Fetch current Spotify playback state and update the UI.
@@ -218,28 +238,28 @@ export async function updateSpotify() {
 
   // Normalise field names for resilience against minor API changes.
   const isPlaying = !!data.isPlaying;
-  const trackId   = data.trackId  || data.trackIdSpotify || data.id || data.track || null;
-  const name      = data.track    || data.title  || "";
-  const artist    = data.artist   || data.artists || "";
-  const albumArt  = data.albumArt || data.album_art || null;
-  const liked     = !!data.liked;
-  const duration  = data.duration || data.duration_ms || 0;
-  const progress  = data.progress || data.progress_ms || 0;
+  const trackId = data.trackId || data.trackIdSpotify || data.id || data.track || null;
+  const name = data.track || data.title || "";
+  const artist = data.artist || data.artists || "";
+  const albumArt = data.albumArt || data.album_art || null;
+  const liked = !!data.liked;
+  const duration = data.duration || data.duration_ms || 0;
+  const progress = data.progress || data.progress_ms || 0;
 
   const statusEl = $(SELECTORS.trackStatus);
-  const albumEl  = $(SELECTORS.albumCover);
-  const nameEl   = $(SELECTORS.trackName);
+  const albumEl = $(SELECTORS.albumCover);
+  const nameEl = $(SELECTORS.trackName);
   const artistEl = $(SELECTORS.trackArtist);
-  const likedEl  = $(SELECTORS.liked);
-  const barEl    = $(SELECTORS.progressBar);
+  const likedEl = $(SELECTORS.liked);
+  const barEl = $(SELECTORS.progressBar);
 
   if (statusEl) statusEl.innerHTML = isPlaying ? pauseSVG : playSVG;
 
   // Text and progress update immediately. This prevents the Spotify panel from
   // appearing empty while artwork/colour extraction is still in flight.
-  if (nameEl)   nameEl.textContent   = name   || "No track";
+  if (nameEl) nameEl.textContent = name || "No track";
   if (artistEl) artistEl.textContent = artist || "Unknown";
-  if (likedEl)  likedEl.style.display = liked ? "block" : "none";
+  if (likedEl) likedEl.style.display = liked ? "block" : "none";
 
   if (barEl && duration && progress !== undefined) {
     barEl.style.width = `${Math.max(0, Math.min(100, (progress / duration) * 100))}%`;
@@ -277,32 +297,38 @@ export async function updateSpotify() {
   }
 
   if (isPlaying) {
-    setCalendarOpacity(1);
-    updatePanelState({ calendarFullOpacity: false, spotifyPlaying: true });
+    const spotifyBox = $(SELECTORS.spotifyBox);
+    const spotifyAlreadyVisible = spotifyBox?.classList.contains("visible");
 
-    const spotifyBox  = $(SELECTORS.spotifyBox);
-    const calendarBox = $(SELECTORS.calendarBox);
+    const needsArtworkRender =
+      isPlaying &&
+      artworkKey &&
+      artworkKey !== lastRenderedArtworkKey &&
+      artworkKey !== lastRequestedArtworkKey;
 
-    calendarBox?.classList.add("hidden");
-    calendarBox?.classList.remove("visible");
-    spotifyBox?.classList.remove("hidden");
-    spotifyBox?.classList.add("visible");
+    const revealSpotifyAfterArtwork =
+      needsArtworkRender && !spotifyAlreadyVisible;
+
+    if (isPlaying && !revealSpotifyAfterArtwork) {
+      showSpotifyPanelNow();
+    }
   }
 
   // Only render artwork/colour when the artwork actually changes. This avoids
   // repeated canvas work on every poll, which matters on Raspberry Pi 3.
-  if (isPlaying && artworkKey && artworkKey !== lastRenderedArtworkKey && artworkKey !== lastRequestedArtworkKey) {
+  if (needsArtworkRender) {
     renderArtworkAndAccent({
       albumArt,
       albumEl,
       artworkKey,
       transition: true,
-      fade: trackChanged,
+      fade: spotifyAlreadyVisible && trackChanged,
+      revealWhenReady: revealSpotifyAfterArtwork,
     });
   }
 
   // First paused track: preload the image for display, but keep ambient colour.
-  if (!isPlaying && firstTrack && albumArt && albumEl && artworkKey !== lastRenderedArtworkKey) {
+  if (!isPlaying && firstTrack && albumArt && albumEl && artworkKey !== lastPreloadedArtworkKey) {
     renderArtworkOnly({ albumArt, albumEl, artworkKey });
   }
 
@@ -420,8 +446,16 @@ function restartFadeIn(albumEl, trackInfoEl) {
  * @param {string} options.artworkKey
  * @param {boolean} options.transition
  * @param {boolean} options.fade
+ * @param {boolean} options.revealWhenReady
  */
-function renderArtworkAndAccent({ albumArt, albumEl, artworkKey, transition = true, fade = true }) {
+function renderArtworkAndAccent({
+  albumArt,
+  albumEl,
+  artworkKey,
+  transition = true,
+  fade = true,
+  revealWhenReady = false,
+}) {
   spotifyRenderSeq++;
   const seq = spotifyRenderSeq;
   lastRequestedArtworkKey = artworkKey;
@@ -469,13 +503,16 @@ function renderArtworkAndAccent({ albumArt, albumEl, artworkKey, transition = tr
       if (seq !== spotifyRenderSeq) return;
 
       requestAnimationFrame(() => {
-        if (seq !== spotifyRenderSeq) return;
-
         setAlbumImageNow(albumEl, loadedImg);
         applyAccent(color, transition);
 
         lastRenderedArtworkKey = artworkKey;
+        lastPreloadedArtworkKey = artworkKey;
         lastRequestedArtworkKey = null;
+
+        if (revealWhenReady) {
+          showSpotifyPanelNow();
+        }
 
         if (fade) restartFadeIn(albumEl, trackInfoEl);
         else {
