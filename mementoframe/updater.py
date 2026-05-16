@@ -22,22 +22,37 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-UPDATER_BUILD = "2026-05-14-split-services-v2"
+UPDATER_BUILD = "2026-05-16-backup-retention-v1"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
 STATE_FILE = RUNTIME_DIR / "update_state.json"
 BACKUP_ROOT = PROJECT_ROOT.parent / "mementoframe_backups"
-DEFAULT_UPDATE_TIME = "05:00"
-DEFAULT_PRESERVE = ["config.json", ".env", "resources/userdata", "runtime"]
+BACKUP_RETENTION_COUNT = 3
+DEFAULT_UPDATE_TIME = "07:00"
+DEFAULT_PRESERVE = ["config.json", ".env", "resources/userdata", "runtime", "repair_services.sh"]
 DEFAULT_SERVICES = [
     "mementoframe-config.service",
     "mementoframe-display.service",
     "mementoframe-network.service",
     "mementoframe-kiosk.service",
 ]
+
+REQUIRED_SYSTEMD_UNITS = [
+    "mementoframe-config.service",
+    "mementoframe-display.service",
+    "mementoframe-network.service",
+    "mementoframe-kiosk.service",
+    "mementoframe-updater.service",
+    "mementoframe-updater.timer",
+]
+REPAIR_HELPER = PROJECT_ROOT / "repair_services.sh"
+
 HEALTH_URLS = ["http://127.0.0.1:5000/health", "http://127.0.0.1:5001/health"]
+HEALTH_CHECK_ATTEMPTS = 3
+HEALTH_CHECK_SECONDS = 90
+HEALTH_POLL_SECONDS = 3
 APP_SUBDIR = "mementoframe"
 
 EXCLUDE_DURING_COPY = {
@@ -156,6 +171,7 @@ def base_state(**updates: Any) -> dict[str, Any]:
         "update_in_progress": False,
         "applied_update": False,
         "last_error": None,
+        "broken_releases": [],
     }
     state.update(updates)
     return state
@@ -178,6 +194,7 @@ def write_state(**updates: Any) -> dict[str, Any]:
     state.setdefault("update_in_progress", False)
     state.setdefault("applied_update", False)
     state.setdefault("last_error", None)
+    state.setdefault("broken_releases", [])
     atomic_write_json(STATE_FILE, state)
     return state
 
@@ -187,13 +204,13 @@ def load_config() -> dict[str, Any]:
     cfg = read_json(CONFIG_FILE, {})
     cfg.setdefault("updates", {})
     updates = cfg["updates"]
-    updates.setdefault("auto_update", True)
+    updates.setdefault("auto_update", False)
     updates.setdefault("repo", os.getenv("MEMENTOFRAME_UPDATE_REPO", "MrBroccoliJP/MementoFrame"))
     if os.getenv("MEMENTOFRAME_UPDATE_REPO"):
         updates["repo"] = os.getenv("MEMENTOFRAME_UPDATE_REPO", "")
     updates.setdefault("channel", "stable")
     updates.setdefault("preserve", DEFAULT_PRESERVE)
-    updates["service_names"] = DEFAULT_SERVICES
+    updates["service_names"] = REQUIRED_SYSTEMD_UNITS
     return cfg
 
 
@@ -212,6 +229,150 @@ def version_newer(latest: str, current: str) -> bool:
     b = parse_version(current)
     n = max(len(a), len(b))
     return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
+
+
+def release_key(version: str | None = None, tag: str | None = None) -> str:
+    """Build a stable key for release block-list comparisons."""
+    value = (tag or version or "").strip()
+    if not value:
+        return ""
+    return value.lstrip("vV")
+
+
+def broken_release_keys(state: dict[str, Any]) -> set[str]:
+    """Return version/tag keys for releases previously marked as broken."""
+    keys: set[str] = set()
+    for item in state.get("broken_releases") or []:
+        if not isinstance(item, dict):
+            continue
+        for value in [item.get("version"), item.get("tag")]:
+            key = release_key(str(value) if value else None)
+            if key:
+                keys.add(key)
+    return keys
+
+
+def release_is_marked_broken(version: str | None, tag: str | None, state: dict[str, Any]) -> bool:
+    """Return True if the candidate release should not be installed again."""
+    keys = broken_release_keys(state)
+    return bool((version and release_key(version) in keys) or (tag and release_key(tag) in keys))
+
+
+def add_broken_release(state: dict[str, Any], reason: str) -> list[dict[str, Any]]:
+    """Mark the release from the current update state as broken, without duplicates."""
+    version = str(state.get("latest_version") or state.get("update_candidate_version") or "").lstrip("vV")
+    tag = str(state.get("latest_tag") or state.get("update_candidate_tag") or "").strip()
+    url = state.get("release_url")
+    key_values = {release_key(version), release_key(tag)} - {""}
+
+    broken: list[dict[str, Any]] = []
+    for item in state.get("broken_releases") or []:
+        if isinstance(item, dict):
+            broken.append(item)
+
+    existing = broken_release_keys({"broken_releases": broken})
+    if key_values and not (key_values & existing):
+        broken.append({
+            "version": version or None,
+            "tag": tag or None,
+            "release_url": url,
+            "reason": reason,
+            "marked_at": now_ts(),
+        })
+    return broken
+
+
+def systemd_unit_exists(unit: str) -> bool:
+    """Return True when systemd knows about this unit or its unit file exists."""
+    if (Path("/etc/systemd/system") / unit).exists():
+        return True
+    try:
+        proc = subprocess.run(
+            ["systemctl", "list-unit-files", unit],
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        return proc.returncode == 0 and unit in proc.stdout
+    except Exception:
+        return False
+
+
+def systemd_unit_state(unit: str) -> dict[str, Any]:
+    """Return a small systemd status record for one expected unit."""
+    exists = systemd_unit_exists(unit)
+    out: dict[str, Any] = {"exists": exists, "enabled": None, "active": None}
+    if not exists:
+        return out
+
+    for key, cmd in {
+        "enabled": ["systemctl", "is-enabled", unit],
+        "active": ["systemctl", "is-active", unit],
+    }.items():
+        try:
+            proc = subprocess.run(cmd, text=True, capture_output=True, timeout=10)
+            out[key] = (proc.stdout.strip() or proc.stderr.strip() or "unknown")
+        except Exception as exc:
+            out[key] = f"unknown: {exc}"
+    return out
+
+
+def systemd_compatibility_state() -> dict[str, Any]:
+    """Return whether this install has all expected MementoFrame systemd units."""
+    units = {unit: systemd_unit_state(unit) for unit in REQUIRED_SYSTEMD_UNITS}
+    missing = [unit for unit, info in units.items() if not info.get("exists")]
+    return {
+        "required_units": REQUIRED_SYSTEMD_UNITS,
+        "units": units,
+        "missing_units": missing,
+        "compatible": not missing,
+        "repair_helper": str(REPAIR_HELPER),
+        "repair_helper_exists": REPAIR_HELPER.exists(),
+    }
+
+
+def repair_systemd_services_if_needed() -> dict[str, Any]:
+    """Repair missing MementoFrame systemd units through the root helper when needed."""
+    before = systemd_compatibility_state()
+    if not before["missing_units"]:
+        state = write_state(
+            systemd_compatible=True,
+            missing_systemd_units=[],
+            service_repair_needed=False,
+            service_repair_attempted=False,
+            service_repair_error=None,
+        )
+        return {"ok": True, "changed": False, "before": before, "after": before, "state": state}
+
+    if not REPAIR_HELPER.exists():
+        msg = f"Missing required systemd units and repair helper is not installed: {REPAIR_HELPER}"
+        state = write_state(
+            systemd_compatible=False,
+            missing_systemd_units=before["missing_units"],
+            service_repair_needed=True,
+            service_repair_attempted=False,
+            service_repair_error=msg,
+            last_error=msg,
+        )
+        return {"ok": False, "changed": False, "before": before, "after": before, "error": msg, "state": state}
+
+    proc = sudo_cmd(str(REPAIR_HELPER), timeout=60)
+    after = systemd_compatibility_state()
+    ok = proc.returncode == 0 and not after["missing_units"]
+    msg = "" if ok else (proc.stderr.strip() or proc.stdout.strip() or f"repair helper exited with {proc.returncode}")
+
+    state = write_state(
+        systemd_compatible=ok,
+        missing_systemd_units=after["missing_units"],
+        service_repair_needed=bool(after["missing_units"]),
+        service_repair_attempted=True,
+        service_repair_at=now_ts(),
+        service_repair_stdout=proc.stdout.strip(),
+        service_repair_stderr=proc.stderr.strip(),
+        service_repair_error=None if ok else msg,
+        last_error=None if ok else msg,
+    )
+    return {"ok": ok, "changed": True, "before": before, "after": after, "error": None if ok else msg, "state": state}
 
 
 def http_json(url: str, timeout: int = 15) -> Any:
@@ -244,26 +405,51 @@ def check_for_update() -> dict[str, Any]:
     repo = updates.get("repo", "")
     channel = updates.get("channel", "stable")
     current = installed_version()
+    previous_state = read_json(STATE_FILE, {})
+    broken_releases = previous_state.get("broken_releases") or []
+
     try:
         release = github_latest_release(repo, channel=channel)
         latest = str(release.get("tag_name") or "").lstrip("v")
-        available = bool(latest and version_newer(latest, current))
-        return replace_state(
+        tag = release.get("tag_name")
+        is_broken = release_is_marked_broken(latest, str(tag) if tag else None, previous_state)
+        available = bool(latest and version_newer(latest, current) and not is_broken)
+
+        common = dict(
             installed_version=current,
             latest_version=latest or None,
-            latest_tag=release.get("tag_name"),
+            latest_tag=tag,
             release_name=release.get("name"),
             release_notes=release.get("body") or "",
             release_url=release.get("html_url"),
             zipball_url=release.get("zipball_url"),
             release_assets=release.get("assets") or [],
-            available=available,
             checked_at=now_ts(),
+            broken_releases=broken_releases,
+        )
+
+        if is_broken:
+            return replace_state(
+                **common,
+                available=False,
+                broken_release_skipped=True,
+                last_error=f"Latest release {tag or latest} is marked as broken after a failed update; waiting for a newer release.",
+            )
+
+        return replace_state(
+            **common,
+            available=available,
+            broken_release_skipped=False,
             last_error=None,
         )
     except Exception as exc:
-        return replace_state(installed_version=current, checked_at=now_ts(), available=False, last_error=str(exc))
-
+        return replace_state(
+            installed_version=current,
+            checked_at=now_ts(),
+            available=False,
+            broken_releases=broken_releases,
+            last_error=str(exc),
+        )
 
 def should_preserve(rel: str, preserve: list[str]) -> bool:
     rel = rel.strip("/")
@@ -356,6 +542,50 @@ def backup_current() -> Path:
     dest = BACKUP_ROOT / f"mementoframe-{installed_version()}-{stamp}"
     shutil.copytree(PROJECT_ROOT, dest, ignore=backup_ignore, ignore_dangling_symlinks=True)
     return dest
+
+
+def list_backup_dirs() -> list[Path]:
+    """Return MementoFrame backup directories, newest first."""
+    if not BACKUP_ROOT.exists():
+        return []
+
+    backups: list[Path] = []
+    for path in BACKUP_ROOT.iterdir():
+        if path.is_dir() and path.name.startswith("mementoframe-"):
+            backups.append(path)
+
+    return sorted(backups, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def prune_old_backups(keep: int = BACKUP_RETENTION_COUNT) -> dict[str, Any]:
+    """Delete old update backups, keeping the newest `keep` directories.
+
+    This should only run after a successful post-update health check. The most
+    recent backups are kept so rollback remains possible for current and recent
+    updates, while old backups do not accumulate forever.
+    """
+    keep = max(0, int(keep))
+    backups = list_backup_dirs()
+    kept = backups[:keep]
+    candidates = backups[keep:]
+
+    deleted: list[str] = []
+    failed: list[dict[str, str]] = []
+
+    for backup in candidates:
+        try:
+            shutil.rmtree(backup)
+            deleted.append(str(backup))
+        except Exception as exc:
+            failed.append({"path": str(backup), "error": str(exc)})
+
+    return {
+        "backup_retention_count": keep,
+        "backup_root": str(BACKUP_ROOT),
+        "backups_kept": [str(p) for p in kept],
+        "backups_deleted": deleted,
+        "backup_prune_failed": failed,
+    }
 
 
 def restore_preserved_from_backup(backup: Path, preserve: list[str]) -> list[str]:
@@ -494,7 +724,13 @@ def apply_update() -> dict[str, Any]:
         return write_state(update_in_progress=False, applied_update=False)
 
     latest = state.get("latest_version") or state.get("latest_tag") or "unknown"
-    write_state(update_in_progress=True, update_started_at=now_ts(), last_error=None)
+    write_state(
+        update_in_progress=True,
+        update_started_at=now_ts(),
+        update_candidate_version=str(state.get("latest_version") or "").lstrip("vV") or None,
+        update_candidate_tag=state.get("latest_tag"),
+        last_error=None,
+    )
 
     backup: Path | None = None
     sha256 = ""
@@ -571,34 +807,67 @@ def current_minutes() -> int:
 
 
 def auto_update_target_minute(cfg: dict[str, Any]) -> int:
+    """Return the minute of day when automatic installs may happen."""
     ap = cfg.get("auto_power") or {}
     if ap.get("enabled"):
         h, m = parse_hm(ap.get("on_time", DEFAULT_UPDATE_TIME))
-        return (h * 60 + m - 30) % (24 * 60)
+        return h * 60 + m
     h, m = parse_hm(DEFAULT_UPDATE_TIME)
     return h * 60 + m
 
 
-def in_auto_update_window(cfg: dict[str, Any], window_minutes: int = 20) -> bool:
+def in_auto_update_window(cfg: dict[str, Any], window_minutes: int = 60) -> bool:
     target = auto_update_target_minute(cfg)
     now = current_minutes()
     return 0 <= ((now - target) % (24 * 60)) < window_minutes
 
 
 def autoupdate(no_reboot: bool = False) -> dict[str, Any]:
+    """Run updater startup workflow, then hourly auto-update behavior.
+
+    Every time the updater service starts it first repairs missing systemd units
+    if possible and validates a pending post-update reboot if one exists. If
+    health is OK it then continues with normal auto-update behavior.
+    """
+    repair = repair_systemd_services_if_needed()
+    if not repair.get("ok"):
+        return write_state(auto_update_skipped="service_repair_failed", last_autoupdate_check=now_ts())
+
+    current_state = read_json(STATE_FILE, {})
+    if current_state.get("pending_restart") or current_state.get("reboot_requested"):
+        check_result = post_reboot_check()
+        if check_result.get("pending_restart") or check_result.get("reboot_requested") or check_result.get("rollback_applied"):
+            return check_result
+        # Health is OK, so continue with normal check/update behavior below.
+
     cfg = load_config()
     if not cfg.get("updates", {}).get("auto_update"):
         return write_state(auto_update_skipped="disabled", last_autoupdate_check=now_ts())
-    if not in_auto_update_window(cfg):
-        return write_state(auto_update_skipped="outside_window", last_autoupdate_check=now_ts())
+
+    current_state = read_json(STATE_FILE, {})
+    if current_state.get("update_in_progress"):
+        return write_state(auto_update_skipped="update_in_progress", last_autoupdate_check=now_ts())
+
     state = check_for_update()
+    install_window = in_auto_update_window(cfg)
+    target_minute = auto_update_target_minute(cfg)
+    state = write_state(
+        auto_update_skipped=None,
+        auto_update_install_window=install_window,
+        auto_update_install_target=f"{target_minute // 60:02d}:{target_minute % 60:02d}",
+        last_autoupdate_check=now_ts(),
+    )
+
+    if not install_window:
+        return write_state(auto_update_skipped="outside_install_window", last_autoupdate_check=now_ts())
+
     if state.get("available"):
         result = apply_update()
         if result.get("applied_update") and not no_reboot:
             request_reboot()
         return result
-    return state
 
+    return state
 
 def url_ok(url: str, timeout: int = 8) -> bool:
     try:
@@ -608,23 +877,125 @@ def url_ok(url: str, timeout: int = 8) -> bool:
         return False
 
 
+def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> dict[str, Any]:
+    """Restore the previous app files and mark the failed release as broken."""
+    backup_value = str(state.get("backup_path") or "").strip()
+    broken_releases = add_broken_release(state, reason)
+
+    if not backup_value:
+        return write_state(
+            broken_releases=broken_releases,
+            rollback_required=True,
+            rollback_applied=False,
+            update_in_progress=False,
+            pending_restart=False,
+            reboot_requested=False,
+            last_error=f"{reason}; rollback failed because no backup_path was recorded.",
+        )
+
+    backup = Path(backup_value)
+    if not backup.exists() or not backup.is_dir():
+        return write_state(
+            broken_releases=broken_releases,
+            rollback_required=True,
+            rollback_applied=False,
+            update_in_progress=False,
+            pending_restart=False,
+            reboot_requested=False,
+            last_error=f"{reason}; rollback failed because backup path does not exist: {backup}",
+        )
+
+    cfg = load_config()
+    preserve = list(cfg.get("updates", {}).get("preserve") or DEFAULT_PRESERVE)
+
+    try:
+        copied = copy_tree_contents(backup, PROJECT_ROOT, preserve)
+        fixed_permissions = repair_runtime_permissions()
+        try:
+            install_requirements()
+        except Exception as req_exc:
+            requirement_error = str(req_exc)
+        else:
+            requirement_error = None
+
+        return write_state(
+            installed_version=installed_version(),
+            available=False,
+            update_in_progress=False,
+            pending_restart=False,
+            reboot_requested=False,
+            applied_update=False,
+            rollback_required=False,
+            rollback_applied=True,
+            rollback_at=now_ts(),
+            rollback_backup_path=str(backup),
+            rollback_restored_top_level=copied,
+            rollback_fixed_permissions=fixed_permissions,
+            rollback_requirement_error=requirement_error,
+            broken_releases=broken_releases,
+            last_error=f"{reason}; rolled back to backup and marked release as broken.",
+        )
+    except Exception as exc:
+        return write_state(
+            broken_releases=broken_releases,
+            rollback_required=True,
+            rollback_applied=False,
+            update_in_progress=False,
+            pending_restart=False,
+            reboot_requested=False,
+            last_error=f"{reason}; rollback failed: {exc}",
+        )
+
+
 def post_reboot_check() -> dict[str, Any]:
     state = read_json(STATE_FILE, {})
-    if not state.get("pending_restart"):
+    if not state.get("pending_restart") and not state.get("reboot_requested"):
         return write_state(post_reboot_checked_at=now_ts())
-    deadline = time.time() + 90
-    while time.time() < deadline:
-        if all(url_ok(u) for u in HEALTH_URLS):
-            return write_state(
-                pending_restart=False,
-                reboot_requested=False,
-                post_reboot_checked_at=now_ts(),
-                last_successful_boot_version=installed_version(),
-                last_error=None,
-            )
-        time.sleep(3)
-    return write_state(post_reboot_checked_at=now_ts(), last_error="Post-reboot health check failed")
 
+    last_failed_urls: list[str] = []
+    for attempt in range(1, HEALTH_CHECK_ATTEMPTS + 1):
+        write_state(
+            post_reboot_attempt=attempt,
+            post_reboot_attempts_total=HEALTH_CHECK_ATTEMPTS,
+            post_reboot_checked_at=now_ts(),
+            last_error=None if attempt == 1 else "Post-reboot health check is still waiting for services.",
+        )
+
+        deadline = time.time() + HEALTH_CHECK_SECONDS
+        while time.time() < deadline:
+            failed_urls = [u for u in HEALTH_URLS if not url_ok(u)]
+            if not failed_urls:
+                prune_result = prune_old_backups()
+                return write_state(
+                    pending_restart=False,
+                    reboot_requested=False,
+                    rollback_required=False,
+                    rollback_applied=False,
+                    post_reboot_attempt=attempt,
+                    post_reboot_checked_at=now_ts(),
+                    last_successful_boot_version=installed_version(),
+                    last_error=None,
+                    **prune_result,
+                )
+            last_failed_urls = failed_urls
+            time.sleep(HEALTH_POLL_SECONDS)
+
+    reason = (
+        f"Post-reboot health check failed after {HEALTH_CHECK_ATTEMPTS} attempts "
+        f"of {HEALTH_CHECK_SECONDS} seconds. Failed URLs: {', '.join(last_failed_urls) or 'unknown'}"
+    )
+    result = restore_backup_after_failed_update(read_json(STATE_FILE, state), reason)
+
+    if result.get("rollback_applied"):
+        proc = sudo_cmd("reboot", timeout=10)
+        if proc.returncode != 0:
+            return write_state(
+                rollback_reboot_requested=False,
+                last_error=f"{result.get('last_error')}; reboot after rollback failed: {proc.stderr.strip() or proc.stdout.strip()}",
+            )
+        return write_state(rollback_reboot_requested=True)
+
+    return result
 
 def install() -> dict[str, Any]:
     cfg = load_config()
@@ -682,6 +1053,11 @@ def diagnose() -> dict[str, Any]:
             "network_manager_service.py": (PROJECT_ROOT / "network_manager_service.py").exists(),
         },
         "services": DEFAULT_SERVICES,
+        "required_systemd_units": REQUIRED_SYSTEMD_UNITS,
+        "systemd": systemd_compatibility_state(),
+        "backup_root": str(BACKUP_ROOT),
+        "backup_retention_count": BACKUP_RETENTION_COUNT,
+        "backup_count": len(list_backup_dirs()),
         "version_schema": "release.frontend.config.display.network.updater",
     }
     try:
@@ -702,7 +1078,7 @@ def print_json(data: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MementoFrame updater")
-    parser.add_argument("command", choices=["install", "status", "check", "update", "autoupdate", "post-reboot-check", "reboot", "diagnose"])
+    parser.add_argument("command", choices=["install", "status", "check", "update", "autoupdate", "post-reboot-check", "reboot", "diagnose", "repair-services", "prune-backups"])
     parser.add_argument("--no-reboot", action="store_true", help="Do not reboot after update/autoupdate")
     args = parser.parse_args()
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -716,6 +1092,10 @@ def main() -> int:
             print_json(state)
         elif args.command == "diagnose":
             print_json(diagnose())
+        elif args.command == "repair-services":
+            print_json(repair_systemd_services_if_needed())
+        elif args.command == "prune-backups":
+            print_json(prune_old_backups())
         elif args.command == "check":
             print_json(check_for_update())
         elif args.command == "update":

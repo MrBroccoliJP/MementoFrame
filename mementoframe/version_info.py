@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 2
+RELEASE_COUNTER = 3
 
 VERSION_ORDER = [
     "frontend",
@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 16,  #changed install scripts
+        "version": 17,  #changed install scripts
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },

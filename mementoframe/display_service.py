@@ -425,26 +425,6 @@ def screen_off():
     GPIO.output(SCREEN_PIN, GPIO.LOW)
     return jsonify({"status": "off"})
 
-def _autoupdate_worker():
-    while True:
-        time.sleep(60 * 60)
-        try:
-            # Don't spawn if an update is already running
-            state = load_update_state()
-            if state.get("update_in_progress"):
-                continue
-            subprocess.run(
-                [sys.executable, "updater.py", "autoupdate"],
-                cwd=PROJECT_ROOT,
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-        except Exception as e:
-            print(f"[autoupdate] error: {e}")
-
-threading.Thread(target=_autoupdate_worker, daemon=True).start()            
-
 if __name__ == "__main__":
     if sp is None:
         print("⚠️  Spotify credentials missing or invalid — Spotify endpoint will return disconnected state.")
