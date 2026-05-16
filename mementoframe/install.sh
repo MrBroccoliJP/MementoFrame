@@ -639,6 +639,7 @@ ${APP_USER} ALL=(root) NOPASSWD: \\
   /usr/bin/systemctl restart mementoframe-display.service, \\
   /usr/bin/systemctl restart mementoframe-network.service, \\
   /usr/bin/systemctl restart mementoframe-kiosk.service, \\
+  ${REPAIR_HELPER}, \\
   /usr/bin/systemctl stop hostapd, \\
   /usr/bin/systemctl stop dnsmasq, \\
   /usr/bin/nmcli, \\
