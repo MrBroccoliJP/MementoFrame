@@ -35,6 +35,9 @@ import { state } from "../state.js";
 import { PATHS, INTERVALS, SELECTORS } from "../constants.js";
 import { $, $$ } from "../utils.js";
 
+let photosTimer = null;
+let slideAdvanceRunning = false;
+
 /**
  * Initialise the photo slideshow.
  *
@@ -53,7 +56,7 @@ export function initPhotos() {
   showPhoto(state.photos.index);
   preloadAllThumbs();
 
-  setInterval(showNextSlide, INTERVALS.PHOTOS);
+  photosTimer = setInterval(showNextSlide, INTERVALS.PHOTOS);
 }
 
 /**
@@ -160,19 +163,28 @@ function showPhoto(index) {
  * Otherwise simply calls showPhoto with the incremented index.
  */
 async function showNextSlide() {
-  if (!state.photos.shuffled.length) return;
-  state.photos.index = (state.photos.index + 1) % state.photos.shuffled.length;
+  if (slideAdvanceRunning) return;
+  slideAdvanceRunning = true;
 
-  if (state.photos.index % 36 === 0) {
-    await burstPhotos();
-    await new Promise((r) => setTimeout(r, 1000));
-    state.photos.index = 0;
-    state.photos.shuffled = shuffle([...state.photos.shuffled]);
+  try {
+    if (!state.photos.shuffled.length) return;
+
+    state.photos.index = (state.photos.index + 1) % state.photos.shuffled.length;
+
+    if (state.photos.index % 36 === 0) {
+      await burstPhotos();
+      await new Promise((r) => setTimeout(r, 1000));
+
+      state.photos.index = 0;
+      state.photos.shuffled = shuffle([...state.photos.shuffled]);
+      showPhoto(state.photos.index);
+      return;
+    }
+
     showPhoto(state.photos.index);
-    return;
+  } finally {
+    slideAdvanceRunning = false;
   }
-
-  showPhoto(state.photos.index);
 }
 
 /**
@@ -215,124 +227,225 @@ function preloadAllThumbs() {
 }
 
 /**
+ * Draw a rounded rectangle path.
+ *
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {number} x - Rectangle x position.
+ * @param {number} y - Rectangle y position.
+ * @param {number} width - Rectangle width.
+ * @param {number} height - Rectangle height.
+ * @param {number} radius - Corner radius.
+ */
+function roundedRectPath(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+/**
+ * Draw a burst thumbnail without distorting the source image.
+ *
+ * Horizontal images use object-fit: cover semantics, matching the previous
+ * thumbnail look. Vertical images keep their full height and natural portrait
+ * shape, centered inside the row cell instead of being cropped or stretched.
+ * A rounded clipping path is applied to the actual image rectangle so canvas
+ * thumbnails match the rest of the app.
+ *
+ * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
+ * @param {HTMLImageElement} img - Image to draw.
+ * @param {number} x - Target cell x position.
+ * @param {number} y - Target cell y position.
+ * @param {number} width - Target cell width.
+ * @param {number} height - Target cell height.
+ * @param {number} radius - Corner radius.
+ */
+function drawBurstImage(ctx, img, x, y, width, height, radius = 10) {
+  const sourceWidth = img.naturalWidth || img.width;
+  const sourceHeight = img.naturalHeight || img.height;
+
+  if (!sourceWidth || !sourceHeight || !width || !height) return;
+
+  const isVertical = sourceHeight > sourceWidth;
+
+  let sx = 0;
+  let sy = 0;
+  let sw = sourceWidth;
+  let sh = sourceHeight;
+  let dx = x;
+  let dy = y;
+  let dw = width;
+  let dh = height;
+
+  if (isVertical) {
+    // Portrait photos keep their full vertical image and natural aspect.
+    // They become narrower, centered thumbnails instead of cropped 4:3 boxes.
+    dh = height;
+    dw = Math.min(width, Math.round(height * (sourceWidth / sourceHeight)));
+    dx = x + Math.round((width - dw) / 2);
+  } else {
+    // Landscape/square photos fill the thumbnail cell using cover semantics.
+    const sourceRatio = sourceWidth / sourceHeight;
+    const targetRatio = width / height;
+
+    if (sourceRatio > targetRatio) {
+      sw = sourceHeight * targetRatio;
+      sx = (sourceWidth - sw) / 2;
+    } else {
+      sh = sourceWidth / targetRatio;
+      sy = (sourceHeight - sh) / 2;
+    }
+  }
+
+  ctx.save();
+  roundedRectPath(ctx, dx, dy, dw, dh, radius);
+  ctx.clip();
+  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+  ctx.restore();
+}
+
+/**
  * Animate all thumbnail photos flying upward from the bottom of the left panel.
  *
- * Waits for all thumbnails to be decoded (via state.photos.thumbsReady) before
- * starting, so the burst never begins with blank images.
+ * Uses a single canvas instead of many independently animated DOM images. This
+ * avoids compositor pressure and keeps every thumbnail update locked to the
+ * same requestAnimationFrame tick, which is smoother on Raspberry Pi hardware.
  *
- * Timing is driven by a constant speed (SPEED_VH_PER_MS) rather than a fixed
- * duration. Every photo travels the same distance at the same speed, so the
- * animation always looks the same regardless of photo count. ROW_STAGGER is a
- * fixed aesthetic delay between rows launching — it doesn't affect individual
- * photo speed. The returned Promise resolves when the last photo's animationend
- * fires, after which the caller waits 1 second before starting the next cycle.
- *
- * Returns a Promise that resolves only after the last photo's animationend fires,
- * so callers can await the full burst before starting the next slideshow cycle.
- *
- * Layout:
- *   - `photosPerRow` columns, each thumb width = panel width / photosPerRow.
- *   - Partial final rows are centred horizontally rather than left-aligned.
- *   - If panels are swapped and not in narrow mode, a horizontal offset keeps
- *     photos within the correct panel area.
+ * Horizontal thumbnails are drawn with object-fit: cover semantics. Vertical
+ * thumbnails keep their full portrait height and are centered inside each cell.
+ * The layout uses three photos per row for a lighter, calmer burst animation.
  *
  * @async
- * @returns {Promise<void>} Resolves when the last floating photo leaves the screen.
+ * @returns {Promise<void>} Resolves when the burst has fully left the screen.
  * @exports burstPhotos
  */
 async function burstPhotos() {
   const panel = $(SELECTORS.leftPanel);
   if (!panel) return;
 
-  // Wait for all thumbs to be decoded before touching the DOM
   await preloadAllThumbs();
 
-  // Remove leftover floating photos from any previous burst
-  panel.querySelectorAll(".floating-photo").forEach((el) => el.remove());
+  panel.querySelectorAll(".burst-canvas").forEach((el) => el.remove());
 
-  // Clear the static slideshow image now — thumbs are ready so there's
-  // no black gap; the first row of floating photos is about to paint.
   const container = $(SELECTORS.photoContainer);
   if (container) container.innerHTML = "";
 
   const photos = window.photos || [];
   if (!photos.length) return;
 
-  const photosPerRow = 6;
+  const photosPerRow = 3;
   const gap = 8;
-  // Always lay out within the narrow panel width (69%) regardless of current
-  // panel state — the burst should never draw into the right panel area.
   const NARROW_WIDTH = Math.floor(window.innerWidth * 0.69);
   const panelWidth = Math.min(panel.clientWidth, NARROW_WIDTH);
-  const thumbWidth = Math.floor(panelWidth / photosPerRow);
+  const panelHeight = panel.clientHeight;
 
-  // Thumb height: use a fixed aspect ratio (4:3) since images vary.
-  // This is what determines the vertical spacing between rows.
+  const thumbWidth = Math.floor(panelWidth / photosPerRow);
   const thumbHeight = Math.round(thumbWidth * 0.75);
   const rowSpacing = thumbHeight + gap;
-
   const totalRows = Math.ceil(photos.length / photosPerRow);
 
-  // Constant speed: every photo travels at the same velocity.
-  // The keyframe moves each photo -200vh upward. Starting position (bottom)
-  // adds extra distance for lower rows, but duration is set for the worst-case
-  // first row so all rows clear the top at a consistent speed.
-  const vh = window.innerHeight;
-  const SPEED_PX_MS = 0.4; // px per ms — tune to change speed
+  const canvas = document.createElement("canvas");
+  canvas.className = "burst-canvas";
+  canvas.width = panelWidth;
+  canvas.height = panelHeight;
 
-  // Track the very last photo element so we can await its animationend
-  let lastImg = null;
+  canvas.style.position = "absolute";
+  canvas.style.left = "var(--burst-x-offset, 0px)";
+  canvas.style.top = "0";
+  canvas.style.width = `${panelWidth}px`;
+  canvas.style.height = `${panelHeight}px`;
+  canvas.style.pointerEvents = "none";
+  canvas.style.zIndex = "5";
 
-  photos.forEach((filename, idx) => {
-    const cached = state.photos.thumbsContainer?.querySelector(
-      `img[data-filename="${filename}"]`,
-    );
-    if (!cached) return;
+  panel.appendChild(canvas);
 
-    const img = cached.cloneNode(true);
-    img.classList.add("floating-photo");
-
-    const row = Math.floor(idx / photosPerRow);
-    const col = idx % photosPerRow;
-
-    // Centre the partial final row
-    const isLastRow = row === totalRows - 1;
-    const countInRow = isLastRow
-      ? photos.length % photosPerRow || photosPerRow
-      : photosPerRow;
-    const rowOffset = isLastRow
-      ? Math.floor((photosPerRow - countInRow) / 2) * thumbWidth
-      : 0;
-
-    // Pre-position each row physically below the screen by its row index.
-    // Row 0 starts just below the bottom edge; row 1 one row-height further
-    // down; etc. All photos animate at the same speed with no delay, so they
-    // naturally arrive sequentially without ever occupying the same space.
-    const startBelow = thumbHeight + row * rowSpacing;
-    const travelPx = vh + startBelow + 40;
-    const animDuration = Math.round(travelPx / SPEED_PX_MS);
-
-    img.style.width = `${thumbWidth - gap}px`;
-    img.style.height = `${thumbHeight}px`;
-    const baseLeft = col * thumbWidth + rowOffset;
-    img.style.left = `calc(${baseLeft}px + var(--burst-x-offset, 0px))`;
-    img.style.bottom = `-${startBelow}px`;
-    img.style.setProperty("--burst-travel", `${travelPx}px`);
-    img.style.animationDuration = `${animDuration}ms`;
-    img.style.animationDelay = "0ms";
-
-    panel.appendChild(img);
-    img.addEventListener("animationend", () => img.remove(), { once: true });
-
-    lastImg = img;
-  });
-
-  // Resolve only after the last photo has fully left the screen
-  if (lastImg) {
-    await new Promise((resolve) =>
-      lastImg.addEventListener("animationend", resolve, { once: true }),
-    );
+  const ctx = canvas.getContext("2d", { alpha: true });
+  if (!ctx) {
+    canvas.remove();
+    return;
   }
+
+  const items = photos
+    .map((filename, idx) => {
+      const cached = state.photos.thumbsContainer?.querySelector(
+        `img[data-filename="${filename}"]`,
+      );
+      if (!cached || !cached.complete) return null;
+
+      const row = Math.floor(idx / photosPerRow);
+      const col = idx % photosPerRow;
+
+      const isLastRow = row === totalRows - 1;
+      const countInRow = isLastRow
+        ? photos.length % photosPerRow || photosPerRow
+        : photosPerRow;
+      const rowOffset = isLastRow
+        ? Math.floor((photosPerRow - countInRow) / 2) * thumbWidth
+        : 0;
+
+      return {
+        img: cached,
+        x: col * thumbWidth + rowOffset,
+        y: panelHeight + thumbHeight + row * rowSpacing,
+        width: thumbWidth - gap,
+        height: thumbHeight,
+      };
+    })
+    .filter(Boolean);
+
+  if (!items.length) {
+    canvas.remove();
+    return;
+  }
+
+  const speedPxMs = 0.32;
+  const maxStartY = Math.max(...items.map((item) => item.y));
+  const totalDistance = maxStartY + thumbHeight + 40;
+  const duration = totalDistance / speedPxMs;
+  const startTime = performance.now();
+
+  await new Promise((resolve) => {
+    function frame(now) {
+      const elapsed = now - startTime;
+      const offset = elapsed * speedPxMs;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const item of items) {
+        const y = item.y - offset;
+
+        if (y < -item.height || y > panelHeight + item.height) continue;
+
+        drawBurstImage(
+          ctx,
+          item.img,
+          item.x,
+          y,
+          item.width,
+          item.height,
+          10,
+        );
+      }
+
+      if (elapsed < duration) {
+        requestAnimationFrame(frame);
+      } else {
+        canvas.remove();
+        resolve();
+      }
+    }
+
+    requestAnimationFrame(frame);
+  });
 }
 
 //debug function to trigger the burst manually without waiting for the slideshow cycle

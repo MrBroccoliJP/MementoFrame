@@ -796,6 +796,13 @@ body {
   object-fit: contain;
 }
 
+.burst-canvas {
+  border-radius: inherit;
+  overflow: hidden;
+  will-change: transform;
+  transform: translateZ(0);
+}
+
 /* Calendar box  */
 .right_panel {
   position: fixed;
@@ -872,27 +879,6 @@ body {
   z-index: -1;
 }
 
-@keyframes floatUp {
-  0% {
-    transform: translateY(0);
-  }
-
-  100% {
-    transform: translateY(calc(-1 * var(--burst-travel)));
-  }
-}
-
-.floating-photo {
-  position: absolute;
-  object-fit: cover;
-  border-radius: 3px;
-  animation: floatUp linear forwards;
-  pointer-events: none;
-  opacity: 1;
-
-  transition: left 1.2s cubic-bezier(0.4, 0, 0.2, 1);
-  will-change: transform, left;
-}
 
 
 /* ============ CLOCK REFINEMENTS ============ */
@@ -1073,3 +1059,5 @@ body {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.08); }
   50% { box-shadow: 0 0 0 8px rgba(255,255,255,0.02); }
 }
+
+
