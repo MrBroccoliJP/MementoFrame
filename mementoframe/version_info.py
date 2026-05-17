@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 3
+RELEASE_COUNTER = 4
 
 VERSION_ORDER = [
     "frontend",
