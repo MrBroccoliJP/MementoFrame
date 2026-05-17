@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 28, #Shows photo upload progress | config portal styling update
+        "version": 30, #Shows photo upload progress | config portal styling update
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {

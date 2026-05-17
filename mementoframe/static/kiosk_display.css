@@ -796,6 +796,38 @@ body {
   object-fit: contain;
 }
 
+/* Burst grid overlay — pure CSS transitions, no canvas, no rAF loop */
+.burst-grid {
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+/* Individual cells — opacity + scale driven purely by CSS.
+   The injected <style id="burst-grid-style"> in photoslideshow.js
+   mirrors these rules; both must agree on durations. */
+.burst-cell {
+  position: absolute;
+  border-radius: 10px;
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 400ms ease, transform 400ms ease;
+  will-change: opacity, transform;
+}
+
+.burst-cell.visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.burst-cell img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
 /* Calendar box  */
 .right_panel {
   position: fixed;
@@ -872,27 +904,6 @@ body {
   z-index: -1;
 }
 
-@keyframes floatUp {
-  0% {
-    transform: translateY(0);
-  }
-
-  100% {
-    transform: translateY(calc(-1 * var(--burst-travel)));
-  }
-}
-
-.floating-photo {
-  position: absolute;
-  object-fit: cover;
-  border-radius: 3px;
-  animation: floatUp linear forwards;
-  pointer-events: none;
-  opacity: 1;
-
-  transition: left 1.2s cubic-bezier(0.4, 0, 0.2, 1);
-  will-change: transform, left;
-}
 
 
 /* ============ CLOCK REFINEMENTS ============ */

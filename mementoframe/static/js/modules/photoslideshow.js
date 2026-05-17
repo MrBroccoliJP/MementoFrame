@@ -35,6 +35,9 @@ import { state } from "../state.js";
 import { PATHS, INTERVALS, SELECTORS } from "../constants.js";
 import { $, $$ } from "../utils.js";
 
+let photosTimer = null;
+let slideAdvanceRunning = false;
+
 /**
  * Initialise the photo slideshow.
  *
@@ -53,7 +56,7 @@ export function initPhotos() {
   showPhoto(state.photos.index);
   preloadAllThumbs();
 
-  setInterval(showNextSlide, INTERVALS.PHOTOS);
+  photosTimer = setInterval(showNextSlide, INTERVALS.PHOTOS);
 }
 
 /**
@@ -160,19 +163,28 @@ function showPhoto(index) {
  * Otherwise simply calls showPhoto with the incremented index.
  */
 async function showNextSlide() {
-  if (!state.photos.shuffled.length) return;
-  state.photos.index = (state.photos.index + 1) % state.photos.shuffled.length;
+  if (slideAdvanceRunning) return;
+  slideAdvanceRunning = true;
 
-  if (state.photos.index % 36 === 0) {
-    await burstPhotos();
-    await new Promise((r) => setTimeout(r, 1000));
-    state.photos.index = 0;
-    state.photos.shuffled = shuffle([...state.photos.shuffled]);
+  try {
+    if (!state.photos.shuffled.length) return;
+
+    state.photos.index = (state.photos.index + 1) % state.photos.shuffled.length;
+
+    if (state.photos.index % 36 === 0) {
+      await burstPhotos();
+      await new Promise((r) => setTimeout(r, 1000));
+
+      state.photos.index = 0;
+      state.photos.shuffled = shuffle([...state.photos.shuffled]);
+      showPhoto(state.photos.index);
+      return;
+    }
+
     showPhoto(state.photos.index);
-    return;
+  } finally {
+    slideAdvanceRunning = false;
   }
-
-  showPhoto(state.photos.index);
 }
 
 /**
@@ -215,123 +227,213 @@ function preloadAllThumbs() {
 }
 
 /**
- * Animate all thumbnail photos flying upward from the bottom of the left panel.
+ * Cycle through all upcoming photos as pages of 3×3 grids.
  *
- * Waits for all thumbnails to be decoded (via state.photos.thumbsReady) before
- * starting, so the burst never begins with blank images.
+ * Each page shows 9 photos in a 3-column × 3-row layout. Photos appear with
+ * a left-to-right, top-to-bottom stagger, hold for a beat, then the whole
+ * grid fades out before the next page fades in. This repeats until all photos
+ * in `window.photos` have been shown (up to 36 — the next slideshow batch).
  *
- * Timing is driven by a constant speed (SPEED_VH_PER_MS) rather than a fixed
- * duration. Every photo travels the same distance at the same speed, so the
- * animation always looks the same regardless of photo count. ROW_STAGGER is a
- * fixed aesthetic delay between rows launching — it doesn't affect individual
- * photo speed. The returned Promise resolves when the last photo's animationend
- * fires, after which the caller waits 1 second before starting the next cycle.
+ * No canvas, no rAF loop. Every transition is a CSS opacity/transform on
+ * individual <div> cells, so the Pi compositor handles all compositing in
+ * hardware with zero JS per frame.
  *
- * Returns a Promise that resolves only after the last photo's animationend fires,
- * so callers can await the full burst before starting the next slideshow cycle.
- *
- * Layout:
- *   - `photosPerRow` columns, each thumb width = panel width / photosPerRow.
- *   - Partial final rows are centred horizontally rather than left-aligned.
- *   - If panels are swapped and not in narrow mode, a horizontal offset keeps
- *     photos within the correct panel area.
+ * Timing per page:
+ *   • Cell stagger    :  60 ms × cell index (9 cells → ~480 ms total)
+ *   • Cell fade-in    : 400 ms CSS transition (opacity + scale 0.92 → 1)
+ *   • Hold            : 1 600 ms after last cell is fully visible
+ *   • Page fade-out   :  500 ms CSS transition on wrapper opacity
+ *   • Gap between pages: 200 ms blank pause
  *
  * @async
- * @returns {Promise<void>} Resolves when the last floating photo leaves the screen.
+ * @returns {Promise<void>} Resolves when all pages have been shown and
+ *   the final grid has faded out.
  * @exports burstPhotos
  */
 async function burstPhotos() {
   const panel = $(SELECTORS.leftPanel);
   if (!panel) return;
 
-  // Wait for all thumbs to be decoded before touching the DOM
   await preloadAllThumbs();
 
-  // Remove leftover floating photos from any previous burst
-  panel.querySelectorAll(".floating-photo").forEach((el) => el.remove());
+  // Remove any leftover overlay from an interrupted previous cycle.
+  panel.querySelectorAll(".burst-grid").forEach((el) => el.remove());
 
-  // Clear the static slideshow image now — thumbs are ready so there's
-  // no black gap; the first row of floating photos is about to paint.
   const container = $(SELECTORS.photoContainer);
   if (container) container.innerHTML = "";
 
   const photos = window.photos || [];
   if (!photos.length) return;
 
-  const photosPerRow = 6;
-  const gap = 8;
-  // Always lay out within the narrow panel width (69%) regardless of current
-  // panel state — the burst should never draw into the right panel area.
-  const NARROW_WIDTH = Math.floor(window.innerWidth * 0.69);
-  const panelWidth = Math.min(panel.clientWidth, NARROW_WIDTH);
-  const thumbWidth = Math.floor(panelWidth / photosPerRow);
+  // ── Layout constants ──────────────────────────────────────────────────────
+  const COLS = 3;
+  const ROWS = 3;
+  const PAGE_SIZE = COLS * ROWS; // 9
+  const GAP = 10; // px between cells
 
-  // Thumb height: use a fixed aspect ratio (4:3) since images vary.
-  // This is what determines the vertical spacing between rows.
-  const thumbHeight = Math.round(thumbWidth * 0.75);
-  const rowSpacing = thumbHeight + gap;
+  // Derive the burst grid dimensions from state.panels — the same source
+  // layout.js uses in getPanelDimensions() — so the grid always matches the
+  // panel's *intended* size regardless of where the CSS transition is mid-flight.
+  //
+  // Rules (mirroring getPanelDimensions exactly):
+  //   • Spotify playing OR calendarFullOpacity → panel is 69 % of viewport width.
+  //     If swapped → panel starts at left: 30 %, so the grid's left inset
+  //     must compensate by that 30 % so cells don't bleed into the right panel.
+  //   • Otherwise → panel is 99 % of viewport width, no left compensation needed.
+  const { swapped, calendarFullOpacity, spotifyPlaying } = state.panels;
+  const isNarrow = spotifyPlaying || calendarFullOpacity;
 
-  const totalRows = Math.ceil(photos.length / photosPerRow);
+  // Grid geometry — fixed rules regardless of panel CSS state:
+  //
+  //   Grid is always 70% of viewport wide.
+  //
+  //   Offset (left edge of grid, viewport-relative):
+  //     swapped     → 30% (photo panel is on the right, clear the info panel)
+  //     not swapped → 0   (photo panel is on the left, flush)
+  const viewW    = window.innerWidth;
+  const panelH   = panel.clientHeight || window.innerHeight;
+  const panelW   = Math.round(viewW * 0.70);
+  const gridLeft = (swapped && !isNarrow) ? Math.round(viewW * 0.30) : 0;
 
-  // Constant speed: every photo travels at the same velocity.
-  // The keyframe moves each photo -200vh upward. Starting position (bottom)
-  // adds extra distance for lower rows, but duration is set for the worst-case
-  // first row so all rows clear the top at a consistent speed.
-  const vh = window.innerHeight;
-  const SPEED_PX_MS = 0.4; // px per ms — tune to change speed
+  // Cells fill the panel with equal margins on all sides.
+  const cellW = Math.floor((panelW - GAP * (COLS + 1)) / COLS);
+  const cellH = Math.floor((panelH - GAP * (ROWS + 1)) / ROWS);
 
-  // Track the very last photo element so we can await its animationend
-  let lastImg = null;
+  // ── Inject shared cell styles once ───────────────────────────────────────
+  const STYLE_ID = "burst-grid-style";
+  if (!document.getElementById(STYLE_ID)) {
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      .burst-cell {
+        position: absolute;
+        border-radius: 12px;
+        overflow: hidden;
+        opacity: 0;
+        transform: scale(0.93);
+        transition: opacity 400ms ease, transform 400ms ease;
+        will-change: opacity, transform;
+      }
+      .burst-cell.visible {
+        opacity: 1;
+        transform: scale(1);
+      }
+      .burst-cell img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    `;
+    document.head.appendChild(style);
+  }
 
-  photos.forEach((filename, idx) => {
-    const cached = state.photos.thumbsContainer?.querySelector(
-      `img[data-filename="${filename}"]`,
-    );
-    if (!cached) return;
+  // ── Timing constants ──────────────────────────────────────────────────────
+  const STAGGER_MS     = 60;   // delay between each cell appearing
+  const FADE_IN_MS     = 400;  // must match CSS transition
+  const HOLD_MS        = 1600; // how long the full grid stays visible
+  const FADE_OUT_MS    = 500;  // wrapper opacity transition
+  const BETWEEN_MS     = 200;  // blank gap between pages
 
-    const img = cached.cloneNode(true);
-    img.classList.add("floating-photo");
+  // ── Helper: show one page of up to PAGE_SIZE photos ──────────────────────
+  /**
+   * @param {string[]} pagePhotos - Filenames for this page (1–9 items).
+   * @returns {Promise<void>} Resolves after the page has faded out.
+   */
+  async function showPage(pagePhotos) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "burst-grid";
+    // Explicit width/height instead of inset:0 — constrains the grid to panelW
+    // even if the physical panel element is wider mid-transition. left/top are
+    // always 0 because the panel's own CSS position handles the swap offset.
+    // position:fixed so left/width are relative to the viewport, not the panel.
+    // left transition matches the panel swap animation (1.2s cubic-bezier).
+    Object.assign(wrapper.style, {
+      position:      "fixed",
+      left:          `${gridLeft}px`,
+      top:           "0",
+      width:         `${panelW}px`,
+      height:        `${panelH}px`,
+      overflow:      "hidden",
+      zIndex:        "5",
+      pointerEvents: "none",
+      opacity:       "1",
+      transition:    `opacity ${FADE_OUT_MS}ms ease, left 1.2s cubic-bezier(0.4,0,0.2,1)`,
+      willChange:    "opacity, left",
+    });
 
-    const row = Math.floor(idx / photosPerRow);
-    const col = idx % photosPerRow;
+    const cells = [];
 
-    // Centre the partial final row
-    const isLastRow = row === totalRows - 1;
-    const countInRow = isLastRow
-      ? photos.length % photosPerRow || photosPerRow
-      : photosPerRow;
-    const rowOffset = isLastRow
-      ? Math.floor((photosPerRow - countInRow) / 2) * thumbWidth
-      : 0;
+    pagePhotos.forEach((filename, i) => {
+      const cached = state.photos.thumbsContainer?.querySelector(
+        `img[data-filename="${filename}"]`,
+      );
+      if (!cached || !cached.complete) return;
 
-    // Pre-position each row physically below the screen by its row index.
-    // Row 0 starts just below the bottom edge; row 1 one row-height further
-    // down; etc. All photos animate at the same speed with no delay, so they
-    // naturally arrive sequentially without ever occupying the same space.
-    const startBelow = thumbHeight + row * rowSpacing;
-    const travelPx = vh + startBelow + 40;
-    const animDuration = Math.round(travelPx / SPEED_PX_MS);
+      const row = Math.floor(i / COLS);
+      const col = i % COLS;
 
-    img.style.width = `${thumbWidth - gap}px`;
-    img.style.height = `${thumbHeight}px`;
-    const baseLeft = col * thumbWidth + rowOffset;
-    img.style.left = `calc(${baseLeft}px + var(--burst-x-offset, 0px))`;
-    img.style.bottom = `-${startBelow}px`;
-    img.style.setProperty("--burst-travel", `${travelPx}px`);
-    img.style.animationDuration = `${animDuration}ms`;
-    img.style.animationDelay = "0ms";
+      // Centre a partial last row horizontally.
+      const countInRow = (row === Math.floor((pagePhotos.length - 1) / COLS))
+        ? ((pagePhotos.length % COLS) || COLS)
+        : COLS;
+      const rowLeftPad = Math.round(((COLS - countInRow) * (cellW + GAP)) / 2);
 
-    panel.appendChild(img);
-    img.addEventListener("animationend", () => img.remove(), { once: true });
+      const x = GAP + col * (cellW + GAP) + rowLeftPad;
+      const y = GAP + row * (cellH + GAP);
 
-    lastImg = img;
-  });
+      const cell = document.createElement("div");
+      cell.className = "burst-cell";
+      Object.assign(cell.style, {
+        left:   `${x}px`,
+        top:    `${y}px`,
+        width:  `${cellW}px`,
+        height: `${cellH}px`,
+      });
 
-  // Resolve only after the last photo has fully left the screen
-  if (lastImg) {
-    await new Promise((resolve) =>
-      lastImg.addEventListener("animationend", resolve, { once: true }),
-    );
+      // cloneNode(true) reuses the already-decoded pixel data — no re-fetch.
+      cell.appendChild(cached.cloneNode(true));
+      wrapper.appendChild(cell);
+      cells.push(cell);
+    });
+
+    if (!cells.length) return;
+
+    panel.appendChild(wrapper);
+
+    // Stagger fade-in — CSS transitions fire, JS only sets the class.
+    const lastCellDelay = (cells.length - 1) * STAGGER_MS;
+    await new Promise((resolve) => {
+      cells.forEach((cell, i) => {
+        setTimeout(() => cell.classList.add("visible"), i * STAGGER_MS);
+      });
+      setTimeout(resolve, lastCellDelay + FADE_IN_MS);
+    });
+
+    // Hold while the grid is fully visible.
+    await new Promise((r) => setTimeout(r, HOLD_MS));
+
+    // Fade out the whole wrapper in one transition.
+    await new Promise((resolve) => {
+      wrapper.style.opacity = "0";
+      setTimeout(() => {
+        wrapper.remove();
+        resolve();
+      }, FADE_OUT_MS + 50);
+    });
+  }
+
+  // ── Page through all photos ───────────────────────────────────────────────
+  const total = Math.min(photos.length, 36);
+
+  for (let offset = 0; offset < total; offset += PAGE_SIZE) {
+    const pagePhotos = photos.slice(offset, offset + PAGE_SIZE);
+    await showPage(pagePhotos);
+
+    // Brief blank pause between pages (skip after the last one).
+    if (offset + PAGE_SIZE < total) {
+      await new Promise((r) => setTimeout(r, BETWEEN_MS));
+    }
   }
 }
 
@@ -344,6 +446,22 @@ async function runBurstCycle() {
   state.photos.shuffled = shuffle([...state.photos.shuffled]);
 
   showPhoto(state.photos.index);
+}
+
+/**
+ * Slide any live burst-grid overlays to the new position after a panel swap.
+ *
+ * Called by layout.js immediately after swapPanels() updates state.panels.swapped.
+ * The wrapper's CSS transition on `left` (1.2s, matching the panel animation)
+ * picks up the change and animates smoothly without any rAF involvement.
+ */
+export function updateBurstGrid() {
+  const viewW    = window.innerWidth;
+  const { swapped: sw, calendarFullOpacity: cal, spotifyPlaying: spot } = state.panels;
+  const newLeft  = (sw && !cal && !spot) ? Math.round(viewW * 0.30) : 0;
+  document.querySelectorAll(".burst-grid").forEach((el) => {
+    el.style.left = `${newLeft}px`;
+  });
 }
 
 export { burstPhotos, runBurstCycle };
