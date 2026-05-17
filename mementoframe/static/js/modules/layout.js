@@ -35,6 +35,7 @@
 import { state } from "../state.js";
 import { SELECTORS, INTERVALS } from "../constants.js";
 import { $, $$ } from "../utils.js";
+import { updateBurstGrid } from "./photoslideshow.js";
 
 /**
  * Set the opacity of the calendar, weather, and date boxes simultaneously.
@@ -247,6 +248,7 @@ export function swapPanels() {
     }
     if (systemInfo) systemInfo.style.justifyContent = "flex-end";
     updatePanelState({ swapped: false });
+    updateBurstGrid();
 
   } else {
     // Move right panel to left edge
@@ -261,6 +263,7 @@ export function swapPanels() {
     }
     if (systemInfo) systemInfo.style.justifyContent = "flex-start";
     updatePanelState({ swapped: true });
+    updateBurstGrid();
   }
 
 }

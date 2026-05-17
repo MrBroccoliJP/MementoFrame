@@ -227,105 +227,27 @@ function preloadAllThumbs() {
 }
 
 /**
- * Draw a rounded rectangle path.
+ * Cycle through all upcoming photos as pages of 3×3 grids.
  *
- * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
- * @param {number} x - Rectangle x position.
- * @param {number} y - Rectangle y position.
- * @param {number} width - Rectangle width.
- * @param {number} height - Rectangle height.
- * @param {number} radius - Corner radius.
- */
-function roundedRectPath(ctx, x, y, width, height, radius) {
-  const r = Math.min(radius, width / 2, height / 2);
-
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + width - r, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
-  ctx.lineTo(x + width, y + height - r);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
-  ctx.lineTo(x + r, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
-}
-
-/**
- * Draw a burst thumbnail without distorting the source image.
+ * Each page shows 9 photos in a 3-column × 3-row layout. Photos appear with
+ * a left-to-right, top-to-bottom stagger, hold for a beat, then the whole
+ * grid fades out before the next page fades in. This repeats until all photos
+ * in `window.photos` have been shown (up to 36 — the next slideshow batch).
  *
- * Horizontal images use object-fit: cover semantics, matching the previous
- * thumbnail look. Vertical images keep their full height and natural portrait
- * shape, centered inside the row cell instead of being cropped or stretched.
- * A rounded clipping path is applied to the actual image rectangle so canvas
- * thumbnails match the rest of the app.
+ * No canvas, no rAF loop. Every transition is a CSS opacity/transform on
+ * individual <div> cells, so the Pi compositor handles all compositing in
+ * hardware with zero JS per frame.
  *
- * @param {CanvasRenderingContext2D} ctx - Canvas rendering context.
- * @param {HTMLImageElement} img - Image to draw.
- * @param {number} x - Target cell x position.
- * @param {number} y - Target cell y position.
- * @param {number} width - Target cell width.
- * @param {number} height - Target cell height.
- * @param {number} radius - Corner radius.
- */
-function drawBurstImage(ctx, img, x, y, width, height, radius = 10) {
-  const sourceWidth = img.naturalWidth || img.width;
-  const sourceHeight = img.naturalHeight || img.height;
-
-  if (!sourceWidth || !sourceHeight || !width || !height) return;
-
-  const isVertical = sourceHeight > sourceWidth;
-
-  let sx = 0;
-  let sy = 0;
-  let sw = sourceWidth;
-  let sh = sourceHeight;
-  let dx = x;
-  let dy = y;
-  let dw = width;
-  let dh = height;
-
-  if (isVertical) {
-    // Portrait photos keep their full vertical image and natural aspect.
-    // They become narrower, centered thumbnails instead of cropped 4:3 boxes.
-    dh = height;
-    dw = Math.min(width, Math.round(height * (sourceWidth / sourceHeight)));
-    dx = x + Math.round((width - dw) / 2);
-  } else {
-    // Landscape/square photos fill the thumbnail cell using cover semantics.
-    const sourceRatio = sourceWidth / sourceHeight;
-    const targetRatio = width / height;
-
-    if (sourceRatio > targetRatio) {
-      sw = sourceHeight * targetRatio;
-      sx = (sourceWidth - sw) / 2;
-    } else {
-      sh = sourceWidth / targetRatio;
-      sy = (sourceHeight - sh) / 2;
-    }
-  }
-
-  ctx.save();
-  roundedRectPath(ctx, dx, dy, dw, dh, radius);
-  ctx.clip();
-  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-  ctx.restore();
-}
-
-/**
- * Animate all thumbnail photos flying upward from the bottom of the left panel.
- *
- * Uses a single canvas instead of many independently animated DOM images. This
- * avoids compositor pressure and keeps every thumbnail update locked to the
- * same requestAnimationFrame tick, which is smoother on Raspberry Pi hardware.
- *
- * Horizontal thumbnails are drawn with object-fit: cover semantics. Vertical
- * thumbnails keep their full portrait height and are centered inside each cell.
- * The layout uses three photos per row for a lighter, calmer burst animation.
+ * Timing per page:
+ *   • Cell stagger    :  60 ms × cell index (9 cells → ~480 ms total)
+ *   • Cell fade-in    : 400 ms CSS transition (opacity + scale 0.92 → 1)
+ *   • Hold            : 1 600 ms after last cell is fully visible
+ *   • Page fade-out   :  500 ms CSS transition on wrapper opacity
+ *   • Gap between pages: 200 ms blank pause
  *
  * @async
- * @returns {Promise<void>} Resolves when the burst has fully left the screen.
+ * @returns {Promise<void>} Resolves when all pages have been shown and
+ *   the final grid has faded out.
  * @exports burstPhotos
  */
 async function burstPhotos() {
@@ -334,7 +256,8 @@ async function burstPhotos() {
 
   await preloadAllThumbs();
 
-  panel.querySelectorAll(".burst-canvas").forEach((el) => el.remove());
+  // Remove any leftover overlay from an interrupted previous cycle.
+  panel.querySelectorAll(".burst-grid").forEach((el) => el.remove());
 
   const container = $(SELECTORS.photoContainer);
   if (container) container.innerHTML = "";
@@ -342,110 +265,176 @@ async function burstPhotos() {
   const photos = window.photos || [];
   if (!photos.length) return;
 
-  const photosPerRow = 3;
-  const gap = 8;
-  const NARROW_WIDTH = Math.floor(window.innerWidth * 0.69);
-  const panelWidth = Math.min(panel.clientWidth, NARROW_WIDTH);
-  const panelHeight = panel.clientHeight;
+  // ── Layout constants ──────────────────────────────────────────────────────
+  const COLS = 3;
+  const ROWS = 3;
+  const PAGE_SIZE = COLS * ROWS; // 9
+  const GAP = 10; // px between cells
 
-  const thumbWidth = Math.floor(panelWidth / photosPerRow);
-  const thumbHeight = Math.round(thumbWidth * 0.75);
-  const rowSpacing = thumbHeight + gap;
-  const totalRows = Math.ceil(photos.length / photosPerRow);
+  // Derive the burst grid dimensions from state.panels — the same source
+  // layout.js uses in getPanelDimensions() — so the grid always matches the
+  // panel's *intended* size regardless of where the CSS transition is mid-flight.
+  //
+  // Rules (mirroring getPanelDimensions exactly):
+  //   • Spotify playing OR calendarFullOpacity → panel is 69 % of viewport width.
+  //     If swapped → panel starts at left: 30 %, so the grid's left inset
+  //     must compensate by that 30 % so cells don't bleed into the right panel.
+  //   • Otherwise → panel is 99 % of viewport width, no left compensation needed.
+  const { swapped, calendarFullOpacity, spotifyPlaying } = state.panels;
+  const isNarrow = spotifyPlaying || calendarFullOpacity;
 
-  const canvas = document.createElement("canvas");
-  canvas.className = "burst-canvas";
-  canvas.width = panelWidth;
-  canvas.height = panelHeight;
+  // Grid geometry — fixed rules regardless of panel CSS state:
+  //
+  //   Grid is always 70% of viewport wide.
+  //
+  //   Offset (left edge of grid, viewport-relative):
+  //     swapped     → 30% (photo panel is on the right, clear the info panel)
+  //     not swapped → 0   (photo panel is on the left, flush)
+  const viewW    = window.innerWidth;
+  const panelH   = panel.clientHeight || window.innerHeight;
+  const panelW   = Math.round(viewW * 0.70);
+  const gridLeft = (swapped && !isNarrow) ? Math.round(viewW * 0.30) : 0;
 
-  canvas.style.position = "absolute";
-  canvas.style.left = "var(--burst-x-offset, 0px)";
-  canvas.style.top = "0";
-  canvas.style.width = `${panelWidth}px`;
-  canvas.style.height = `${panelHeight}px`;
-  canvas.style.pointerEvents = "none";
-  canvas.style.zIndex = "5";
+  // Cells fill the panel with equal margins on all sides.
+  const cellW = Math.floor((panelW - GAP * (COLS + 1)) / COLS);
+  const cellH = Math.floor((panelH - GAP * (ROWS + 1)) / ROWS);
 
-  panel.appendChild(canvas);
-
-  const ctx = canvas.getContext("2d", { alpha: true });
-  if (!ctx) {
-    canvas.remove();
-    return;
+  // ── Inject shared cell styles once ───────────────────────────────────────
+  const STYLE_ID = "burst-grid-style";
+  if (!document.getElementById(STYLE_ID)) {
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+      .burst-cell {
+        position: absolute;
+        border-radius: 12px;
+        overflow: hidden;
+        opacity: 0;
+        transform: scale(0.93);
+        transition: opacity 400ms ease, transform 400ms ease;
+        will-change: opacity, transform;
+      }
+      .burst-cell.visible {
+        opacity: 1;
+        transform: scale(1);
+      }
+      .burst-cell img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    `;
+    document.head.appendChild(style);
   }
 
-  const items = photos
-    .map((filename, idx) => {
+  // ── Timing constants ──────────────────────────────────────────────────────
+  const STAGGER_MS     = 60;   // delay between each cell appearing
+  const FADE_IN_MS     = 400;  // must match CSS transition
+  const HOLD_MS        = 1600; // how long the full grid stays visible
+  const FADE_OUT_MS    = 500;  // wrapper opacity transition
+  const BETWEEN_MS     = 200;  // blank gap between pages
+
+  // ── Helper: show one page of up to PAGE_SIZE photos ──────────────────────
+  /**
+   * @param {string[]} pagePhotos - Filenames for this page (1–9 items).
+   * @returns {Promise<void>} Resolves after the page has faded out.
+   */
+  async function showPage(pagePhotos) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "burst-grid";
+    // Explicit width/height instead of inset:0 — constrains the grid to panelW
+    // even if the physical panel element is wider mid-transition. left/top are
+    // always 0 because the panel's own CSS position handles the swap offset.
+    // position:fixed so left/width are relative to the viewport, not the panel.
+    // left transition matches the panel swap animation (1.2s cubic-bezier).
+    Object.assign(wrapper.style, {
+      position:      "fixed",
+      left:          `${gridLeft}px`,
+      top:           "0",
+      width:         `${panelW}px`,
+      height:        `${panelH}px`,
+      overflow:      "hidden",
+      zIndex:        "5",
+      pointerEvents: "none",
+      opacity:       "1",
+      transition:    `opacity ${FADE_OUT_MS}ms ease, left 1.2s cubic-bezier(0.4,0,0.2,1)`,
+      willChange:    "opacity, left",
+    });
+
+    const cells = [];
+
+    pagePhotos.forEach((filename, i) => {
       const cached = state.photos.thumbsContainer?.querySelector(
         `img[data-filename="${filename}"]`,
       );
-      if (!cached || !cached.complete) return null;
+      if (!cached || !cached.complete) return;
 
-      const row = Math.floor(idx / photosPerRow);
-      const col = idx % photosPerRow;
+      const row = Math.floor(i / COLS);
+      const col = i % COLS;
 
-      const isLastRow = row === totalRows - 1;
-      const countInRow = isLastRow
-        ? photos.length % photosPerRow || photosPerRow
-        : photosPerRow;
-      const rowOffset = isLastRow
-        ? Math.floor((photosPerRow - countInRow) / 2) * thumbWidth
-        : 0;
+      // Centre a partial last row horizontally.
+      const countInRow = (row === Math.floor((pagePhotos.length - 1) / COLS))
+        ? ((pagePhotos.length % COLS) || COLS)
+        : COLS;
+      const rowLeftPad = Math.round(((COLS - countInRow) * (cellW + GAP)) / 2);
 
-      return {
-        img: cached,
-        x: col * thumbWidth + rowOffset,
-        y: panelHeight + thumbHeight + row * rowSpacing,
-        width: thumbWidth - gap,
-        height: thumbHeight,
-      };
-    })
-    .filter(Boolean);
+      const x = GAP + col * (cellW + GAP) + rowLeftPad;
+      const y = GAP + row * (cellH + GAP);
 
-  if (!items.length) {
-    canvas.remove();
-    return;
+      const cell = document.createElement("div");
+      cell.className = "burst-cell";
+      Object.assign(cell.style, {
+        left:   `${x}px`,
+        top:    `${y}px`,
+        width:  `${cellW}px`,
+        height: `${cellH}px`,
+      });
+
+      // cloneNode(true) reuses the already-decoded pixel data — no re-fetch.
+      cell.appendChild(cached.cloneNode(true));
+      wrapper.appendChild(cell);
+      cells.push(cell);
+    });
+
+    if (!cells.length) return;
+
+    panel.appendChild(wrapper);
+
+    // Stagger fade-in — CSS transitions fire, JS only sets the class.
+    const lastCellDelay = (cells.length - 1) * STAGGER_MS;
+    await new Promise((resolve) => {
+      cells.forEach((cell, i) => {
+        setTimeout(() => cell.classList.add("visible"), i * STAGGER_MS);
+      });
+      setTimeout(resolve, lastCellDelay + FADE_IN_MS);
+    });
+
+    // Hold while the grid is fully visible.
+    await new Promise((r) => setTimeout(r, HOLD_MS));
+
+    // Fade out the whole wrapper in one transition.
+    await new Promise((resolve) => {
+      wrapper.style.opacity = "0";
+      setTimeout(() => {
+        wrapper.remove();
+        resolve();
+      }, FADE_OUT_MS + 50);
+    });
   }
 
-  const speedPxMs = 0.32;
-  const maxStartY = Math.max(...items.map((item) => item.y));
-  const totalDistance = maxStartY + thumbHeight + 40;
-  const duration = totalDistance / speedPxMs;
-  const startTime = performance.now();
+  // ── Page through all photos ───────────────────────────────────────────────
+  const total = Math.min(photos.length, 36);
 
-  await new Promise((resolve) => {
-    function frame(now) {
-      const elapsed = now - startTime;
-      const offset = elapsed * speedPxMs;
+  for (let offset = 0; offset < total; offset += PAGE_SIZE) {
+    const pagePhotos = photos.slice(offset, offset + PAGE_SIZE);
+    await showPage(pagePhotos);
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      for (const item of items) {
-        const y = item.y - offset;
-
-        if (y < -item.height || y > panelHeight + item.height) continue;
-
-        drawBurstImage(
-          ctx,
-          item.img,
-          item.x,
-          y,
-          item.width,
-          item.height,
-          10,
-        );
-      }
-
-      if (elapsed < duration) {
-        requestAnimationFrame(frame);
-      } else {
-        canvas.remove();
-        resolve();
-      }
+    // Brief blank pause between pages (skip after the last one).
+    if (offset + PAGE_SIZE < total) {
+      await new Promise((r) => setTimeout(r, BETWEEN_MS));
     }
-
-    requestAnimationFrame(frame);
-  });
+  }
 }
 
 //debug function to trigger the burst manually without waiting for the slideshow cycle
@@ -457,6 +446,22 @@ async function runBurstCycle() {
   state.photos.shuffled = shuffle([...state.photos.shuffled]);
 
   showPhoto(state.photos.index);
+}
+
+/**
+ * Slide any live burst-grid overlays to the new position after a panel swap.
+ *
+ * Called by layout.js immediately after swapPanels() updates state.panels.swapped.
+ * The wrapper's CSS transition on `left` (1.2s, matching the panel animation)
+ * picks up the change and animates smoothly without any rAF involvement.
+ */
+export function updateBurstGrid() {
+  const viewW    = window.innerWidth;
+  const { swapped: sw, calendarFullOpacity: cal, spotifyPlaying: spot } = state.panels;
+  const newLeft  = (sw && !cal && !spot) ? Math.round(viewW * 0.30) : 0;
+  document.querySelectorAll(".burst-grid").forEach((el) => {
+    el.style.left = `${newLeft}px`;
+  });
 }
 
 export { burstPhotos, runBurstCycle };
