@@ -115,10 +115,26 @@ function showPhoto(index) {
     if (img.classList.contains("vertical")) {
       frame.classList.add("vertical-frame");
 
-      const aspect = img.naturalWidth / img.naturalHeight;
-      frame.style.width = `${container.clientHeight * aspect}px`;
+      // Base width = exact pixel width the portrait photo occupies at full height.
+      // Zoomed width = base × 1.1, matching the img scale(1.1) over 15 s.
+      // Both the frame and the container animate together so the container always
+      // hugs the visible edge of the photo as it slowly grows.
+      const aspect      = img.naturalWidth / img.naturalHeight;
+      const baseWidth   = Math.round(container.clientHeight * aspect);
+      const zoomedWidth = Math.round(baseWidth * 1.1);
+
+      frame.style.width      = `${baseWidth}px`;
+      frame.style.transition = `opacity 2s ease-in-out, left 1.2s cubic-bezier(0.4,0,0.2,1), width 15s ease-in-out`;
+      frame.dataset.baseWidth   = baseWidth;
+      frame.dataset.zoomedWidth = zoomedWidth;
+
+      // Container stays full width — frame centering is independent of container width.
+      container.style.width    = "";
+      container.style.maxWidth = "";
     } else {
       frame.classList.add("horizontal-frame");
+      container.style.width    = "";
+      container.style.maxWidth = "";
     }
 
     frame.appendChild(img);
@@ -130,9 +146,21 @@ function showPhoto(index) {
 
     requestAnimationFrame(() => {
       const current = container.querySelector(".photo-frame.active");
-      if (current) current.classList.remove("active");
+      if (current) {
+        current.classList.remove("active");
+        // Snap the outgoing frame's width back to base so it doesn't linger wide.
+        if (current.dataset.baseWidth) {
+          current.style.width = `${current.dataset.baseWidth}px`;
+        }
+      }
 
-      requestAnimationFrame(() => frame.classList.add("active"));
+      requestAnimationFrame(() => {
+        frame.classList.add("active");
+        // Grow only the frame — container stays full width.
+        if (frame.dataset.zoomedWidth) {
+          frame.style.width = `${frame.dataset.zoomedWidth}px`;
+        }
+      });
     });
 
     // Clean up old images after the fade transition completes
@@ -293,7 +321,6 @@ async function burstPhotos() {
   const viewW    = window.innerWidth;
   const panelH   = panel.clientHeight || window.innerHeight;
   const panelW   = Math.round(viewW * 0.70);
-  const gridLeft = (swapped && !isNarrow) ? Math.round(viewW * 0.30) : 0;
 
   // Cells fill the panel with equal margins on all sides.
   const cellW = Math.floor((panelW - GAP * (COLS + 1)) / COLS);
@@ -350,7 +377,9 @@ async function burstPhotos() {
     // left transition matches the panel swap animation (1.2s cubic-bezier).
     Object.assign(wrapper.style, {
       position:      "fixed",
-      left:          `${gridLeft}px`,
+      // Read offset fresh — state.panels may have changed since burstPhotos() started
+      // (e.g. a panel swap fired between pages).
+      left:          `${(state.panels.swapped && !state.panels.spotifyPlaying && !state.panels.calendarFullOpacity) ? Math.round(window.innerWidth * 0.30) : 0}px`,
       top:           "0",
       width:         `${panelW}px`,
       height:        `${panelH}px`,

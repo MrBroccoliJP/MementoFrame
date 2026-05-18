@@ -144,6 +144,9 @@ export function updatePanelState(updates) {
 
   const left = $(SELECTORS.leftPanel);
   left?.classList.toggle("swapped", state.panels.swapped);
+
+  // Keep any live burst grid in sync with the new panel state.
+  updateBurstGrid();
 }
 
 /**
@@ -248,7 +251,6 @@ export function swapPanels() {
     }
     if (systemInfo) systemInfo.style.justifyContent = "flex-end";
     updatePanelState({ swapped: false });
-    updateBurstGrid();
 
   } else {
     // Move right panel to left edge
@@ -263,7 +265,6 @@ export function swapPanels() {
     }
     if (systemInfo) systemInfo.style.justifyContent = "flex-start";
     updatePanelState({ swapped: true });
-    updateBurstGrid();
   }
 
 }
