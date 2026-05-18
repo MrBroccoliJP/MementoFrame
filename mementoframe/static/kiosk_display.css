@@ -762,7 +762,22 @@ body {
 
 .photo-frame.vertical-frame {
   left: calc(50% + var(--vertical-photo-offset, 0px));
-  transform: translateX(-50%);
+  width: auto;
+  transform: translateX(-50%) translateZ(0);
+  overflow: hidden;
+  border-radius: inherit;
+  clip-path: inset(0 var(--vertical-clip-inset, 0px) 0 var(--vertical-clip-inset, 0px) round 20px);
+  transition:
+    opacity 2s ease-in-out,
+    left 1.2s cubic-bezier(0.4, 0, 0.2, 1),
+    clip-path 15s ease-in-out;
+  will-change: opacity, left, clip-path;
+  contain: paint;
+  isolation: isolate;
+}
+
+.photo-frame.vertical-frame.active {
+  clip-path: inset(0 0 0 0 round 20px);
 }
 
 .photo-frame img {
@@ -782,23 +797,30 @@ body {
   transform: scale(1.1);
 }
 
-/* Vertical frame zooms via scaleX on the frame — suppress double-zoom on img. */
-.photo-frame.vertical-frame.active img {
-  transform: scale(1);
+.photo-frame.vertical-frame .photo-zoom-inner {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 100%;
+  overflow: visible;
+  transform: translateX(-50%) scale(1) translateZ(0);
+  transform-origin: center center;
+  transition: transform 15s ease-in-out;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.photo-frame.vertical-frame.active .photo-zoom-inner {
+  transform: translateX(-50%) scale(1.1) translateZ(0);
 }
 
 .photo-frame.vertical-frame img {
-  width: auto;
+  width: 100%;
   height: 100%;
   max-width: none;
-  object-fit: contain;
-}
-
-.photo-frame.vertical-frame img {
-  width: auto;
-  height: 100%;
-  max-width: none;
-  object-fit: contain;
+  object-fit: cover;
+  transform: none !important;
+  transition: none;
 }
 
 .burst-canvas {

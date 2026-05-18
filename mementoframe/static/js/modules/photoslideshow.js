@@ -115,27 +115,34 @@ function showPhoto(index) {
     if (img.classList.contains("vertical")) {
       frame.classList.add("vertical-frame");
 
-      // Width is fixed — the frame never changes size.
-      // Zoom is achieved by scaleX() on the frame itself; transform-origin is
-      // center (default) so it grows symmetrically from the pinned centre point.
-      // translateX(-50%) in CSS composes with scaleX() cleanly — the browser
-      // applies the full transform list left-to-right, so centering is preserved.
+      // Keep the frame's centre completely stable during vertical zoom.
+      // The outer frame is created at the final zoom width and only its clip
+      // opens from the centre. That avoids animating layout width, which was
+      // causing the left/right wobble on Chromium/RPi.
       const aspect    = img.naturalWidth / img.naturalHeight;
       const baseWidth = Math.round(container.clientHeight * aspect);
+      const zoomWidth = Math.round(baseWidth * 1.1);
+      const clipInset = Math.round((zoomWidth - baseWidth) / 2);
 
-      frame.style.width      = `${baseWidth}px`;
-      frame.style.transition = `opacity 2s ease-in-out, left 1.2s cubic-bezier(0.4,0,0.2,1), transform 15s ease-in-out`;
-      frame.dataset.baseWidth = baseWidth;
+      frame.style.width = `${zoomWidth}px`;
+      frame.style.setProperty("--vertical-clip-inset", `${clipInset}px`);
+      frame.dataset.baseWidth = `${baseWidth}`;
+
+      const zoomInner = document.createElement("div");
+      zoomInner.className = "photo-zoom-inner";
+      zoomInner.style.width = `${baseWidth}px`;
+      zoomInner.appendChild(img);
+      frame.appendChild(zoomInner);
 
       container.style.width    = "";
       container.style.maxWidth = "";
     } else {
       frame.classList.add("horizontal-frame");
+      frame.appendChild(img);
       container.style.width    = "";
       container.style.maxWidth = "";
     }
 
-    frame.appendChild(img);
     container.appendChild(frame);
 
     // Force reflow so the browser paints the image before the transition
@@ -146,18 +153,10 @@ function showPhoto(index) {
       const current = container.querySelector(".photo-frame.active");
       if (current) {
         current.classList.remove("active");
-        // Snap outgoing vertical frame back so it doesn't linger scaled.
-        if (current.classList.contains("vertical-frame")) {
-          current.style.transform = "translateX(-50%) scaleX(1)";
-        }
       }
 
       requestAnimationFrame(() => {
         frame.classList.add("active");
-        // Grow vertical frame horizontally from its centre via scaleX.
-        if (frame.classList.contains("vertical-frame")) {
-          frame.style.transform = "translateX(-50%) scaleX(1.1)";
-        }
       });
     });
 
