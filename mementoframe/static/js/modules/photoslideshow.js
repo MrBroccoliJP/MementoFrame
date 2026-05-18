@@ -115,20 +115,18 @@ function showPhoto(index) {
     if (img.classList.contains("vertical")) {
       frame.classList.add("vertical-frame");
 
-      // Base width = exact pixel width the portrait photo occupies at full height.
-      // Zoomed width = base × 1.1, matching the img scale(1.1) over 15 s.
-      // Both the frame and the container animate together so the container always
-      // hugs the visible edge of the photo as it slowly grows.
-      const aspect      = img.naturalWidth / img.naturalHeight;
-      const baseWidth   = Math.round(container.clientHeight * aspect);
-      const zoomedWidth = Math.round(baseWidth * 1.1);
+      // Width is fixed — the frame never changes size.
+      // Zoom is achieved by scaleX() on the frame itself; transform-origin is
+      // center (default) so it grows symmetrically from the pinned centre point.
+      // translateX(-50%) in CSS composes with scaleX() cleanly — the browser
+      // applies the full transform list left-to-right, so centering is preserved.
+      const aspect    = img.naturalWidth / img.naturalHeight;
+      const baseWidth = Math.round(container.clientHeight * aspect);
 
       frame.style.width      = `${baseWidth}px`;
-      frame.style.transition = `opacity 2s ease-in-out, left 1.2s cubic-bezier(0.4,0,0.2,1), width 15s ease-in-out`;
-      frame.dataset.baseWidth   = baseWidth;
-      frame.dataset.zoomedWidth = zoomedWidth;
+      frame.style.transition = `opacity 2s ease-in-out, left 1.2s cubic-bezier(0.4,0,0.2,1), transform 15s ease-in-out`;
+      frame.dataset.baseWidth = baseWidth;
 
-      // Container stays full width — frame centering is independent of container width.
       container.style.width    = "";
       container.style.maxWidth = "";
     } else {
@@ -148,17 +146,17 @@ function showPhoto(index) {
       const current = container.querySelector(".photo-frame.active");
       if (current) {
         current.classList.remove("active");
-        // Snap the outgoing frame's width back to base so it doesn't linger wide.
-        if (current.dataset.baseWidth) {
-          current.style.width = `${current.dataset.baseWidth}px`;
+        // Snap outgoing vertical frame back so it doesn't linger scaled.
+        if (current.classList.contains("vertical-frame")) {
+          current.style.transform = "translateX(-50%) scaleX(1)";
         }
       }
 
       requestAnimationFrame(() => {
         frame.classList.add("active");
-        // Grow only the frame — container stays full width.
-        if (frame.dataset.zoomedWidth) {
-          frame.style.width = `${frame.dataset.zoomedWidth}px`;
+        // Grow vertical frame horizontally from its centre via scaleX.
+        if (frame.classList.contains("vertical-frame")) {
+          frame.style.transform = "translateX(-50%) scaleX(1.1)";
         }
       });
     });

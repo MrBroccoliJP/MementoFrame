@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 31, #small fixes to the new photo burst animation
+        "version": 32, #on vertical photos the container grows with the zoom instead of cropping.
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
