@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 34, #small fix, not moving vertical photos when showcalendarfull is in effect or spotifyisplaying.
+        "version": 35, #small fix, vertical photo clipped when swapping panels
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {

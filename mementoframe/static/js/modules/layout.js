@@ -140,10 +140,16 @@ export function showCalendar() {
  */
 export function updatePanelState(updates) {
   Object.assign(state.panels, updates);
-  applyPanelDimensions();
 
   const left = $(SELECTORS.leftPanel);
+
+  // Apply the swapped class before changing panel geometry.
+  // Vertical photos derive their horizontal target from this class, so doing
+  // it first prevents the photo from being clipped in the old position and
+  // only moving after the panel swap has already started.
   left?.classList.toggle("swapped", state.panels.swapped);
+
+  applyPanelDimensions();
 
   // Keep any live burst grid in sync with the new panel state.
   updateBurstGrid();
@@ -207,17 +213,14 @@ function applyPanelDimensions() {
 
   const dim = getPanelDimensions();
   const willBeNarrow = state.panels.calendarFullOpacity || state.panels.spotifyPlaying;
-  const layoutWillChange =
-    left.style.left !== dim.left ||
+  const panelWillResize =
     left.style.width !== dim.width ||
     left.classList.contains("photo-narrow") !== willBeNarrow;
 
-  // Vertical photos are intentionally centred differently in wide vs narrow
-  // mode so the final viewport centre remains almost unchanged. During the
-  // actual panel animation, however, the intermediate percentage maths can
-  // create a visible left/right drift. Lock the active vertical photo to its
-  // current viewport centre for the duration of this resize.
-  if (layoutWillChange) {
+  // Only lock vertical photos during width changes caused by Spotify or
+  // calendar-full mode. A panel swap is a position change, not a resize;
+  // locking during a swap makes the panel clip first and the photo move later.
+  if (panelWillResize) {
     stabilizeActiveVerticalPhotoDuringPanelResize(700);
   }
 
@@ -253,7 +256,6 @@ export function swapPanels() {
     // Restore default positions
     rightPanel.style.left        = "";
     rightPanel.style.paddingLeft = "";
-    leftPanel.style.left         = "";
     leftPanel.style.paddingLeft  = "";
     if (wifiInfo && qrCode) {
       wifiInfo.after(qrCode);
@@ -267,7 +269,6 @@ export function swapPanels() {
     // Move right panel to left edge
     rightPanel.style.left        = "0";
     rightPanel.style.paddingLeft = "0";
-    leftPanel.style.left         = "auto";
     leftPanel.style.paddingLeft  = "";
     if (wifiInfo && qrCode) {
       qrCode.after(wifiInfo);
