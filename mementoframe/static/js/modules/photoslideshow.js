@@ -151,22 +151,28 @@ function showPhoto(index) {
     // eslint-disable-next-line no-unused-expressions
     img.offsetHeight;
 
+    // Force reflow so the browser records opacity:0 as the "from" state.
+    // eslint-disable-next-line no-unused-expressions
+    frame.offsetHeight;
+
     requestAnimationFrame(() => {
       const current = container.querySelector(".photo-frame.active");
       if (current) {
+        // Kill the 15s clip-path reverse-zoom on the outgoing frame instantly —
+        // it was being animated back when .active was removed, forcing per-frame
+        // clip repaints on the Pi for 15 seconds during what should be a simple fade.
+        current.style.transition = "opacity 1.1s ease-in-out";
         current.classList.remove("active");
       }
-
-      requestAnimationFrame(() => {
-        frame.classList.add("active");
-      });
+      // Same rAF tick as outgoing — true simultaneous cross-fade.
+      frame.classList.add("active");
     });
 
     // Clean up old images after the fade transition completes
     setTimeout(() => {
       const all = $$(".photo-frame", container);
       all.slice(0, -1).forEach((n) => n.remove());
-    }, 2100);
+    }, 1200);
   };
 
   // Preload the next slide while the current one is displayed

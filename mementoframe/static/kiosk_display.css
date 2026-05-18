@@ -748,7 +748,7 @@ body {
   border-radius: inherit;
   opacity: 0;
   transition:
-    opacity 2s ease-in-out,
+    opacity 1.1s ease-in-out,
     left 1.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -769,7 +769,7 @@ body {
   border-radius: inherit;
   clip-path: inset(0 var(--vertical-clip-inset, 0px) 0 var(--vertical-clip-inset, 0px) round 20px);
   transition:
-    opacity 2s ease-in-out,
+    opacity 1.1s ease-in-out,
     left 1.2s cubic-bezier(0.4, 0, 0.2, 1),
     clip-path 15s ease-in-out;
   will-change: opacity, left, clip-path;
@@ -783,7 +783,7 @@ body {
 
 .photo-frame.vertical-frame.vertical-panel-resize-lock {
   transition:
-    opacity 2s ease-in-out,
+    opacity 1.1s ease-in-out,
     clip-path 15s ease-in-out !important;
   will-change: opacity, clip-path, left;
 }
