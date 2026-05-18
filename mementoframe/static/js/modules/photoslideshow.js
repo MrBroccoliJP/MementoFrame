@@ -37,6 +37,8 @@ import { $, $$ } from "../utils.js";
 
 let photosTimer = null;
 let slideAdvanceRunning = false;
+let verticalPanelResizeLockRaf = null;
+let verticalPanelResizeUnlockTimer = null;
 
 /**
  * Initialise the photo slideshow.
@@ -472,6 +474,70 @@ async function runBurstCycle() {
   state.photos.shuffled = shuffle([...state.photos.shuffled]);
 
   showPhoto(state.photos.index);
+}
+
+
+/**
+ * Hold the currently active vertical photo at the same viewport centre while
+ * the left panel is being resized/repositioned for Spotify or full-calendar
+ * mode.
+ *
+ * The vertical photo CSS deliberately maps these states to almost the same
+ * final viewport centre, but during the panel width/left transition the
+ * intermediate maths can drift. While the panel is animating, this function
+ * writes a pixel-based left value every frame using the current container rect,
+ * so the photo does not visibly move left/right. Once the panel transition is
+ * over, the inline value is removed and normal CSS positioning resumes.
+ *
+ * @param {number} durationMs - How long to keep the stabilisation active.
+ */
+export function stabilizeActiveVerticalPhotoDuringPanelResize(durationMs = 700) {
+  const container = $(SELECTORS.photoContainer);
+  const frame = container?.querySelector(".photo-frame.vertical-frame.active");
+  if (!container || !frame) return;
+
+  const frameRect = frame.getBoundingClientRect();
+  if (!frameRect.width || !frameRect.height) return;
+
+  const targetCenterX = frameRect.left + frameRect.width / 2;
+  const endAt = performance.now() + durationMs;
+
+  if (verticalPanelResizeLockRaf) {
+    cancelAnimationFrame(verticalPanelResizeLockRaf);
+    verticalPanelResizeLockRaf = null;
+  }
+  if (verticalPanelResizeUnlockTimer) {
+    clearTimeout(verticalPanelResizeUnlockTimer);
+    verticalPanelResizeUnlockTimer = null;
+  }
+
+  frame.classList.add("vertical-panel-resize-lock");
+
+  const keepCentered = () => {
+    if (!frame.isConnected || !frame.classList.contains("active")) {
+      verticalPanelResizeLockRaf = null;
+      return;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    frame.style.setProperty(
+      "--vertical-photo-left",
+      `${targetCenterX - containerRect.left}px`,
+    );
+
+    if (performance.now() < endAt) {
+      verticalPanelResizeLockRaf = requestAnimationFrame(keepCentered);
+    } else {
+      verticalPanelResizeLockRaf = null;
+      verticalPanelResizeUnlockTimer = setTimeout(() => {
+        frame.classList.remove("vertical-panel-resize-lock");
+        frame.style.removeProperty("--vertical-photo-left");
+        verticalPanelResizeUnlockTimer = null;
+      }, 50);
+    }
+  };
+
+  keepCentered();
 }
 
 /**

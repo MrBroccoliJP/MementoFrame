@@ -43,6 +43,7 @@ body {
   --accent-text: #f2f2f2;
 }
 
+
 /* =========================
    MementoFrame Loading Screen
    1024x600 tuned
@@ -343,7 +344,7 @@ body {
 }
 
 .left_panel.photo-narrow {
-  --vertical-photo-offset: 0px;
+  --vertical-photo-offset: 0%;
 }
 
 .left_panel > img {
@@ -761,7 +762,7 @@ body {
 }
 
 .photo-frame.vertical-frame {
-  left: calc(50% + var(--vertical-photo-offset, 0px));
+  left: var(--vertical-photo-left, calc(50% + var(--vertical-photo-offset, 0px)));
   width: auto;
   transform: translateX(-50%) translateZ(0);
   overflow: hidden;
@@ -778,6 +779,13 @@ body {
 
 .photo-frame.vertical-frame.active {
   clip-path: inset(0 0 0 0 round 20px);
+}
+
+.photo-frame.vertical-frame.vertical-panel-resize-lock {
+  transition:
+    opacity 2s ease-in-out,
+    clip-path 15s ease-in-out !important;
+  will-change: opacity, clip-path, left;
 }
 
 .photo-frame img {

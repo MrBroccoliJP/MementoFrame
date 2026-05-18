@@ -35,7 +35,7 @@
 import { state } from "../state.js";
 import { SELECTORS, INTERVALS } from "../constants.js";
 import { $, $$ } from "../utils.js";
-import { updateBurstGrid } from "./photoslideshow.js";
+import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize } from "./photoslideshow.js";
 
 /**
  * Set the opacity of the calendar, weather, and date boxes simultaneously.
@@ -206,16 +206,27 @@ function applyPanelDimensions() {
   if (!left) return;
 
   const dim = getPanelDimensions();
+  const willBeNarrow = state.panels.calendarFullOpacity || state.panels.spotifyPlaying;
+  const layoutWillChange =
+    left.style.left !== dim.left ||
+    left.style.width !== dim.width ||
+    left.classList.contains("photo-narrow") !== willBeNarrow;
+
+  // Vertical photos are intentionally centred differently in wide vs narrow
+  // mode so the final viewport centre remains almost unchanged. During the
+  // actual panel animation, however, the intermediate percentage maths can
+  // create a visible left/right drift. Lock the active vertical photo to its
+  // current viewport centre for the duration of this resize.
+  if (layoutWillChange) {
+    stabilizeActiveVerticalPhotoDuringPanelResize(700);
+  }
 
   left.style.transition = "width 0.6s ease, left 0.6s ease";
   left.style.left  = dim.left;
   left.style.width = dim.width;
 
   left.classList.toggle("swapped", state.panels.swapped);
-  left.classList.toggle(
-    "photo-narrow",
-    state.panels.calendarFullOpacity || state.panels.spotifyPlaying
-  );
+  left.classList.toggle("photo-narrow", willBeNarrow);
 
   updateBurstOffset();
 }

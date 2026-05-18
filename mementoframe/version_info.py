@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 33, #small fix on: vertical photos the container grows with the zoom instead of cropping.
+        "version": 34, #small fix, not moving vertical photos when showcalendarfull is in effect or spotifyisplaying.
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
