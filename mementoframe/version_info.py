@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 36, #small fix to fade in/out effect
+        "version": 37, #small fix to fade in/out effect
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {

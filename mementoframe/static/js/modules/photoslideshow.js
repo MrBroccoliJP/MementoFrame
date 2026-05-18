@@ -121,7 +121,7 @@ function showPhoto(index) {
       // The outer frame is created at the final zoom width and only its clip
       // opens from the centre. That avoids animating layout width, which was
       // causing the left/right wobble on Chromium/RPi.
-      const aspect    = img.naturalWidth / img.naturalHeight;
+      const aspect = img.naturalWidth / img.naturalHeight;
       const baseWidth = Math.round(container.clientHeight * aspect);
       const zoomWidth = Math.round(baseWidth * 1.1);
       const clipInset = Math.round((zoomWidth - baseWidth) / 2);
@@ -136,12 +136,12 @@ function showPhoto(index) {
       zoomInner.appendChild(img);
       frame.appendChild(zoomInner);
 
-      container.style.width    = "";
+      container.style.width = "";
       container.style.maxWidth = "";
     } else {
       frame.classList.add("horizontal-frame");
       frame.appendChild(img);
-      container.style.width    = "";
+      container.style.width = "";
       container.style.maxWidth = "";
     }
 
@@ -157,22 +157,24 @@ function showPhoto(index) {
 
     requestAnimationFrame(() => {
       const current = container.querySelector(".photo-frame.active");
+
       if (current) {
-        // Kill the 15s clip-path reverse-zoom on the outgoing frame instantly —
-        // it was being animated back when .active was removed, forcing per-frame
-        // clip repaints on the Pi for 15 seconds during what should be a simple fade.
-        current.style.transition = "opacity 1.1s ease-in-out";
+        current.style.transition = "opacity 450ms ease";
         current.classList.remove("active");
+
+        setTimeout(() => {
+          frame.classList.add("active");
+        }, 180);
+      } else {
+        frame.classList.add("active");
       }
-      // Same rAF tick as outgoing — true simultaneous cross-fade.
-      frame.classList.add("active");
     });
 
     // Clean up old images after the fade transition completes
     setTimeout(() => {
       const all = $$(".photo-frame", container);
       all.slice(0, -1).forEach((n) => n.remove());
-    }, 1200);
+    }, 900);
   };
 
   // Preload the next slide while the current one is displayed
@@ -323,9 +325,9 @@ async function burstPhotos() {
   //   Offset (left edge of grid, viewport-relative):
   //     swapped     → 30% (photo panel is on the right, clear the info panel)
   //     not swapped → 0   (photo panel is on the left, flush)
-  const viewW    = window.innerWidth;
-  const panelH   = panel.clientHeight || window.innerHeight;
-  const panelW   = Math.round(viewW * 0.70);
+  const viewW = window.innerWidth;
+  const panelH = panel.clientHeight || window.innerHeight;
+  const panelW = Math.round(viewW * 0.70);
 
   // Cells fill the panel with equal margins on all sides.
   const cellW = Math.floor((panelW - GAP * (COLS + 1)) / COLS);
@@ -361,11 +363,11 @@ async function burstPhotos() {
   }
 
   // ── Timing constants ──────────────────────────────────────────────────────
-  const STAGGER_MS     = 60;   // delay between each cell appearing
-  const FADE_IN_MS     = 400;  // must match CSS transition
-  const HOLD_MS        = 1600; // how long the full grid stays visible
-  const FADE_OUT_MS    = 500;  // wrapper opacity transition
-  const BETWEEN_MS     = 200;  // blank gap between pages
+  const STAGGER_MS = 60;   // delay between each cell appearing
+  const FADE_IN_MS = 400;  // must match CSS transition
+  const HOLD_MS = 1600; // how long the full grid stays visible
+  const FADE_OUT_MS = 500;  // wrapper opacity transition
+  const BETWEEN_MS = 200;  // blank gap between pages
 
   // ── Helper: show one page of up to PAGE_SIZE photos ──────────────────────
   /**
@@ -381,19 +383,19 @@ async function burstPhotos() {
     // position:fixed so left/width are relative to the viewport, not the panel.
     // left transition matches the panel swap animation (1.2s cubic-bezier).
     Object.assign(wrapper.style, {
-      position:      "fixed",
+      position: "fixed",
       // Read offset fresh — state.panels may have changed since burstPhotos() started
       // (e.g. a panel swap fired between pages).
-      left:          `${(state.panels.swapped && !state.panels.spotifyPlaying && !state.panels.calendarFullOpacity) ? Math.round(window.innerWidth * 0.30) : 0}px`,
-      top:           "0",
-      width:         `${panelW}px`,
-      height:        `${panelH}px`,
-      overflow:      "hidden",
-      zIndex:        "5",
+      left: `${(state.panels.swapped && !state.panels.spotifyPlaying && !state.panels.calendarFullOpacity) ? Math.round(window.innerWidth * 0.30) : 0}px`,
+      top: "0",
+      width: `${panelW}px`,
+      height: `${panelH}px`,
+      overflow: "hidden",
+      zIndex: "5",
       pointerEvents: "none",
-      opacity:       "1",
-      transition:    `opacity ${FADE_OUT_MS}ms ease, left 1.2s cubic-bezier(0.4,0,0.2,1)`,
-      willChange:    "opacity, left",
+      opacity: "1",
+      transition: `opacity ${FADE_OUT_MS}ms ease, left 1.2s cubic-bezier(0.4,0,0.2,1)`,
+      willChange: "opacity, left",
     });
 
     const cells = [];
@@ -419,9 +421,9 @@ async function burstPhotos() {
       const cell = document.createElement("div");
       cell.className = "burst-cell";
       Object.assign(cell.style, {
-        left:   `${x}px`,
-        top:    `${y}px`,
-        width:  `${cellW}px`,
+        left: `${x}px`,
+        top: `${y}px`,
+        width: `${cellW}px`,
         height: `${cellH}px`,
       });
 
@@ -554,9 +556,9 @@ export function stabilizeActiveVerticalPhotoDuringPanelResize(durationMs = 700) 
  * picks up the change and animates smoothly without any rAF involvement.
  */
 export function updateBurstGrid() {
-  const viewW    = window.innerWidth;
+  const viewW = window.innerWidth;
   const { swapped: sw, calendarFullOpacity: cal, spotifyPlaying: spot } = state.panels;
-  const newLeft  = (sw && !cal && !spot) ? Math.round(viewW * 0.30) : 0;
+  const newLeft = (sw && !cal && !spot) ? Math.round(viewW * 0.30) : 0;
   document.querySelectorAll(".burst-grid").forEach((el) => {
     el.style.left = `${newLeft}px`;
   });

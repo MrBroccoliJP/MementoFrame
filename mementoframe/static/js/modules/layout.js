@@ -47,8 +47,8 @@ import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize } from "
  */
 export function setCalendarOpacity(opacity) {
   $(SELECTORS.calendarBox)?.style && ($(SELECTORS.calendarBox).style.opacity = opacity);
-  $(SELECTORS.weatherBox)?.style  && ($(SELECTORS.weatherBox).style.opacity  = opacity);
-  $(SELECTORS.dateBox)?.style     && ($(SELECTORS.dateBox).style.opacity     = opacity);
+  $(SELECTORS.weatherBox)?.style && ($(SELECTORS.weatherBox).style.opacity = opacity);
+  $(SELECTORS.dateBox)?.style && ($(SELECTORS.dateBox).style.opacity = opacity);
 }
 
 /**
@@ -65,7 +65,7 @@ export function setCalendarOpacity(opacity) {
  *   triggers a panel width animation via `applyPanelDimensions`.
  */
 export function showSpotify() {
-  const spotify  = $(SELECTORS.spotifyBox);
+  const spotify = $(SELECTORS.spotifyBox);
   const calendar = $(SELECTORS.calendarBox);
 
   // Cancel any active window or pending cycle trigger.
@@ -97,7 +97,7 @@ export function showSpotify() {
  * - If neither applies, sets calendar to ambient (0.75) opacity.
  */
 export function showCalendar() {
-  const spotify  = $(SELECTORS.spotifyBox);
+  const spotify = $(SELECTORS.spotifyBox);
   const calendar = $(SELECTORS.calendarBox);
 
   spotify?.classList.add("hidden");
@@ -169,8 +169,8 @@ export function updatePanelState(updates) {
  */
 function getPanelDimensions() {
   const { swapped, calendarFullOpacity, spotifyPlaying } = state.panels;
-  const FULL   = "99%";
-  const NARROW = "69%";
+  const FULL = "100%";
+  const NARROW = "70%";
   if (spotifyPlaying || calendarFullOpacity) {
     return { left: swapped ? "30%" : "0%", width: NARROW };
   }
@@ -225,7 +225,7 @@ function applyPanelDimensions() {
   }
 
   left.style.transition = "width 0.6s ease, left 0.6s ease";
-  left.style.left  = dim.left;
+  left.style.left = dim.left;
   left.style.width = dim.width;
 
   left.classList.toggle("swapped", state.panels.swapped);
@@ -246,35 +246,33 @@ function applyPanelDimensions() {
  *     remain within the (now repositioned) left panel.
  */
 export function swapPanels() {
-  const leftPanel  = $(SELECTORS.leftPanel);
+  const leftPanel = $(SELECTORS.leftPanel);
   const rightPanel = $(SELECTORS.rightPanel);
-  const wifiInfo   = document.querySelector(".wifi-info");
-  const qrCode     = document.querySelector(".qrcode_icon");
+  const wifiInfo = document.querySelector(".wifi-info");
+  const qrCode = document.querySelector(".qrcode_icon");
   const systemInfo = document.querySelector(".system-info-box");
 
   if (state.panels.swapped) {
-    // Restore default positions
-    rightPanel.style.left        = "";
-    rightPanel.style.paddingLeft = "";
-    leftPanel.style.paddingLeft  = "";
+    rightPanel.style.left = "";
+
     if (wifiInfo && qrCode) {
       wifiInfo.after(qrCode);
       wifiInfo.style.textAlign = "";
-      qrCode.style.textAlign   = "";
+      qrCode.style.textAlign = "";
     }
+
     if (systemInfo) systemInfo.style.justifyContent = "flex-end";
     updatePanelState({ swapped: false });
 
   } else {
-    // Move right panel to left edge
-    rightPanel.style.left        = "0";
-    rightPanel.style.paddingLeft = "0";
-    leftPanel.style.paddingLeft  = "";
+    rightPanel.style.left = "0";
+
     if (wifiInfo && qrCode) {
       qrCode.after(wifiInfo);
       wifiInfo.style.textAlign = "left";
-      qrCode.style.textAlign   = "left";
+      qrCode.style.textAlign = "left";
     }
+
     if (systemInfo) systemInfo.style.justifyContent = "flex-start";
     updatePanelState({ swapped: true });
   }
