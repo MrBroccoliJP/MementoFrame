@@ -14,14 +14,16 @@
  * Manages the full-screen photo slideshow displayed in the left panel:
  *
  *   SLIDESHOW — Photos from `window.photos` (injected by photos.js) are
- *   shuffled and displayed one at a time. Each photo cross-fades in over
- *   the previous one. Images are classified as "vertical" or "horizontal"
- *   so CSS can apply appropriate sizing (cover vs contain).
+ *   drawn in waves of 36 from a shuffled cycle pool and displayed one at a
+ *   time. Each photo cross-fades in over the previous one. Images are
+ *   classified as "vertical" or "horizontal" so CSS can apply appropriate
+ *   sizing (cover vs contain).
  *
- *   BURST — Every 36 slides the panel performs a burst: all thumbnail
- *   images animate upward from the bottom of the panel simultaneously,
- *   then the list is re-shuffled and the slideshow restarts from index 0.
- *   This gives a periodic visual flourish and avoids a predictable loop.
+ *   BURST — At the end of each 36-photo batch the panel performs a burst:
+ *   the *next* batch of 36 is shown as a grid of thumbnails animating in,
+ *   previewing what's coming next. The burst resolves, the new batch becomes
+ *   active, and a fresh next batch is pre-extracted from the pool.
+ *   When the pool empties the full list is re-shuffled and a new wave begins.
  *
  *   PRELOADING — All thumbnails are preloaded into a hidden off-screen div
  *   on startup so the burst animation is instant. The next full-size slide
@@ -44,21 +46,48 @@ let verticalPanelResizeUnlockTimer = null;
  * Initialise the photo slideshow.
  *
  * Reads `window.photos` (set globally by photos.js, served at
- * /userdata/Photos/photos.js), shuffles the list, and displays the first
- * photo immediately. Starts the slideshow interval and preloads all
- * thumbnails for the burst animation.
+ * /userdata/Photos/photos.js), shuffles the full list into a cycle pool,
+ * extracts the first batch of 36 as the active slideshow set, and displays
+ * the first photo immediately. Starts the slideshow interval and preloads
+ * all thumbnails for the burst animation.
+ *
+ * Cycle model:
+ *   - `state.photos.cyclePool`    — remaining unshown photos this wave.
+ *   - `state.photos.currentBatch` — the 36 (or fewer) photos being shown now.
+ *   - `state.photos.nextBatch`    — the 36 queued for the next wave (shown in burst).
+ *   When cyclePool empties, the full list is re-shuffled and a new wave starts.
  *
  * Should be called once during app startup after photos.js has loaded.
  */
 export function initPhotos() {
   const list = Array.isArray(window.photos) ? window.photos.slice() : [];
-  state.photos.shuffled = shuffle(list);
+
+  // Build the initial cycle pool and extract the first batch.
+  state.photos.cyclePool = shuffle(list);
+  state.photos.currentBatch = extractNextBatch();
+  state.photos.nextBatch = extractNextBatch();
   state.photos.index = 0;
 
   showPhoto(state.photos.index);
   preloadAllThumbs();
 
   photosTimer = setInterval(showNextSlide, INTERVALS.PHOTOS);
+}
+
+/**
+ * Extract up to 36 photos from the front of `state.photos.cyclePool`.
+ *
+ * If the pool is empty, re-shuffles all of `window.photos` into a fresh pool
+ * first (starting a new wave with no repeats until the next pool is exhausted).
+ *
+ * @returns {string[]} Array of up to 36 photo filenames.
+ */
+function extractNextBatch() {
+  if (!state.photos.cyclePool || state.photos.cyclePool.length === 0) {
+    const list = Array.isArray(window.photos) ? window.photos.slice() : [];
+    state.photos.cyclePool = shuffle(list);
+  }
+  return state.photos.cyclePool.splice(0, 36);
 }
 
 /**
@@ -89,15 +118,15 @@ function shuffle(arr) {
  *   5. Removes the previously active image after 2.1 seconds (matching
  *      the CSS transition duration) to keep the DOM clean.
  *
- * Also preloads the *next* photo in the shuffled list to reduce flash.
+ * Also preloads the *next* photo in the current batch to reduce flash.
  *
- * @param {number} index - Index into `state.photos.shuffled`.
+ * @param {number} index - Index into `state.photos.currentBatch`.
  */
 function showPhoto(index) {
   const container = $(SELECTORS.photoContainer);
-  if (!container || !state.photos.shuffled.length) return;
+  if (!container || !state.photos.currentBatch?.length) return;
 
-  const name = state.photos.shuffled[index];
+  const name = state.photos.currentBatch[index];
   const img = new Image();
   img.src = `${PATHS.PHOTOS_FULL}${name}`;
 
@@ -177,8 +206,8 @@ function showPhoto(index) {
     }, 900);
   };
 
-  // Preload the next slide while the current one is displayed
-  const next = state.photos.shuffled[index + 1];
+  // Preload the next slide in the current batch while the current one is displayed
+  const next = state.photos.currentBatch[index + 1];
   if (next) {
     const preload = new Image();
     preload.src = `${PATHS.PHOTOS_FULL}${next}`;
@@ -186,14 +215,16 @@ function showPhoto(index) {
 }
 
 /**
- * Advance to the next slide, or trigger a burst every 36 slides.
+ * Advance to the next slide, or trigger a burst at the end of each batch.
  *
- * On every 36th slide:
- *   - Awaits burstPhotos(), which itself waits for all thumbs to load,
- *     runs the full animation, and resolves only after the last photo
- *     has flown off screen.
- *   - Only then resets the index and reshuffles, so the next slideshow
- *     cycle starts on a clean screen with no overlap.
+ * Cycle model:
+ *   - Each batch is up to 36 photos drawn from `state.photos.cyclePool`.
+ *   - `state.photos.nextBatch` is pre-extracted so the burst can preview it.
+ *   - When the current batch is exhausted:
+ *       1. Run burstPhotos(nextBatch) — shows the *upcoming* photos.
+ *       2. Promote nextBatch → currentBatch.
+ *       3. Extract a fresh nextBatch from the pool (refilling if empty).
+ *       4. Reset index to 0 and show the first photo of the new batch.
  *
  * Otherwise simply calls showPhoto with the incremented index.
  */
@@ -202,16 +233,21 @@ async function showNextSlide() {
   slideAdvanceRunning = true;
 
   try {
-    if (!state.photos.shuffled.length) return;
+    const batch = state.photos.currentBatch;
+    if (!batch?.length) return;
 
-    state.photos.index = (state.photos.index + 1) % state.photos.shuffled.length;
+    state.photos.index++;
 
-    if (state.photos.index % 36 === 0) {
-      await burstPhotos();
+    // End of current batch — run burst then roll over to next batch.
+    if (state.photos.index >= batch.length) {
+      await burstPhotos(state.photos.nextBatch);
       await new Promise((r) => setTimeout(r, 1000));
 
+      // Promote the previewed batch and pre-extract the one after that.
+      state.photos.currentBatch = state.photos.nextBatch;
+      state.photos.nextBatch = extractNextBatch();
       state.photos.index = 0;
-      state.photos.shuffled = shuffle([...state.photos.shuffled]);
+
       showPhoto(state.photos.index);
       return;
     }
@@ -262,12 +298,17 @@ function preloadAllThumbs() {
 }
 
 /**
- * Cycle through all upcoming photos as pages of 3×3 grids.
+ * Cycle through the next batch of upcoming photos as pages of 3×3 grids.
  *
  * Each page shows 9 photos in a 3-column × 3-row layout. Photos appear with
  * a left-to-right, top-to-bottom stagger, hold for a beat, then the whole
  * grid fades out before the next page fades in. This repeats until all photos
- * in `window.photos` have been shown (up to 36 — the next slideshow batch).
+ * in `photosToShow` have been shown (up to 36 — the next slideshow batch).
+ *
+ * `photosToShow` should be `state.photos.nextBatch` — the pre-extracted set
+ * that will become the active batch after the burst completes. This means the
+ * burst always previews exactly what's coming next, with no repeats from the
+ * current batch.
  *
  * No canvas, no rAF loop. Every transition is a CSS opacity/transform on
  * individual <div> cells, so the Pi compositor handles all compositing in
@@ -281,11 +322,13 @@ function preloadAllThumbs() {
  *   • Gap between pages: 200 ms blank pause
  *
  * @async
+ * @param {string[]} [photosToShow] - Filenames to display in the burst.
+ *   Defaults to `state.photos.nextBatch` if omitted.
  * @returns {Promise<void>} Resolves when all pages have been shown and
  *   the final grid has faded out.
  * @exports burstPhotos
  */
-async function burstPhotos() {
+async function burstPhotos(photosToShow) {
   const panel = $(SELECTORS.leftPanel);
   if (!panel) return;
 
@@ -297,7 +340,9 @@ async function burstPhotos() {
   const container = $(SELECTORS.photoContainer);
   if (container) container.innerHTML = "";
 
-  const photos = window.photos || [];
+  const photos = (Array.isArray(photosToShow) && photosToShow.length)
+    ? photosToShow
+    : (state.photos.nextBatch || []);
   if (!photos.length) return;
 
   // ── Layout constants ──────────────────────────────────────────────────────
@@ -475,11 +520,12 @@ async function burstPhotos() {
 
 //debug function to trigger the burst manually without waiting for the slideshow cycle
 async function runBurstCycle() {
-  await burstPhotos();
+  await burstPhotos(state.photos.nextBatch);
   await new Promise((r) => setTimeout(r, 1000));
 
+  state.photos.currentBatch = state.photos.nextBatch;
+  state.photos.nextBatch = extractNextBatch();
   state.photos.index = 0;
-  state.photos.shuffled = shuffle([...state.photos.shuffled]);
 
   showPhoto(state.photos.index);
 }
