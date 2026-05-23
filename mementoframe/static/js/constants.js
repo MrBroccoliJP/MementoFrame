@@ -67,10 +67,12 @@ export const PATHS = {
  * @property {number} WEATHER              - Weather data poll rate (30 min).
  * @property {number} PHOTOS               - Time each photo is displayed (20 s).
  * @property {number} QR                   - QR code IP refresh rate (30 s).
- * @property {number} HOURLY_CHECK          - Rate at which the auto power schedule is evaluated (1 min).
- * @property {number} SWAP_PANELS           - How often the panels swap sides (1 h).
- * @property {number} CALENDAR_CYCLE        - How often the calendar full-opacity window repeats (30 min).
- * @property {number} CALENDAR_FULL_TIMEOUT - How long the calendar stays at full opacity per cycle (10 min).
+ * @property {number} HOURLY_CHECK         - Rate at which the auto power schedule is evaluated (1 min).
+ * @property {number} SWAP_PANELS          - How often the panels swap sides (1 h).
+ * @property {number} CALENDAR_CYCLE       - How often the calendar full-opacity window repeats (30 min).
+ * @property {number} CALENDAR_FULL_TIMEOUT- How long the calendar stays at full opacity per cycle (10 min).
+ * @property {number} LAYOUT_EVALUATE      - How often the dynamic layout state machine ticks (1 s).
+ * @property {number} LAYOUT_CYCLE_MINUTES - The duration of the dynamic widget rotation cycle (5 mins).
  */
 export const INTERVALS = {
   CLOCK:                 1000,
@@ -80,10 +82,12 @@ export const INTERVALS = {
   PHOTOS:                20000,
   QR:                    30000,
   UPDATE_STATUS:         60000,
-  HOURLY_CHECK:          60000,            // 1 minute (power schedule only)
+  HOURLY_CHECK:          60000,           // 1 minute (power schedule only)
   SWAP_PANELS:           60 * 60 * 1000,  // 1 hour
   CALENDAR_CYCLE:        30 * 60 * 1000,  // 30 minutes
   CALENDAR_FULL_TIMEOUT: 10 * 60 * 1000,  // 10 minutes
+  LAYOUT_EVALUATE:       1000,            // 1 second
+  LAYOUT_CYCLE_MINUTES:  5,               // 5 minutes
 };
 
 /**

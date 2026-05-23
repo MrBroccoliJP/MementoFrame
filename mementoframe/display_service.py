@@ -188,7 +188,25 @@ def safe_spotify_call(endpoint_key, func, *args, **kwargs):
 # Weather data helper
 # =============================================================================
 def get_weather_data():
-    """Fetch current weather, using cached data when fresh or when requests fail."""
+    """Fetch current weather + 3-day forecast from WeatherAPI.com free tier.
+
+    Uses forecast.json (free plan supports days=3) instead of current.json
+    so we get hourly and daily forecast data in a single API call.
+
+    Response shape added to weather_info:
+        forecast: {
+            hourly: [
+                { time: "14:00", icon: "https://...", temp: "18°C",
+                  condition: "Partly cloudy" },
+                ...  # next 5 whole hours from now
+            ],
+            daily: [
+                { label: "Mon", icon: "https://...",
+                  high: "22°C", low: "14°C", condition: "Sunny" },
+                ...  # today + next 2 days (3 days total, free plan limit)
+            ]
+        }
+    """
     now = time.time()
     if "weather" in cache:
         cached_data, cached_time = cache["weather"]
@@ -199,19 +217,79 @@ def get_weather_data():
         return {"error": "Weather API key not configured"}
 
     try:
-        url = "https://api.weatherapi.com/v1/current.json"
-        params = {"key": WEATHER_API_KEY, "q": WEATHER_LOCATION, "aqi": "no"}
+        # forecast.json with days=3 returns current + hourly + daily in one call.
+        # No extra API credits vs current.json on the free plan.
+        url = "https://api.weatherapi.com/v1/forecast.json"
+        params = {
+            "key": WEATHER_API_KEY,
+            "q": WEATHER_LOCATION,
+            "days": 3,
+            "aqi": "no",
+            "alerts": "no",
+        }
         response = requests.get(url, params=params, timeout=5)
         response.raise_for_status()
         data = response.json()
 
+        # ── Current conditions (unchanged) ────────────────────────────────
         weather_info = {
             "temperature": round(data["current"]["temp_c"], 1),
-            "condition": data["current"]["condition"]["text"],
-            "icon": "https:" + data["current"]["condition"]["icon"],
-            "humidity": data["current"]["humidity"],
-            "windSpeed": data["current"]["wind_kph"],
-            "city": data["location"]["name"],
+            "condition":   data["current"]["condition"]["text"],
+            "icon":        "https:" + data["current"]["condition"]["icon"],
+            "humidity":    data["current"]["humidity"],
+            "windSpeed":   data["current"]["wind_kph"],
+            "city":        data["location"]["name"],
+        }
+
+        # ── Hourly forecast: next 5 whole hours from now ──────────────────
+        current_hour = int(time.strftime("%H"))  # local server hour 0-23
+        hourly_slots = []
+
+        for day_fc in data["forecast"]["forecastday"]:
+            for hour_fc in day_fc["hour"]:
+                # Each slot's time string is "YYYY-MM-DD HH:MM", parse the hour
+                slot_hour = int(hour_fc["time"].split(" ")[1].split(":")[0])
+                slot_date = hour_fc["time"].split(" ")[0]
+                today_str = data["forecast"]["forecastday"][0]["date"]
+
+                # Only include future hours (strictly after current hour)
+                if slot_date == today_str and slot_hour <= current_hour:
+                    continue
+
+                hourly_slots.append({
+                    "time":      hour_fc["time"].split(" ")[1][:5],  # "HH:MM"
+                    "icon":      "https:" + hour_fc["condition"]["icon"],
+                    "temp":      f"{round(hour_fc['temp_c'])}°C",
+                    "condition": hour_fc["condition"]["text"],
+                })
+
+                if len(hourly_slots) == 5:
+                    break
+
+            if len(hourly_slots) == 5:
+                break
+
+        # ── Daily forecast: today + next 2 days (3 days free plan max) ────
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        daily_slots = []
+
+        for day_fc in data["forecast"]["forecastday"]:
+            # weekday() returns 0=Mon … 6=Sun
+            import datetime
+            date_obj = datetime.date.fromisoformat(day_fc["date"])
+            label = "Today" if date_obj == datetime.date.today() else day_names[date_obj.weekday()]
+
+            daily_slots.append({
+                "label":     label,
+                "icon":      "https:" + day_fc["day"]["condition"]["icon"],
+                "high":      f"{round(day_fc['day']['maxtemp_c'])}°C",
+                "low":       f"{round(day_fc['day']['mintemp_c'])}°C",
+                "condition": day_fc["day"]["condition"]["text"],
+            })
+
+        weather_info["forecast"] = {
+            "hourly": hourly_slots,
+            "daily":  daily_slots,
         }
 
         cache["weather"] = (weather_info, now)

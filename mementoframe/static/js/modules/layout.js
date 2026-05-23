@@ -1,35 +1,6 @@
 /*
  * MementoFrame - Raspberry Pi Smart Photo Frame
  * Copyright (c) 2026 João Fernandes
- *
- * This work is licensed under the Creative Commons Attribution-NonCommercial
- * 4.0 International License. To view a copy of this license, visit:
- * http://creativecommons.org/licenses/by-nc/4.0/
- */
-
-/**
- * @file layout.js
- * @description Panel layout, visibility, and transition management.
- *
- * The display is divided into two panels:
- *   - Left panel  — photo slideshow background + floating burst photos
- *   - Right panel — clock, calendar, weather, Spotify widget
- *
- * The right panel switches between two widget states:
- *   - CALENDAR view  — shown when nothing is playing on Spotify
- *   - SPOTIFY view   — shown when a track is actively playing
- *
- * Panel width transitions smoothly between 99% (full, calendar only) and
- * 69% (narrow, Spotify widget visible beside it) using CSS transitions.
- *
- * Panels can also be swapped (left ↔ right) via `swapPanels()`, which
- * adjusts positions, padding, and any floating photos already in the DOM.
- *
- * Calendar full-opacity mode:
- *   At the start of each hour (minutes < 10), or when triggered manually,
- *   the calendar is shown at full opacity for `INTERVALS.CALENDAR_FULL_TIMEOUT`
- *   milliseconds before fading back to 0.75 opacity. This draws attention
- *   to the time at the top of the hour without being permanently bright.
  */
 
 import { state } from "../state.js";
@@ -37,214 +8,102 @@ import { SELECTORS, INTERVALS } from "../constants.js";
 import { $, $$ } from "../utils.js";
 import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize } from "./photoslideshow.js";
 
-/**
- * Set the opacity of the calendar, weather, and date boxes simultaneously.
- *
- * Used to dim supporting widgets when Spotify is active, or restore them
- * to full brightness during full-opacity calendar mode or on hour change.
- *
- * @param {number} opacity - CSS opacity value (0–1).
- */
+// EXPORTED INIT FUNCTION: Safely starts the layout ticker only when called
+export function initLayout() {
+  //setInterval(() => evaluateLayout(false), INTERVALS.LAYOUT_EVALUATE);
+  evaluateLayout(true); // Run once immediately to set the initial state
+}
+
 export function setCalendarOpacity(opacity) {
-  $(SELECTORS.calendarBox)?.style && ($(SELECTORS.calendarBox).style.opacity = opacity);
-  $(SELECTORS.weatherBox)?.style && ($(SELECTORS.weatherBox).style.opacity = opacity);
+  const calendarBox = document.getElementById('calendar-box');
+  const forecastBox = document.getElementById('forecast-box');
+  if (calendarBox) calendarBox.style.opacity = opacity;
+  if (forecastBox) forecastBox.style.opacity = opacity;
   $(SELECTORS.dateBox)?.style && ($(SELECTORS.dateBox).style.opacity = opacity);
 }
 
-/**
- * Transition the right panel to Spotify view.
- *
- * - Cancels any pending calendarFullTimeout timer (either an active
- *   full-opacity window or the next cycle trigger). Preserves
- *   `calendarWindowUntil` so showCalendar() can resume the window for
- *   the remaining time if the window was still active when Spotify opened.
- * - Hides the calendar box and shows the Spotify box using
- *   "hidden"/"visible" CSS classes.
- * - Restores calendar opacity to 1 so it is not dim if it reappears.
- * - Updates panel state to reflect that Spotify is playing, which
- *   triggers a panel width animation via `applyPanelDimensions`.
- */
 export function showSpotify() {
-  const spotify = $(SELECTORS.spotifyBox);
-  const calendar = $(SELECTORS.calendarBox);
-
-  // Cancel any active window or pending cycle trigger.
-  // Keep calendarWindowUntil intact — showCalendar() reads it to resume.
-  if (state.timers.calendarFullTimeout) {
-    clearTimeout(state.timers.calendarFullTimeout);
-    state.timers.calendarFullTimeout = null;
+  // Spotify interrupts: Pause the Big Mode timeout so it doesn't expire in the background
+  if (state.timers.bigModeTimeout) {
+    clearTimeout(state.timers.bigModeTimeout);
+    state.timers.bigModeTimeout = null;
   }
-
-  calendar?.classList.add("hidden");
-  calendar?.classList.remove("visible");
-  spotify?.classList.remove("hidden");
-  spotify?.classList.add("visible");
-
   setCalendarOpacity(1);
-  updatePanelState({ calendarFullOpacity: false, spotifyPlaying: true });
+  state.panels.bigModeActive = false; 
+  state.panels.spotifyPlaying = true;
+  evaluateLayout(true);
 }
 
-/**
- * Transition the right panel to calendar view.
- *
- * - Hides the Spotify box and shows the calendar box.
- * - Updates panel state to mark Spotify as not playing.
- * - If a full-opacity window was active when Spotify opened and time
- *   still remains on it, resumes full opacity for the remaining duration.
- * - Otherwise resets the 30-min cycle to start from now, so the user
- *   gets a fresh cycle rather than waiting for whenever the original
- *   trigger was due.
- * - If neither applies, sets calendar to ambient (0.75) opacity.
- */
 export function showCalendar() {
-  const spotify = $(SELECTORS.spotifyBox);
-  const calendar = $(SELECTORS.calendarBox);
+  state.panels.spotifyPlaying = false;
 
-  spotify?.classList.add("hidden");
-  spotify?.classList.remove("visible");
-  calendar?.classList.remove("hidden");
-  calendar?.classList.add("visible");
-
-  updatePanelState({ spotifyPlaying: false });
-
-  const remaining = state.timers.calendarWindowUntil
-    ? state.timers.calendarWindowUntil - Date.now()
+  // Calculate if we owe the user any remaining Big Mode screen time
+  const remaining = state.timers.bigModeWindowUntil
+    ? state.timers.bigModeWindowUntil - Date.now()
     : 0;
 
   if (remaining > 0) {
-    // Resume the window for however long was left when Spotify opened.
+    // Resume Big Mode for the remaining time
     setCalendarOpacity(1);
-    updatePanelState({ calendarFullOpacity: true });
-    if (state.timers.calendarFullTimeout) clearTimeout(state.timers.calendarFullTimeout);
-    state.timers.calendarFullTimeout = setTimeout(hideCalendarFull, remaining);
+    state.panels.bigModeActive = true;
+    if (state.timers.bigModeTimeout) clearTimeout(state.timers.bigModeTimeout);
+    state.timers.bigModeTimeout = setTimeout(disableBigMode, remaining);
   } else {
-    // No active window — reset the 30-min cycle from now so the user
-    // doesn't wait up to 30 min just because Spotify interrupted the schedule.
-    if (state.timers.calendarFullTimeout) {
-      clearTimeout(state.timers.calendarFullTimeout);
-      state.timers.calendarFullTimeout = null;
+    // Normal mode
+    if (state.timers.bigModeTimeout) {
+      clearTimeout(state.timers.bigModeTimeout);
+      state.timers.bigModeTimeout = null;
     }
-    state.timers.calendarWindowUntil = null;
+    state.timers.bigModeWindowUntil = null;
     setCalendarOpacity(0.75);
-    scheduleCalendarCycle();
+    scheduleBigModeCycle();
   }
+  evaluateLayout(true);
 }
 
-/**
- * Merge updates into `state.panels` and reapply panel dimensions.
- *
- * All panel state changes should go through this function so that
- * `applyPanelDimensions` is always called after a state mutation.
- *
- * @param {Partial<state.panels>} updates - Key/value pairs to merge into state.panels.
- */
 export function updatePanelState(updates) {
   Object.assign(state.panels, updates);
-
   const left = $(SELECTORS.leftPanel);
-
-  // Apply the swapped class before changing panel geometry.
-  // Vertical photos derive their horizontal target from this class, so doing
-  // it first prevents the photo from being clipped in the old position and
-  // only moving after the panel swap has already started.
   left?.classList.toggle("swapped", state.panels.swapped);
-
   applyPanelDimensions();
-
-  // Keep any live burst grid in sync with the new panel state.
+  applyWidgetVisibility();
   updateBurstGrid();
 }
 
-/**
- * Calculate the target left position and width for the left panel.
- *
- * Rules:
- *   - If Spotify is playing OR calendar is in full-opacity mode:
- *       width = 69% (NARROW), leaving room for the right panel widget.
- *       If panels are swapped: left = 30%; otherwise left = 0%.
- *   - Otherwise (calendar ambient mode):
- *       width = 99% (FULL), photo fills most of the screen.
- *
- * @returns {{ left: string, width: string }} CSS values for the left panel.
- */
 function getPanelDimensions() {
-  const { swapped, calendarFullOpacity, spotifyPlaying } = state.panels;
+  const { swapped, bigModeActive, spotifyPlaying } = state.panels;
   const FULL = "100%";
   const NARROW = "70%";
-  if (spotifyPlaying || calendarFullOpacity) {
+  if (spotifyPlaying || bigModeActive) {
     return { left: swapped ? "30%" : "0%", width: NARROW };
   }
   return { left: swapped ? "0%" : "", width: FULL };
 }
 
-/**
- * Keep the burst photo horizontal offset in sync with the panel layout.
- *
- * Uses `--burst-x-offset` so existing and newly created `.floating-photo`
- * elements move correctly when panels are swapped, including mid-animation.
- *
- * Offset is only applied when panels are swapped in the wide photo layout;
- * narrow states already position the photo panel, so no extra offset is needed.
- */
 function updateBurstOffset() {
   const left = $(SELECTORS.leftPanel);
   if (!left) return;
-
-  const needsOffset =
-    state.panels.swapped &&
-    !state.panels.calendarFullOpacity &&
-    !state.panels.spotifyPlaying;
-
-  left.style.setProperty(
-    "--burst-x-offset",
-    needsOffset ? `${window.innerWidth * 0.3}px` : "0px"
-  );
+  const needsOffset = state.panels.swapped && !state.panels.bigModeActive && !state.panels.spotifyPlaying;
+  left.style.setProperty("--burst-x-offset", needsOffset ? `${window.innerWidth * 0.3}px` : "0px");
 }
 
-/**
- * Apply the calculated panel dimensions to the left panel DOM element.
- *
- * Animates width and left position using a 0.6s CSS transition so
- * panel changes feel smooth rather than instant.
- */
 function applyPanelDimensions() {
   const left = $(SELECTORS.leftPanel);
   if (!left) return;
-
   const dim = getPanelDimensions();
-  const willBeNarrow = state.panels.calendarFullOpacity || state.panels.spotifyPlaying;
-  const panelWillResize =
-    left.style.width !== dim.width ||
-    left.classList.contains("photo-narrow") !== willBeNarrow;
+  const willBeNarrow = state.panels.bigModeActive || state.panels.spotifyPlaying;
+  const panelWillResize = left.style.width !== dim.width || left.classList.contains("photo-narrow") !== willBeNarrow;
 
-  // Only lock vertical photos during width changes caused by Spotify or
-  // calendar-full mode. A panel swap is a position change, not a resize;
-  // locking during a swap makes the panel clip first and the photo move later.
-  if (panelWillResize) {
-    stabilizeActiveVerticalPhotoDuringPanelResize(700);
-  }
+  if (panelWillResize) stabilizeActiveVerticalPhotoDuringPanelResize(700);
 
   left.style.transition = "width 0.6s ease, left 0.6s ease";
   left.style.left = dim.left;
   left.style.width = dim.width;
-
   left.classList.toggle("swapped", state.panels.swapped);
   left.classList.toggle("photo-narrow", willBeNarrow);
-
   updateBurstOffset();
 }
 
-/**
- * Toggle the left and right panel positions.
- *
- * Moves the right panel to the left side of the screen and the left
- * panel (photo) to the right. Also:
- *   - Reorders the WiFi info and QR code elements to maintain visual
- *     alignment after the swap.
- *   - Adjusts system info box justification.
- *   - Offsets any currently visible floating burst photos so they
- *     remain within the (now repositioned) left panel.
- */
 export function swapPanels() {
   const leftPanel = $(SELECTORS.leftPanel);
   const rightPanel = $(SELECTORS.rightPanel);
@@ -254,106 +113,237 @@ export function swapPanels() {
 
   if (state.panels.swapped) {
     rightPanel.style.left = "";
-
     if (wifiInfo && qrCode) {
       wifiInfo.after(qrCode);
       wifiInfo.style.textAlign = "";
       qrCode.style.textAlign = "";
     }
-
     if (systemInfo) systemInfo.style.justifyContent = "flex-end";
     updatePanelState({ swapped: false });
-
   } else {
     rightPanel.style.left = "0";
-
     if (wifiInfo && qrCode) {
       qrCode.after(wifiInfo);
       wifiInfo.style.textAlign = "left";
       qrCode.style.textAlign = "left";
     }
-
     if (systemInfo) systemInfo.style.justifyContent = "flex-start";
     updatePanelState({ swapped: true });
   }
-
 }
 
-/**
- * Show the calendar at full opacity for INTERVALS.CALENDAR_FULL_TIMEOUT ms.
- *
- * Only activates when the Spotify box is hidden. Records the window
- * expiry time in `state.timers.calendarWindowUntil` so that showCalendar()
- * can resume the window correctly if Spotify hides mid-window.
- *
- * Safe to call multiple times — clears any existing timeout before
- * setting a new one.
- */
-export function showCalendarFull() {
-  const spotifyBox = $(SELECTORS.spotifyBox);
-  if (!spotifyBox || !spotifyBox.classList.contains("hidden")) return;
+// ============================================
+// BIG MODE CONTROLS
+// ============================================
 
+export function enableBigMode() {
   setCalendarOpacity(1);
-  updatePanelState({ calendarFullOpacity: true });
-
-  if (state.timers.calendarFullTimeout) clearTimeout(state.timers.calendarFullTimeout);
-
-  state.timers.calendarWindowUntil = Date.now() + INTERVALS.CALENDAR_FULL_TIMEOUT;
-  state.timers.calendarFullTimeout = setTimeout(hideCalendarFull, INTERVALS.CALENDAR_FULL_TIMEOUT);
+  state.panels.bigModeActive = true;
+  if (state.timers.bigModeTimeout) clearTimeout(state.timers.bigModeTimeout);
+  state.timers.bigModeWindowUntil = Date.now() + INTERVALS.CALENDAR_FULL_TIMEOUT;
+  state.timers.bigModeTimeout = setTimeout(disableBigMode, INTERVALS.CALENDAR_FULL_TIMEOUT);
+  evaluateLayout(true);
 }
 
-/**
- * Restore calendar to ambient (0.75) opacity after the full-opacity window ends.
- *
- * Clears the window expiry timestamp so showCalendar() knows no window
- * is active, then schedules the next cycle.
- */
-export function hideCalendarFull() {
-  const spotifyBox = $(SELECTORS.spotifyBox);
-  if (spotifyBox && spotifyBox.classList.contains("hidden")) {
-    setCalendarOpacity(0.75);
-    updatePanelState({ calendarFullOpacity: false });
+export function disableBigMode() {
+  setCalendarOpacity(0.75);
+  state.panels.bigModeActive = false;
+  if (state.timers.bigModeTimeout) {
+    clearTimeout(state.timers.bigModeTimeout);
+    state.timers.bigModeTimeout = null;
   }
-
-  if (state.timers.calendarFullTimeout) {
-    clearTimeout(state.timers.calendarFullTimeout);
-    state.timers.calendarFullTimeout = null;
-  }
-
-  state.timers.calendarWindowUntil = null;
-  scheduleCalendarCycle();
+  state.timers.bigModeWindowUntil = null;
+  scheduleBigModeCycle();
+  evaluateLayout(true);
 }
 
-/**
- * Schedule the next calendar full-opacity cycle.
- *
- * Fires showCalendarFull() after INTERVALS.CALENDAR_CYCLE ms (30 min),
- * then calls itself recursively to keep the cycle running indefinitely.
- *
- * Records the next trigger timestamp in `state.timers.calendarNextTrigger`
- * so that showCalendar() can cancel the pending trigger and reset it to
- * "now + 30 min" when Spotify hides, avoiding a long wait if Spotify was
- * active for most of the cycle.
- *
- * Call once on app startup (from main.js). Do not call setInterval from
- * main.js for this — the self-scheduling setTimeout approach is used so
- * the 30-min gap is always measured from the *end* of the window, not
- * from a fixed clock boundary.
- */
-export function scheduleCalendarCycle(delay = INTERVALS.CALENDAR_CYCLE) {
-  // Callers are responsible for clearing calendarFullTimeout before calling
-  // this. Two call sites:
-  //   - hideCalendarFull(): window just ended naturally, timeout already fired.
-  //   - showCalendar() else branch: Spotify hid with no active window;
-  //     timeout was explicitly cleared before this call, delay = 30 min from now.
-  state.timers.calendarNextTrigger = Date.now() + delay;
-
-  // Reuse the calendarFullTimeout slot — only one of (active window, pending
-  // trigger) can exist at a time, so one slot covers both cases.
-  state.timers.calendarFullTimeout = setTimeout(() => {
-    state.timers.calendarFullTimeout = null;
-    state.timers.calendarNextTrigger = null;
-    showCalendarFull();
-    // hideCalendarFull() will call scheduleCalendarCycle() when the window ends.
+export function scheduleBigModeCycle(delay = INTERVALS.CALENDAR_CYCLE) {
+  state.timers.bigModeNextTrigger = Date.now() + delay;
+  state.timers.bigModeTimeout = setTimeout(() => {
+    state.timers.bigModeTimeout = null;
+    state.timers.bigModeNextTrigger = null;
+    enableBigMode();
   }, delay);
 }
+
+// ============================================
+// STATE MACHINE: DYNAMIC ROTATION
+// ============================================
+
+function evaluateLayout(force = false) {
+    const currentMinute = new Date().getMinutes();
+    const cycleMinute = currentMinute % INTERVALS.LAYOUT_CYCLE_MINUTES;
+    const isSpotify = state.panels.spotifyPlaying;
+    const isBigMode = state.panels.bigModeActive;
+
+    let updates = {
+        spotifyView: 'hidden',
+        calendarView: 'hidden',
+        forecastView: 'hidden'
+    };
+
+if (isSpotify) {
+        // NEW STATE: Spotify shrunk + BOTH widgets stacked
+        if (cycleMinute === 0) { 
+            updates.spotifyView = 'shrunk'; 
+            updates.calendarView = 'week'; 
+            updates.forecastView = '5h-icons'; 
+        }
+        else { 
+            updates.spotifyView = 'big'; 
+            updates.calendarView = 'hidden'; 
+            updates.forecastView = 'hidden'; 
+        }
+    }
+    else {
+        if (isBigMode) {
+            // BIG MODE logic
+            if (cycleMinute === 0) updates.forecastView = '5h-big';
+            else if (cycleMinute === 1) updates.forecastView = '5d-big';
+            else updates.calendarView = 'month';
+        } else {
+            // NORMAL MODE logic
+            if (cycleMinute === 1) updates.forecastView = '5h-icons';
+            else updates.calendarView = 'week';
+        }
+    }
+
+    if (force ||
+        state.panels.spotifyView !== updates.spotifyView ||
+        state.panels.calendarView !== updates.calendarView ||
+        state.panels.forecastView !== updates.forecastView) {
+        updatePanelState(updates);
+    }
+}
+
+/**
+ * Applies widget visibility and layout modes based on the current state.
+ * This function is the "single source of truth" for DOM manipulation.
+ */
+// ============================================
+// ANIMATED WIDGET TRANSITIONS
+// ============================================
+
+// Must match the transition duration in your CSS (the opacity/transform transition)
+const WIDGET_TRANSITION_MS = 450;
+
+// Tracks pending collapse timers per element id so rapid changes don't stack
+const _widgetTimers = new Map();
+
+/**
+ * Transition a top-level widget box between three states:
+ *
+ *   'visible' — in flow, opacity 1, fully interactive
+ *   'gone'    — fades out first, then collapses to display:none after
+ *               WIDGET_TRANSITION_MS so the CSS transition is visible
+ *
+ * The two-step gone sequence is the key fix: jumping straight to
+ * display:none kills the transition before it plays.
+ */
+function setWidget(el, targetMode) {
+  if (!el) return;
+  const id = el.id;
+
+  // Cancel any pending collapse timer for this element
+  if (_widgetTimers.has(id)) {
+    clearTimeout(_widgetTimers.get(id));
+    _widgetTimers.delete(id);
+  }
+
+  if (targetMode === 'visible') {
+    // 1. Ensure it's in the DOM flow (remove display:none)
+    el.style.display = '';
+    el.classList.remove('hidden');
+
+    // 2. Force reflow so browser registers the element before we animate
+    void el.offsetHeight;
+
+    // 3. Now fade in
+    el.style.opacity = '1';
+    el.style.transform = 'scale(1) translateY(0)';
+    el.style.pointerEvents = 'auto';
+
+  } else { // 'gone'
+    // Step 1: fade out (element still in flow so transition plays)
+    el.style.opacity = '0';
+    el.style.transform = 'scale(0.97) translateY(-6px)';
+    el.style.pointerEvents = 'none';
+
+    // Step 2: after transition finishes, remove from flow
+    const timer = setTimeout(() => {
+      el.classList.add('hidden');
+      el.style.display = 'none';
+      _widgetTimers.delete(id);
+    }, WIDGET_TRANSITION_MS);
+
+    _widgetTimers.set(id, timer);
+  }
+}
+
+/**
+ * Applies widget visibility and layout modes based on the current state.
+ * This is the single source of truth for DOM manipulation.
+ */
+function applyWidgetVisibility() {
+    const { spotifyView, calendarView, forecastView } = state.panels;
+
+    const spotifyBox  = document.getElementById('spotify-box');
+    const calendarBox = document.getElementById('calendar-box');
+    const calMonth    = document.getElementById('calendar-month');
+    const calWeek     = document.getElementById('calendar-week');
+    const forecastBox = document.getElementById('forecast-box');
+    const f5hIcons    = document.getElementById('forecast-5h-icons');
+    const f5hBig      = document.getElementById('forecast-5h-big');
+    const f5dBig      = document.getElementById('forecast-5d-big');
+
+    // 1. Spotify
+    if (spotifyView === 'hidden') {
+        setWidget(spotifyBox, 'gone');
+    } else {
+        setWidget(spotifyBox, 'visible');
+        spotifyBox?.classList.toggle('spotify-shrunk', spotifyView === 'shrunk');
+    }
+
+    // 2. Calendar
+    if (calendarView === 'hidden') {
+        setWidget(calendarBox, 'gone');
+    } else {
+        setWidget(calendarBox, 'visible');
+        if (calendarView === 'month') {
+            calMonth?.classList.remove('hidden');
+            calWeek?.classList.add('hidden');
+            calendarBox?.classList.remove('week-mode');
+        } else if (calendarView === 'week') {
+            calMonth?.classList.add('hidden');
+            calWeek?.classList.remove('hidden');
+            calendarBox?.classList.add('week-mode');
+        }
+    }
+
+    // 3. Forecast
+    if (forecastView === 'hidden') {
+        setWidget(forecastBox, 'gone');
+    } else {
+        setWidget(forecastBox, 'visible');
+        f5hIcons?.classList.add('hidden');
+        f5hBig?.classList.add('hidden');
+        f5dBig?.classList.add('hidden');
+        if (forecastView === '5h-icons') f5hIcons?.classList.remove('hidden');
+        if (forecastView === '5h-big')   f5hBig?.classList.remove('hidden');
+        if (forecastView === '5d-big')   f5dBig?.classList.remove('hidden');
+    }
+}
+
+// ============================================
+// TEMPORARY TESTING TOOL
+// ============================================
+window.testLayout = function(spotify, calendar, forecast) {
+    updatePanelState({
+        spotifyView: spotify,
+        calendarView: calendar,
+        forecastView: forecast
+    });
+    console.log(`Test layout applied! | Spotify: ${spotify} | Calendar: ${calendar} | Forecast: ${forecast}`);
+};
+
+window.swapPanels = swapPanels; // Expose for testing

@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 4
+RELEASE_COUNTER = 5 
 
 VERSION_ORDER = [
     "frontend",
@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 38, #rework on photoslideshow: better randomization to make sure all photos are shown before shuffling the array.
+        "version": 40, #rework on photoslideshow: better randomization to make sure all photos are shown before shuffling the array.
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 23, #updated to use chromium and handle spotify without permissions
+        "version": 24, #new weather information for forecasts 
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

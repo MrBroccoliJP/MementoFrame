@@ -356,12 +356,12 @@ async function burstPhotos(photosToShow) {
   // panel's *intended* size regardless of where the CSS transition is mid-flight.
   //
   // Rules (mirroring getPanelDimensions exactly):
-  //   • Spotify playing OR calendarFullOpacity → panel is 69 % of viewport width.
+  //   • Spotify playing OR bigModeActive → panel is 69 % of viewport width.
   //     If swapped → panel starts at left: 30 %, so the grid's left inset
   //     must compensate by that 30 % so cells don't bleed into the right panel.
   //   • Otherwise → panel is 99 % of viewport width, no left compensation needed.
-  const { swapped, calendarFullOpacity, spotifyPlaying } = state.panels;
-  const isNarrow = spotifyPlaying || calendarFullOpacity;
+  const { swapped, bigModeActive, spotifyPlaying } = state.panels;
+  const isNarrow = spotifyPlaying || bigModeActive;
 
   // Grid geometry — fixed rules regardless of panel CSS state:
   //
@@ -431,7 +431,7 @@ async function burstPhotos(photosToShow) {
       position: "fixed",
       // Read offset fresh — state.panels may have changed since burstPhotos() started
       // (e.g. a panel swap fired between pages).
-      left: `${(state.panels.swapped && !state.panels.spotifyPlaying && !state.panels.calendarFullOpacity) ? Math.round(window.innerWidth * 0.30) : 0}px`,
+      left: `${(state.panels.swapped && !state.panels.spotifyPlaying && !state.panels.bigModeActive) ? Math.round(window.innerWidth * 0.30) : 0}px`,
       top: "0",
       width: `${panelW}px`,
       height: `${panelH}px`,
@@ -603,8 +603,8 @@ export function stabilizeActiveVerticalPhotoDuringPanelResize(durationMs = 700) 
  */
 export function updateBurstGrid() {
   const viewW = window.innerWidth;
-  const { swapped: sw, calendarFullOpacity: cal, spotifyPlaying: spot } = state.panels;
-  const newLeft = (sw && !cal && !spot) ? Math.round(viewW * 0.30) : 0;
+  const { swapped: sw, bigModeActive: bma, spotifyPlaying: spot } = state.panels;
+  const newLeft = (sw && !bma && !spot) ? Math.round(viewW * 0.30) : 0;
   document.querySelectorAll(".burst-grid").forEach((el) => {
     el.style.left = `${newLeft}px`;
   });
