@@ -11,15 +11,20 @@ import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize } from "
 // EXPORTED INIT FUNCTION: Safely starts the layout ticker only when called
 export function initLayout() {
   //setInterval(() => evaluateLayout(false), INTERVALS.LAYOUT_EVALUATE);
+  window.addEventListener("mementoframe:weather-availability-changed", () => evaluateLayout(true));
   evaluateLayout(true); // Run once immediately to set the initial state
 }
 
 export function setCalendarOpacity(opacity) {
   const calendarBox = document.getElementById('calendar-box');
   const forecastBox = document.getElementById('forecast-box');
+  const dateBox = $(SELECTORS.dateBox);
+  const weatherBox = $(SELECTORS.weatherBox);
+
   if (calendarBox) calendarBox.style.opacity = opacity;
   if (forecastBox) forecastBox.style.opacity = opacity;
-  $(SELECTORS.dateBox)?.style && ($(SELECTORS.dateBox).style.opacity = opacity);
+  if (dateBox) dateBox.style.opacity = opacity;
+  if (weatherBox) weatherBox.style.opacity = opacity;
 }
 
 export function showSpotify() {
@@ -109,25 +114,44 @@ export function swapPanels() {
   const rightPanel = $(SELECTORS.rightPanel);
   const wifiInfo = document.querySelector(".wifi-info");
   const qrCode = document.querySelector(".qrcode_icon");
+  const updateCard = document.getElementById("update-status-card");
   const systemInfo = document.querySelector(".system-info-box");
+
+  function moveSystemItems(order) {
+    if (!systemInfo) return;
+
+    order.forEach((item) => {
+      if (item && item.parentElement === systemInfo) {
+        systemInfo.appendChild(item);
+      }
+    });
+  }
 
   if (state.panels.swapped) {
     rightPanel.style.left = "";
-    if (wifiInfo && qrCode) {
-      wifiInfo.after(qrCode);
-      wifiInfo.style.textAlign = "";
-      qrCode.style.textAlign = "";
-    }
+
+    // Normal order, right aligned:
+    // Wi-Fi → Update → QR
+    moveSystemItems([wifiInfo, updateCard, qrCode]);
+
+    if (wifiInfo) wifiInfo.style.textAlign = "";
+    if (updateCard) updateCard.style.textAlign = "";
+    if (qrCode) qrCode.style.textAlign = "";
     if (systemInfo) systemInfo.style.justifyContent = "flex-end";
+
     updatePanelState({ swapped: false });
   } else {
     rightPanel.style.left = "0";
-    if (wifiInfo && qrCode) {
-      qrCode.after(wifiInfo);
-      wifiInfo.style.textAlign = "left";
-      qrCode.style.textAlign = "left";
-    }
+
+    // Swapped order, left aligned:
+    // QR → Update → Wi-Fi
+    moveSystemItems([qrCode, updateCard, wifiInfo]);
+
+    if (wifiInfo) wifiInfo.style.textAlign = "left";
+    if (updateCard) updateCard.style.textAlign = "left";
+    if (qrCode) qrCode.style.textAlign = "left";
     if (systemInfo) systemInfo.style.justifyContent = "flex-start";
+
     updatePanelState({ swapped: true });
   }
 }
@@ -170,11 +194,12 @@ export function scheduleBigModeCycle(delay = INTERVALS.CALENDAR_CYCLE) {
 // STATE MACHINE: DYNAMIC ROTATION
 // ============================================
 
-function evaluateLayout(force = false) {
+export function evaluateLayout(force = false) {
     const currentMinute = new Date().getMinutes();
     const cycleMinute = currentMinute % INTERVALS.LAYOUT_CYCLE_MINUTES;
     const isSpotify = state.panels.spotifyPlaying;
     const isBigMode = state.panels.bigModeActive;
+    const hasForecast = !!state.weather.forecastAvailable;
 
     let updates = {
         spotifyView: 'hidden',
@@ -183,11 +208,11 @@ function evaluateLayout(force = false) {
     };
 
 if (isSpotify) {
-        // NEW STATE: Spotify shrunk + BOTH widgets stacked
+        // Spotify shrunk + widgets stacked. Only show forecast if weather data exists.
         if (cycleMinute === 0) { 
             updates.spotifyView = 'shrunk'; 
             updates.calendarView = 'week'; 
-            updates.forecastView = '5h-icons'; 
+            updates.forecastView = hasForecast ? '5h-icons' : 'hidden'; 
         }
         else { 
             updates.spotifyView = 'big'; 
@@ -197,13 +222,13 @@ if (isSpotify) {
     }
     else {
         if (isBigMode) {
-            // BIG MODE logic
-            if (cycleMinute === 0) updates.forecastView = '5h-big';
-            else if (cycleMinute === 1) updates.forecastView = '5d-big';
+            // BIG MODE logic. If weather is unavailable, keep the calendar up instead.
+            if (hasForecast && cycleMinute === 0) updates.forecastView = '5h-big';
+            else if (hasForecast && cycleMinute === 1) updates.forecastView = '5d-big';
             else updates.calendarView = 'month';
         } else {
-            // NORMAL MODE logic
-            if (cycleMinute === 1) updates.forecastView = '5h-icons';
+            // NORMAL MODE logic. If weather is unavailable, do not rotate into forecast.
+            if (hasForecast && cycleMinute === 1) updates.forecastView = '5h-icons';
             else updates.calendarView = 'week';
         }
     }
@@ -220,118 +245,82 @@ if (isSpotify) {
  * Applies widget visibility and layout modes based on the current state.
  * This function is the "single source of truth" for DOM manipulation.
  */
-// ============================================
-// ANIMATED WIDGET TRANSITIONS
-// ============================================
-
-// Must match the transition duration in your CSS (the opacity/transform transition)
-const WIDGET_TRANSITION_MS = 450;
-
-// Tracks pending collapse timers per element id so rapid changes don't stack
-const _widgetTimers = new Map();
-
-/**
- * Transition a top-level widget box between three states:
- *
- *   'visible' — in flow, opacity 1, fully interactive
- *   'gone'    — fades out first, then collapses to display:none after
- *               WIDGET_TRANSITION_MS so the CSS transition is visible
- *
- * The two-step gone sequence is the key fix: jumping straight to
- * display:none kills the transition before it plays.
- */
-function setWidget(el, targetMode) {
-  if (!el) return;
-  const id = el.id;
-
-  // Cancel any pending collapse timer for this element
-  if (_widgetTimers.has(id)) {
-    clearTimeout(_widgetTimers.get(id));
-    _widgetTimers.delete(id);
-  }
-
-  if (targetMode === 'visible') {
-    // 1. Ensure it's in the DOM flow (remove display:none)
-    el.style.display = '';
-    el.classList.remove('hidden');
-
-    // 2. Force reflow so browser registers the element before we animate
-    void el.offsetHeight;
-
-    // 3. Now fade in
-    el.style.opacity = '1';
-    el.style.transform = 'scale(1) translateY(0)';
-    el.style.pointerEvents = 'auto';
-
-  } else { // 'gone'
-    // Step 1: fade out (element still in flow so transition plays)
-    el.style.opacity = '0';
-    el.style.transform = 'scale(0.97) translateY(-6px)';
-    el.style.pointerEvents = 'none';
-
-    // Step 2: after transition finishes, remove from flow
-    const timer = setTimeout(() => {
-      el.classList.add('hidden');
-      el.style.display = 'none';
-      _widgetTimers.delete(id);
-    }, WIDGET_TRANSITION_MS);
-
-    _widgetTimers.set(id, timer);
-  }
-}
-
-/**
- * Applies widget visibility and layout modes based on the current state.
- * This is the single source of truth for DOM manipulation.
- */
 function applyWidgetVisibility() {
-    const { spotifyView, calendarView, forecastView } = state.panels;
-
-    const spotifyBox  = document.getElementById('spotify-box');
-    const calendarBox = document.getElementById('calendar-box');
-    const calMonth    = document.getElementById('calendar-month');
-    const calWeek     = document.getElementById('calendar-week');
-    const forecastBox = document.getElementById('forecast-box');
-    const f5hIcons    = document.getElementById('forecast-5h-icons');
-    const f5hBig      = document.getElementById('forecast-5h-big');
-    const f5dBig      = document.getElementById('forecast-5d-big');
-
-    // 1. Spotify
-    if (spotifyView === 'hidden') {
-        setWidget(spotifyBox, 'gone');
-    } else {
-        setWidget(spotifyBox, 'visible');
-        spotifyBox?.classList.toggle('spotify-shrunk', spotifyView === 'shrunk');
+  const { spotifyView, calendarView, forecastView } = state.panels;
+ 
+  const spotifyBox  = document.getElementById('spotify-box');
+  const calendarBox = document.getElementById('calendar-box');
+  const calMonth    = document.getElementById('calendar-month');
+  const calWeek     = document.getElementById('calendar-week');
+  const forecastBox = document.getElementById('forecast-box');
+  const f5hIcons    = document.getElementById('forecast-5h-icons');
+  const f5hBig      = document.getElementById('forecast-5h-big');
+  const f5dBig      = document.getElementById('forecast-5d-big');
+ 
+  // ── Helper: set one of three widget states ──────────────────────────────
+  function setWidget(el, mode) {
+    // mode: 'visible' | 'hidden' | 'gone'
+    if (!el) return;
+    el.classList.remove('widget-visible', 'widget-hidden', 'widget-gone');
+    el.classList.add(`widget-${mode}`);
+ 
+    // Keep legacy .hidden/.visible in sync for any CSS that still references them
+    el.classList.toggle('hidden',  mode !== 'visible');
+    el.classList.toggle('visible', mode === 'visible');
+  }
+ 
+  // ── 1. Spotify box ───────────────────────────────────────────────────────
+  if (spotifyView === 'hidden') {
+    setWidget(spotifyBox, 'gone');
+  } else {
+    setWidget(spotifyBox, 'visible');
+    spotifyBox?.classList.toggle('spotify-shrunk', spotifyView === 'shrunk');
+  }
+ 
+  // ── 2. Calendar box ──────────────────────────────────────────────────────
+  if (calendarView === 'hidden') {
+    // Use 'gone' when Spotify is big (no space needed), 'hidden' when
+    // Spotify is shrunk (might reappear soon without layout jump).
+    setWidget(calendarBox, spotifyView === 'big' ? 'gone' : 'gone');
+  } else {
+    setWidget(calendarBox, 'visible');
+ 
+    // Switch inner sub-panels
+    if (calendarView === 'month') {
+      calMonth?.classList.remove('hidden');
+      calWeek?.classList.add('hidden');
+      calendarBox?.classList.remove('week-mode');
+    } else if (calendarView === 'week') {
+      calMonth?.classList.add('hidden');
+      calWeek?.classList.remove('hidden');
+      calendarBox?.classList.add('week-mode');
     }
+  }
+ 
+  // ── 3. Forecast box ──────────────────────────────────────────────────────
+  if (forecastView === 'hidden') {
+    setWidget(forecastBox, spotifyView === 'big' ? 'gone' : 'gone');
+  } else {
+    setWidget(forecastBox, 'visible');
+ 
+    // Hide all sub-views first, then show the right one
+    f5hIcons?.classList.add('hidden');
+    f5hBig?.classList.add('hidden');
+    f5dBig?.classList.add('hidden');
+ 
+    if (forecastView === '5h-icons') f5hIcons?.classList.remove('hidden');
+    if (forecastView === '5h-big')   f5hBig?.classList.remove('hidden');
+    if (forecastView === '5d-big')   f5dBig?.classList.remove('hidden');
 
-    // 2. Calendar
-    if (calendarView === 'hidden') {
-        setWidget(calendarBox, 'gone');
-    } else {
-        setWidget(calendarBox, 'visible');
-        if (calendarView === 'month') {
-            calMonth?.classList.remove('hidden');
-            calWeek?.classList.add('hidden');
-            calendarBox?.classList.remove('week-mode');
-        } else if (calendarView === 'week') {
-            calMonth?.classList.add('hidden');
-            calWeek?.classList.remove('hidden');
-            calendarBox?.classList.add('week-mode');
-        }
+    // Big forecast panels should be fully opaque, matching the other right-panel cards.
+    if (forecastView === '5h-big' || forecastView === '5d-big') {
+      forecastBox.style.opacity = "1";
     }
+  }
 
-    // 3. Forecast
-    if (forecastView === 'hidden') {
-        setWidget(forecastBox, 'gone');
-    } else {
-        setWidget(forecastBox, 'visible');
-        f5hIcons?.classList.add('hidden');
-        f5hBig?.classList.add('hidden');
-        f5dBig?.classList.add('hidden');
-        if (forecastView === '5h-icons') f5hIcons?.classList.remove('hidden');
-        if (forecastView === '5h-big')   f5hBig?.classList.remove('hidden');
-        if (forecastView === '5d-big')   f5dBig?.classList.remove('hidden');
-    }
+  window.dispatchEvent(new CustomEvent("mementoframe:forecast-view-changed", {
+    detail: { spotifyView, calendarView, forecastView }
+  }));
 }
 
 // ============================================

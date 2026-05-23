@@ -465,6 +465,7 @@ body {
   min-width: 0;
   flex-basis: 0;
   min-width: 55%;
+  opacity: 1;
 }
 
 .weather-icon img {
@@ -1347,7 +1348,6 @@ body {
 /* Animation Container */
 .rounded-box {
   transition: opacity 0.5s ease-in-out, transform 0.5s ease-in-out;
-  opacity: 1;
   transform: scale(1);
   visibility: visible;
   pointer-events: auto;
@@ -1616,3 +1616,707 @@ body {
 .system-info-box .rounded-box {
   flex-grow: 0;
 }
+
+/* =========================
+   Update UI polish + overlay fix
+   ========================= */
+
+/* Full-screen update overlay.
+   This must not use inline display:none, otherwise the .visible class can never show it. */
+.mf-update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(29, 185, 84, 0.12), transparent 26%),
+    radial-gradient(circle at 76% 72%, rgba(255, 255, 255, 0.06), transparent 22%),
+    linear-gradient(180deg, #050505 0%, #000000 100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.45s ease, visibility 0.45s ease;
+}
+
+.mf-update-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.mf-update-overlay .mf-loading__frame--front {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 26px rgba(29, 185, 84, 0.18);
+}
+
+.mf-update-overlay .mf-loading__frame--mid {
+  border-color: rgba(29, 185, 84, 0.42);
+}
+
+.mf-update-overlay .mf-loading__frame--back {
+  border-color: rgba(29, 185, 84, 0.22);
+}
+
+.mf-update-overlay .mf-loading__dot {
+  background: var(--accent-color);
+  box-shadow: 0 0 18px rgba(29, 185, 84, 0.42);
+}
+
+.mf-update-overlay__hint {
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  color: rgba(242, 242, 242, 0.5);
+  text-align: center;
+}
+
+/* Bottom update flag. Small, aligned, and less blocky than a normal rounded-box. */
+.system-info-box .update-status-card.rounded-box,
+.update-status-card {
+  position: relative;
+  flex: 0 0 60px !important;
+  width: 60px;
+  height: 58px;
+  min-width: 60px;
+  max-width: 60px;
+  margin: 0 8px !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 18px;
+  color: var(--accent-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03)),
+    #171717;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 70%, transparent);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  overflow: visible;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease,
+    border-color 1s ease,
+    color 1s ease,
+    background-color 1s ease;
+}
+
+.update-status-card.visible {
+  display: flex !important;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.update-status-card.hidden {
+  display: flex !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(6px) scale(0.92) !important;
+  max-height: none !important;
+  margin: 0 8px !important;
+  padding: 0 !important;
+}
+
+.update-status-card::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-color);
+  box-shadow: 0 0 12px var(--accent-color);
+}
+
+.update-status-card__icon {
+  width: 30px;
+  height: 30px;
+  color: var(--accent-text);
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.12));
+}
+
+.update-status-card__text {
+  font-family: 'Inter', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  color: var(--accent-text);
+}
+
+/* =========================================================
+   Calendar accent + compact week layout fixes
+   Append at the very end of kiosk_display.css
+   ========================================================= */
+
+/* Full month calendar: make every generated heading/header follow accent. */
+#calendar-month,
+#calendar-month * {
+  --calendar-accent: var(--accent-color);
+}
+
+#calendar-month h1,
+#calendar-month h2,
+#calendar-month h3,
+#calendar-month .calendar-title,
+#calendar-month .month-title,
+#calendar-month .calendar-month-title,
+#calendar-month caption,
+#calendar-month thead,
+#calendar-month th {
+  color: var(--accent-color) !important;
+  transition: color 1s ease;
+}
+
+#calendar-month td {
+  color: var(--accent-text);
+  transition: color 1s ease, background-color 1s ease, border-color 1s ease;
+}
+
+#calendar-month td.today {
+  background-color: var(--accent-color) !important;
+  color: #111 !important;
+  font-weight: 700;
+}
+
+/* Keep generic calendar selectors accent-aware too, in case the month renderer
+   still outputs legacy #calendar markup inside #calendar-month. */
+#calendar th,
+#calendar .calendar-title,
+#calendar .month-title,
+#calendar .calendar-month-title,
+#calendar caption {
+  color: var(--accent-color) !important;
+  transition: color 1s ease;
+}
+
+/* Small week calendar: day label outside the square date tile. */
+.calendar-box.week-mode {
+  padding: 7px 9px;
+}
+
+#calendar-week table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 5px 0;
+}
+
+#calendar-week td {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  text-align: center;
+  overflow: visible;
+  vertical-align: top;
+}
+
+#calendar-week .wk-day {
+  display: block;
+  margin: 0 0 5px 0;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--accent-color) !important;
+  transition: color 1s ease;
+}
+
+#calendar-week .wk-date {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background-color: #2c2c2c;
+  color: var(--accent-color);
+  font-family: 'Roboto Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  transition: color 1s ease, background-color 1s ease, border-color 1s ease;
+}
+
+#calendar-week td.today .wk-date {
+  background-color: var(--accent-color) !important;
+  color: #111 !important;
+}
+
+#calendar-week td.today .wk-day {
+  color: var(--accent-color) !important;
+}
+
+/* The week calendar is shorter now that only the number has a box. */
+.spotify-box.spotify-shrunk ~ #calendar-box.visible,
+#calendar-box.week-mode.visible,
+#calendar-box.week-mode.widget-visible {
+  max-height: 70px;
+}
+
+
+/* =========================================================
+   Update flag: match the other right-panel containers
+   Append at the very end of kiosk_display.css
+   ========================================================= */
+
+.system-info-box .update-status-card.rounded-box,
+.update-status-card {
+  flex: 0 0 58px !important;
+  width: 58px !important;
+  height: 58px !important;
+  min-width: 58px !important;
+  max-width: 58px !important;
+  margin: 5px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 20px !important;
+  background: #1c1c1c !important;
+  background-color: #1c1c1c !important;
+  box-shadow: none !important;
+  color: var(--accent-color) !important;
+  gap: 1px !important;
+  overflow: hidden !important;
+}
+
+.update-status-card::after {
+  top: 8px !important;
+  right: 8px !important;
+  width: 6px !important;
+  height: 6px !important;
+  background: var(--accent-color) !important;
+  box-shadow: none !important;
+  opacity: 0.9 !important;
+}
+
+.update-status-card__icon {
+  width: 28px !important;
+  height: 28px !important;
+  color: var(--accent-color) !important;
+  filter: none !important;
+}
+
+.update-status-card__text {
+  color: var(--accent-color) !important;
+  font-size: 8px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+}
+
+.update-status-card.hidden {
+  margin: 5px !important;
+  max-height: none !important;
+  padding: 0 !important;
+}
+
+/* =========================================================
+   Forecast big views: contained rows + safe marquee
+   Append at the very end of kiosk_display.css
+   ========================================================= */
+
+/* Keep the forecast panels clipped inside the rounded container. */
+#forecast-box,
+#forecast-5h-big,
+#forecast-5d-big {
+  overflow: hidden !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+#forecast-5h-big,
+#forecast-5d-big {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Big forecast list: no horizontal bleed. */
+#forecast-5h-big .forecast-list,
+#forecast-5d-big .forecast-list {
+  width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  padding: 3px 4px !important;
+  gap: 7px !important;
+  overflow: hidden !important;
+}
+
+/* Grid rows reserve fixed room for time, icon, and temp.
+   The condition column is the only flexible piece, so temps stay visible. */
+#forecast-5h-big .forecast-list-item,
+#forecast-5d-big .forecast-list-item {
+  display: grid !important;
+  grid-template-columns: 48px 32px minmax(0, 1fr) 54px !important;
+  align-items: center !important;
+  column-gap: 8px !important;
+  width: 100% !important;
+  height: 43px !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  padding: 6px 9px !important;
+  overflow: hidden !important;
+}
+
+/* 5-day labels can be slightly wider because "Today" needs room. */
+#forecast-5d-big .forecast-list-item {
+  grid-template-columns: 50px 32px minmax(0, 1fr) 48px !important;
+}
+
+#forecast-5h-big .forecast-list-item .time,
+#forecast-5d-big .forecast-list-item .time {
+  width: auto !important;
+  min-width: 0 !important;
+  text-align: left !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  color: var(--accent-color) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
+
+#forecast-5h-big .forecast-list-item img,
+#forecast-5d-big .forecast-list-item img {
+  width: 28px !important;
+  height: 28px !important;
+  max-width: 28px !important;
+  object-fit: contain !important;
+  justify-self: center !important;
+}
+
+/* Condition text: one real text node only. Older marquee patches may have
+   added pseudo-elements; disable them so text never duplicates. */
+#forecast-5h-big .forecast-list-item .cond,
+#forecast-5d-big .forecast-list-item .cond {
+  display: block !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  padding-left: 0 !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-align: left !important;
+  color: #aaa !important;
+  font-size: 12px !important;
+  line-height: 1.15 !important;
+  text-overflow: clip !important;
+}
+
+#forecast-5h-big .forecast-list-item .cond::before,
+#forecast-5h-big .forecast-list-item .cond::after,
+#forecast-5d-big .forecast-list-item .cond::before,
+#forecast-5d-big .forecast-list-item .cond::after,
+#forecast-5h-big .forecast-list-item .cond-inner::before,
+#forecast-5h-big .forecast-list-item .cond-inner::after,
+#forecast-5d-big .forecast-list-item .cond-inner::before,
+#forecast-5d-big .forecast-list-item .cond-inner::after {
+  content: none !important;
+  display: none !important;
+}
+
+/* Only this inner span moves. It avoids duplicating the condition text. */
+.forecast-list-item .cond-inner {
+  display: inline-block !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+  transform: translateX(0);
+  will-change: transform;
+}
+
+.forecast-list-item .cond.is-scroll .cond-inner {
+  padding-right: 28px;
+  animation: forecastCondScroll 8s ease-in-out infinite;
+}
+
+/* This is intentionally modest; it reveals the hidden tail without throwing
+   the text far outside the row. */
+@keyframes forecastCondScroll {
+  0%, 18% {
+    transform: translateX(0);
+  }
+  55%, 75% {
+    transform: translateX(calc(-100% + var(--cond-box-width, 100px)));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+/* Temperature column. */
+#forecast-5h-big .forecast-list-item .temp,
+#forecast-5d-big .forecast-list-item .temp {
+  width: auto !important;
+  min-width: 0 !important;
+  justify-self: end !important;
+  text-align: right !important;
+  font-family: 'Roboto Mono', monospace !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  line-height: 1.05 !important;
+  color: var(--accent-text) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+}
+
+/* Daily temps show high and low stacked, so they do not need a wide column. */
+#forecast-5d-big .forecast-list-item .temp.temp-stack {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  justify-content: center !important;
+  gap: 1px !important;
+  font-size: 12px !important;
+}
+
+#forecast-5d-big .forecast-list-item .temp-high {
+  color: var(--accent-text) !important;
+  font-weight: 800 !important;
+}
+
+#forecast-5d-big .forecast-list-item .temp-low {
+  color: rgba(242, 242, 242, 0.68) !important;
+  font-weight: 700 !important;
+}
+
+/* Shrunk/icon view should keep its original compact behavior. */
+#forecast-5h-icons .forecast-item .cond {
+  display: none !important;
+}
+
+/* =========================================================
+   Forecast big views: readable text + working marquee
+   Append at the very end of kiosk_display.css
+   ========================================================= */
+
+/* Keep big forecast cards solid and clipped inside the rounded container. */
+#forecast-box.widget-visible:has(#forecast-5h-big:not(.hidden)),
+#forecast-box.widget-visible:has(#forecast-5d-big:not(.hidden)) {
+  opacity: 1 !important;
+  background: #1c1c1c !important;
+  background-color: #1c1c1c !important;
+  overflow: hidden !important;
+}
+
+#forecast-5h-big,
+#forecast-5d-big,
+#forecast-5h-big .forecast-list,
+#forecast-5d-big .forecast-list {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+#forecast-5h-big .forecast-list,
+#forecast-5d-big .forecast-list {
+  padding: 6px 7px !important;
+  gap: 6px !important;
+}
+
+/* Slightly larger text while keeping the temperature column protected. */
+#forecast-5h-big .forecast-list-item,
+#forecast-5d-big .forecast-list-item {
+  grid-template-columns: 54px 34px minmax(0, 1fr) 46px !important;
+  column-gap: 8px !important;
+  min-height: 39px !important;
+  padding: 5px 9px !important;
+}
+
+#forecast-5d-big .forecast-list-item {
+  grid-template-columns: 58px 34px minmax(0, 1fr) 44px !important;
+}
+
+#forecast-5h-big .forecast-list-item .time,
+#forecast-5d-big .forecast-list-item .time {
+  font-size: 15px !important;
+  line-height: 1 !important;
+}
+
+#forecast-5h-big .forecast-list-item img,
+#forecast-5d-big .forecast-list-item img {
+  width: 30px !important;
+  height: 30px !important;
+  max-width: 30px !important;
+}
+
+#forecast-5h-big .forecast-list-item .cond,
+#forecast-5d-big .forecast-list-item .cond {
+  min-width: 0 !important;
+  width: 100% !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: clip !important;
+  font-size: 15px !important;
+  font-weight: 500 !important;
+  line-height: 1.1 !important;
+}
+
+#forecast-5h-big .forecast-list-item .cond-inner,
+#forecast-5d-big .forecast-list-item .cond-inner {
+  display: inline-block !important;
+  width: max-content !important;
+  max-width: none !important;
+  white-space: nowrap !important;
+  transform: translateX(0);
+  will-change: transform;
+}
+
+/* JS adds .is-scroll only when textWidth > boxWidth. */
+#forecast-5h-big .forecast-list-item .cond.is-scroll .cond-inner,
+#forecast-5d-big .forecast-list-item .cond.is-scroll .cond-inner {
+  animation: forecastCondScrollReadable 8.5s ease-in-out infinite !important;
+}
+
+@keyframes forecastCondScrollReadable {
+  0%, 16% {
+    transform: translateX(0);
+  }
+  50%, 74% {
+    transform: translateX(calc(-1 * var(--cond-scroll-distance, 0px)));
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+#forecast-5h-big .forecast-list-item .temp,
+#forecast-5d-big .forecast-list-item .temp {
+  font-size: 15px !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+}
+
+#forecast-5d-big .forecast-list-item .temp.temp-stack {
+  font-size: 14px !important;
+  gap: 2px !important;
+}
+
+/* Keep the compact icon forecast unchanged. */
+#forecast-5h-icons .forecast-item .cond {
+  display: none !important;
+}
+
+
+/* =========================================================
+   Forecast condition marquee: scroll to end, snap back
+   Append at the very end of kiosk_display.css
+   ========================================================= */
+
+/* These rules intentionally override the earlier forecast marquee blocks.
+   The text starts at the beginning, scrolls only until the final character is
+   visible, pauses, then snaps back to the start before repeating. */
+#forecast-5h-big .forecast-list-item .cond,
+#forecast-5d-big .forecast-list-item .cond {
+  overflow: hidden !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+}
+
+#forecast-5h-big .forecast-list-item .cond-inner,
+#forecast-5d-big .forecast-list-item .cond-inner {
+  display: inline-block !important;
+  width: max-content !important;
+  max-width: none !important;
+  padding-right: 0 !important;
+  margin-right: 0 !important;
+  white-space: nowrap !important;
+  transform: translateX(0);
+  will-change: transform;
+  animation: none !important;
+}
+
+#forecast-5h-big .forecast-list-item .cond.is-scroll .cond-inner,
+#forecast-5d-big .forecast-list-item .cond.is-scroll .cond-inner {
+  animation-name: forecastCondScrollToEnd !important;
+  animation-duration: var(--cond-scroll-duration, 8.5s) !important;
+  animation-timing-function: linear !important;
+  animation-iteration-count: infinite !important;
+  animation-delay: 0s !important;
+  animation-direction: normal !important;
+  animation-fill-mode: none !important;
+}
+
+@keyframes forecastCondScrollToEnd {
+  0%, 14% {
+    transform: translateX(0);
+  }
+
+  78%, 92% {
+    transform: translateX(calc(-1 * var(--cond-scroll-distance, 0px)));
+  }
+
+  /* Snap back to the start instead of scrolling backwards. */
+  92.01%, 100% {
+    transform: translateX(0);
+  }
+}
+
+
+/* =========================================================
+   Compact weather card: vertical condition scroll
+   Append at the very end of kiosk_display.css
+   ========================================================= */
+
+/* Keep the current weather card from growing when the condition is long. */
+.weather-box {
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* The condition can wrap inside this fixed-height window.
+   JS only scrolls it vertically when the wrapped text is taller than the window. */
+.weather-condition {
+  display: block !important;
+  position: relative !important;
+  max-width: 118px !important;
+  max-height: 42px !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  white-space: normal !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+  text-align: left !important;
+  line-height: 1.0 !important;
+  box-sizing: border-box !important;
+}
+
+.weather-condition__inner {
+  display: block !important;
+  width: 100% !important;
+  transform: translateY(0);
+  will-change: transform;
+  animation: none !important;
+}
+
+/* Same idea as the forecast marquee:
+   start at the top, scroll until the bottom of the text is visible,
+   pause, then snap back to the top. */
+.weather-condition.is-scroll-y .weather-condition__inner {
+  animation-name: weatherConditionScrollToEndY !important;
+  animation-duration: var(--weather-cond-scroll-duration, 7s) !important;
+  animation-timing-function: linear !important;
+  animation-iteration-count: infinite !important;
+  animation-delay: 0s !important;
+  animation-direction: normal !important;
+  animation-fill-mode: none !important;
+}
+
+@keyframes weatherConditionScrollToEndY {
+  0%, 16% {
+    transform: translateY(0);
+  }
+
+  76%, 91% {
+    transform: translateY(calc(-1 * var(--weather-cond-scroll-distance, 0px)));
+  }
+
+  /* Snap back to the top instead of scrolling backwards. */
+  91.01%, 100% {
+    transform: translateY(0);
+  }
+}
+

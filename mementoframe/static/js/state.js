@@ -79,6 +79,17 @@ export const state = {
   },
 
   /**
+   * Weather data availability tracking.
+   */
+  weather: {
+    /** Whether the compact current weather card has valid fresh data. */
+    available: false,
+
+    /** Whether the forecast rotation has enough valid data to render. */
+    forecastAvailable: false,
+  },
+
+  /**
    * Spotify playback and background accent color tracking.
    */
   spotify: {

@@ -15,7 +15,7 @@ import os
 import secrets
 import time
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -47,7 +47,7 @@ CONFIG_FILE = PROJECT_ROOT / "config.json"
 STATIC_DIR = PROJECT_ROOT / "static"
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 USERDATA_DIR = PROJECT_ROOT / "resources" / "userdata"
-ASSETS_DIR = PROJECT_ROOT / "resources" / "assets"
+ASSETS_DIR = PROJECT_ROOT / "resources"
 PHOTO_DIR = USERDATA_DIR / "Photos"
 FULL_DIR = PHOTO_DIR / "full"
 THUMB_DIR = PHOTO_DIR / "thumbs"
@@ -142,6 +142,7 @@ DEFAULT_STATE: dict[str, Any] = {
         "humidity": 72,
         "windSpeed": 14.4,
         "city": "Porto",
+        "forecast_enabled": True,
     },
     "time": {
         "enabled": False,
@@ -491,27 +492,126 @@ def next_track() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Weather
 # ---------------------------------------------------------------------------
+def _weather_icon_url(icon: str | None, fallback: str = "https://cdn.weatherapi.com/weather/64x64/day/116.png") -> str:
+    """Normalize WeatherAPI icon values into browser-ready absolute URLs."""
+    value = str(icon or "").strip() or fallback
+    if value.startswith("//"):
+        return "https:" + value
+    return value
+
+
+def mock_forecast_payload(weather: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """Return deterministic local forecast data for the display weather rotation."""
+    base_temp = round(float(weather.get("temperature", 18.4)))
+    condition = str(weather.get("condition") or "Partly cloudy")
+    icon = _weather_icon_url(weather.get("icon"))
+
+    now = datetime.now()
+    hourly: list[dict[str, str]] = []
+    hourly_conditions = [condition, "Cloudy", "Light rain", "Partly cloudy", "Clear"]
+    hourly_offsets = [0, 1, -1, -2, -1]
+    for index in range(5):
+        slot = now + timedelta(hours=index + 1)
+        hourly.append({
+            "time": slot.strftime("%H:00"),
+            "icon": icon,
+            "temp": f"{base_temp + hourly_offsets[index]}°C",
+            "condition": hourly_conditions[index],
+        })
+
+    daily: list[dict[str, str]] = []
+    daily_conditions = [condition, "Sunny", "Cloudy", "Light rain", "Partly cloudy"]
+    high_offsets = [3, 4, 2, 1, 3]
+    low_offsets = [-4, -3, -5, -6, -4]
+    for index in range(5):
+        day = date.today() + timedelta(days=index)
+        daily.append({
+            "label": "Today" if index == 0 else day.strftime("%a"),
+            "icon": icon,
+            "high": f"{base_temp + high_offsets[index]}°C",
+            "low": f"{base_temp + low_offsets[index]}°C",
+            "condition": daily_conditions[index],
+        })
+
+    return {"hourly": hourly, "daily": daily}
+
+
+def _forecast_from_weatherapi(data: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """Extract the frontend forecast shape from a WeatherAPI forecast.json response."""
+    forecast_days = data.get("forecast", {}).get("forecastday", []) or []
+    hourly: list[dict[str, str]] = []
+    now_epoch = time.time()
+
+    for day_fc in forecast_days:
+        for hour_fc in day_fc.get("hour", []):
+            try:
+                if float(hour_fc.get("time_epoch", 0)) <= now_epoch:
+                    continue
+            except Exception:
+                pass
+            condition = hour_fc.get("condition", {}) or {}
+            hourly.append({
+                "time": str(hour_fc.get("time", "")).split(" ")[-1][:5],
+                "icon": _weather_icon_url(condition.get("icon")),
+                "temp": f"{round(float(hour_fc.get('temp_c', 0)))}°C",
+                "condition": condition.get("text", ""),
+            })
+            if len(hourly) == 5:
+                break
+        if len(hourly) == 5:
+            break
+
+    daily: list[dict[str, str]] = []
+    today = date.today()
+    for day_fc in forecast_days[:5]:
+        try:
+            day_date = date.fromisoformat(str(day_fc.get("date")))
+        except Exception:
+            day_date = today + timedelta(days=len(daily))
+        day_data = day_fc.get("day", {}) or {}
+        condition = day_data.get("condition", {}) or {}
+        daily.append({
+            "label": "Today" if day_date == today else day_date.strftime("%a"),
+            "icon": _weather_icon_url(condition.get("icon")),
+            "high": f"{round(float(day_data.get('maxtemp_c', 0)))}°C",
+            "low": f"{round(float(day_data.get('mintemp_c', 0)))}°C",
+            "condition": condition.get("text", ""),
+        })
+
+    return {"hourly": hourly, "daily": daily}
+
+
 def real_weather_payload() -> dict[str, Any]:
     load_env_files()
     cfg = load_config()
     key = cfg.get("weather_api_key") or os.getenv("WEATHER_API_KEY")
     location = cfg.get("weather_region") or "Porto"
     if not key:
-        return {"error": "Weather API key not configured"}
+        return {"error": "Weather API key not configured", "source": "real"}
     try:
         import requests
-        res = requests.get("https://api.weatherapi.com/v1/current.json", params={"key": key, "q": location, "aqi": "no"}, timeout=5)
+        res = requests.get(
+            "https://api.weatherapi.com/v1/forecast.json",
+            params={"key": key, "q": location, "days": 5, "aqi": "no", "alerts": "no"},
+            timeout=5,
+        )
         res.raise_for_status()
         data = res.json()
-        return {
-            "temperature": round(float(data["current"]["temp_c"]), 1),
-            "condition": data["current"]["condition"]["text"],
-            "icon": "https:" + data["current"]["condition"]["icon"],
-            "humidity": int(data["current"]["humidity"]),
-            "windSpeed": float(data["current"]["wind_kph"]),
+        current = data["current"]
+        current_condition = current.get("condition", {}) or {}
+        payload = {
+            "temperature": round(float(current["temp_c"]), 1),
+            "condition": current_condition.get("text", ""),
+            "icon": _weather_icon_url(current_condition.get("icon")),
+            "humidity": int(current["humidity"]),
+            "windSpeed": float(current["wind_kph"]),
             "city": data["location"]["name"],
             "source": "real",
         }
+        forecast = _forecast_from_weatherapi(data)
+        if forecast.get("hourly") and forecast.get("daily"):
+            payload["forecast"] = forecast
+        return payload
     except Exception as exc:
         return {"error": f"Weather request failed: {exc}", "source": "real"}
 
@@ -522,16 +622,20 @@ def weather_payload() -> dict[str, Any]:
     if weather.get("source") == "real":
         return real_weather_payload()
     if not weather.get("enabled", True):
-        return {"error": "Weather API key not configured"}
-    return {
+        return {"error": "Mock weather disabled", "source": "mock"}
+
+    payload = {
         "temperature": round(float(weather.get("temperature", 0)), 1),
         "condition": weather.get("condition", "Clear"),
-        "icon": weather.get("icon"),
+        "icon": _weather_icon_url(weather.get("icon")),
         "humidity": int(float(weather.get("humidity", 0))),
         "windSpeed": float(weather.get("windSpeed", 0)),
         "city": weather.get("city", "Porto"),
         "source": "mock",
     }
+    if weather.get("forecast_enabled", True):
+        payload["forecast"] = mock_forecast_payload(weather)
+    return payload
 
 
 # ---------------------------------------------------------------------------

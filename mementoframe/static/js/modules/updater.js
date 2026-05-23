@@ -70,6 +70,10 @@ function ensureOverlay() {
     document.body.appendChild(overlayEl);
   }
 
+  // Older templates had style="display: none" on this element.
+  // Clear it so CSS can show the update screen with .visible.
+  overlayEl.style.display = "";
+
   return overlayEl;
 }
 
@@ -90,6 +94,7 @@ function applyUpdateState(state) {
     ? `Software update available: ${lastState.latest_version}`
     : "Software update available";
 
+  overlay.style.display = "";
   overlay.classList.toggle("visible", updating);
   overlay.setAttribute("aria-hidden", updating ? "false" : "true");
 
