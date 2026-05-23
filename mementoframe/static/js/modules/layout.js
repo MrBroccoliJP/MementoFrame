@@ -10,7 +10,7 @@ import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize } from "
 
 // EXPORTED INIT FUNCTION: Safely starts the layout ticker only when called
 export function initLayout() {
-  //setInterval(() => evaluateLayout(false), INTERVALS.LAYOUT_EVALUATE);
+  setInterval(() => evaluateLayout(false), INTERVALS.LAYOUT_EVALUATE);
   window.addEventListener("mementoframe:weather-availability-changed", () => evaluateLayout(true));
   evaluateLayout(true); // Run once immediately to set the initial state
 }

@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 41, #changed the way weather and calendar appear, now showing forecasts and added a new spotify mini player 
+        "version": 42, #changed the way weather and calendar appear, now showing forecasts and added a new spotify mini player 
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
