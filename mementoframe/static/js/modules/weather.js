@@ -14,6 +14,7 @@ const WEATHER_ALERT_VISIBLE_MS = 60 * 1000;
 
 let currentWeatherCondition = "";
 let currentWeatherIconUrl = PATHS.WEATHER_OFFLINE_ICON;
+let currentWeatherUvIconUrl = null;
 let currentWeatherAlerts = [];
 let weatherAlertTimer = null;
 
@@ -54,6 +55,7 @@ export async function updateWeather() {
   if (!state.online) {
     currentWeatherCondition = "Offline";
     currentWeatherIconUrl = PATHS.WEATHER_OFFLINE_ICON;
+    currentWeatherUvIconUrl = null;
     currentWeatherAlerts = [];
     if (tEl)  tEl.textContent = "--°C";
     applyWeatherContainerDisplay();
@@ -75,6 +77,7 @@ export async function updateWeather() {
 
   currentWeatherCondition = data.condition || "";
   currentWeatherIconUrl = normalizeIconUrl(data.icon || PATHS.WEATHER_OFFLINE_ICON);
+  currentWeatherUvIconUrl = data.uvIcon ? normalizeIconUrl(data.uvIcon) : null;
   currentWeatherAlerts = Array.isArray(data.alerts) ? data.alerts : [];
 
   if (tEl) tEl.textContent = `${data.temperature}°C`;
@@ -84,14 +87,9 @@ export async function updateWeather() {
   applyWeatherContainerDisplay();
   scheduleWeatherConditionScrollRefresh();
 
-  // Real forecast data from backend — falls back to mock if absent,
-  // matching the behaviour of the uploaded source file.
-  const forecast = data.forecast || generateMockForecasts(
-    data.temperature || "--",
-    data.condition   || "Unknown",
-    validIconUrl
-  );
-
+  // Forecast data is owned by the backend/mock service.
+  // If /weather.json has no valid forecast, do not generate fake frontend data.
+  const forecast = data.forecast;
   const forecastAvailable = hasValidForecast(forecast);
   updateWeatherAvailability(true, forecastAvailable);
 
@@ -207,18 +205,25 @@ function applyWeatherContainerDisplay() {
   const alert = getActiveWeatherAlert();
   if (alert) {
     if (cEl) setWeatherConditionText(cEl, formatWeatherAlertText(alert));
-    if (icon) setWeatherIcon(icon, normalizeIconUrl(alert.icon || currentWeatherIconUrl));
+    if (icon) setWeatherIcon(icon, normalizeIconUrl(alert.icon || currentWeatherIconUrl), null);
     return;
   }
 
   if (cEl) setWeatherConditionText(cEl, currentWeatherCondition);
-  if (icon) setWeatherIcon(icon, currentWeatherIconUrl);
+  if (icon) setWeatherIcon(icon, currentWeatherIconUrl, currentWeatherUvIconUrl);
 }
 
 function getActiveWeatherAlert() {
   if (!currentWeatherAlerts.length) return null;
-  const inAlertWindow = Date.now() % WEATHER_ALERT_CYCLE_MS < WEATHER_ALERT_VISIBLE_MS;
-  return inAlertWindow ? currentWeatherAlerts[0] : null;
+
+  const cyclePosition = Date.now() % WEATHER_ALERT_CYCLE_MS;
+  if (cyclePosition >= WEATHER_ALERT_VISIBLE_MS) return null;
+
+  // During the 1-minute alert window, rotate through every active alert
+  // instead of pinning the display to the first one forever.
+  const alertSlotMs = Math.max(10000, WEATHER_ALERT_VISIBLE_MS / currentWeatherAlerts.length);
+  const index = Math.floor(cyclePosition / alertSlotMs) % currentWeatherAlerts.length;
+  return currentWeatherAlerts[index] || currentWeatherAlerts[0];
 }
 
 function formatWeatherAlertText(alert) {
@@ -232,7 +237,7 @@ function formatWeatherAlertText(alert) {
   return "⚠ Weather alert";
 }
 
-function setWeatherIcon(iconEl, iconUrl) {
+function setWeatherIcon(iconEl, iconUrl, uvIconUrl = null) {
   if (!iconEl) return;
 
   const normalizedIcon = normalizeIconUrl(iconUrl || PATHS.WEATHER_OFFLINE_ICON);
@@ -242,10 +247,36 @@ function setWeatherIcon(iconEl, iconUrl) {
     iconEl.src = normalizedIcon;
   }
 
-  // Older versions rendered the UV index as a separate badge overlay.
-  // Clear daytime UV icons now replace the main icon directly, so remove
-  // any stale badge that might still exist in the DOM after an update.
-  iconEl.parentElement?.querySelector(".weather-uv-index-badge")?.remove();
+  const parent = iconEl.parentElement;
+  if (!parent) return;
+
+  parent.style.position = parent.style.position || "relative";
+
+  let uvBadge = parent.querySelector(".weather-uv-index-badge");
+  if (!uvIconUrl) {
+    uvBadge?.remove();
+    return;
+  }
+
+  if (!uvBadge) {
+    uvBadge = document.createElement("img");
+    uvBadge.className = "weather-uv-index-badge";
+    uvBadge.alt = "UV index";
+    uvBadge.setAttribute("aria-hidden", "true");
+    Object.assign(uvBadge.style, {
+      position: "absolute",
+      right: "-4px",
+      bottom: "8px",
+      width: "26px",
+      height: "26px",
+      objectFit: "contain",
+      filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.45))",
+      pointerEvents: "none",
+    });
+    parent.appendChild(uvBadge);
+  }
+
+  uvBadge.src = normalizeIconUrl(uvIconUrl);
 }
 
 function setWeatherConditionText(el, condition) {
@@ -328,27 +359,6 @@ function formatTemp(value) {
     .replace("°°", "°");
 }
 
-function generateMockForecasts(temp, condition, icon) {
-  const base = Number.parseFloat(temp) || 20;
-  const cleanIcon = normalizeIconUrl(icon);
-
-  return {
-    hourly: [
-      { time: "20:00", icon: cleanIcon, temp: `${Math.round(base)}°C`,     condition },
-      { time: "21:00", icon: cleanIcon, temp: `${Math.round(base - 1)}°C`, condition: "Clear" },
-      { time: "22:00", icon: cleanIcon, temp: `${Math.round(base - 1)}°C`, condition: "Clear" },
-      { time: "23:00", icon: cleanIcon, temp: `${Math.round(base - 1)}°C`, condition: "Clear" },
-      { time: "00:00", icon: cleanIcon, temp: `${Math.round(base - 2)}°C`, condition },
-    ],
-    daily: [
-      { label: "Today", icon: cleanIcon, high: `${Math.round(base + 2)}°C`, low: `${Math.round(base - 4)}°C`, condition },
-      { label: "Sun",   icon: cleanIcon, high: `${Math.round(base + 2)}°C`, low: `${Math.round(base - 5)}°C`, condition },
-      { label: "Mon",   icon: cleanIcon, high: `${Math.round(base + 3)}°C`, low: `${Math.round(base - 5)}°C`, condition: "Sunny" },
-      { label: "Tue",   icon: cleanIcon, high: `${Math.round(base + 1)}°C`, low: `${Math.round(base - 6)}°C`, condition: "Cloudy" },
-      { label: "Wed",   icon: cleanIcon, high: `${Math.round(base + 2)}°C`, low: `${Math.round(base - 4)}°C`, condition },
-    ],
-  };
-}
 
 function escapeHtml(value) {
   return String(value ?? "")

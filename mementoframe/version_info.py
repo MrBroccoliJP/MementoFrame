@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 43, #small icon fix for uv index
+        "version": 44, #weather: if multiple alerts are available, rotate them on the 1 minute window (every 5 minutes)
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 26, #new weather api functionality, alerts and new icons. 
+        "version": 27, #Filter alerts for current area only. 
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
