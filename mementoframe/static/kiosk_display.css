@@ -1644,29 +1644,48 @@ body {
   pointer-events: auto;
 }
 
-.mf-update-overlay .mf-loading__frame--front {
-  border-color: var(--accent-color);
-  box-shadow: 0 0 26px rgba(29, 185, 84, 0.18);
-}
-
-.mf-update-overlay .mf-loading__frame--mid {
-  border-color: rgba(29, 185, 84, 0.42);
-}
-
-.mf-update-overlay .mf-loading__frame--back {
-  border-color: rgba(29, 185, 84, 0.22);
-}
-
-.mf-update-overlay .mf-loading__dot {
-  background: var(--accent-color);
-  box-shadow: 0 0 18px rgba(29, 185, 84, 0.42);
-}
-
 .mf-update-overlay__hint {
   font-family: 'Inter', sans-serif;
   font-size: 12px;
   color: rgba(242, 242, 242, 0.5);
   text-align: center;
+}
+
+/* =========================
+   Update overlay
+   Opacity-controlled only
+   ========================= */
+
+#mf-update-overlay.mf-update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  overflow: hidden;
+
+  display: block !important;
+
+  background-color: #000;
+  background-image:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.05), transparent 22%),
+    linear-gradient(180deg, #050505 0%, #000000 100%);
+
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+
+  transition:
+    opacity 0.45s ease,
+    visibility 0s linear 0.45s;
+}
+
+#mf-update-overlay.mf-update-overlay.is-updating {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+
+  transition:
+    opacity 0.45s ease,
+    visibility 0s linear 0s;
 }
 
 /* Bottom update flag. Small, aligned, and less blocky than a normal rounded-box. */

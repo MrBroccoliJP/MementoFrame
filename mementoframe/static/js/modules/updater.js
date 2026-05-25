@@ -30,6 +30,7 @@ function ensureIndicator() {
 
     const systemInfo = document.querySelector(".system-info-box");
     const wifiInfo = document.querySelector(".wifi-info");
+
     if (systemInfo && wifiInfo) wifiInfo.after(indicatorEl);
     else if (systemInfo) systemInfo.appendChild(indicatorEl);
     else document.body.appendChild(indicatorEl);
@@ -38,7 +39,7 @@ function ensureIndicator() {
   return indicatorEl;
 }
 
-function ensureOverlay() {
+export function ensureOverlay() {
   if (overlayEl) return overlayEl;
 
   overlayEl = document.getElementById("mf-update-overlay");
@@ -70,9 +71,9 @@ function ensureOverlay() {
     document.body.appendChild(overlayEl);
   }
 
-  // Older templates had style="display: none" on this element.
-  // Clear it so CSS can show the update screen with .visible.
-  overlayEl.style.display = "";
+  // Keep the overlay controlled by opacity/visibility only.
+  // Do not use inline display toggles.
+  overlayEl.style.removeProperty("display");
 
   return overlayEl;
 }
@@ -87,15 +88,13 @@ function applyUpdateState(state) {
   const available = !!lastState.available;
   const updating = !!lastState.update_in_progress;
 
-  // Requested behavior: the rounded update card only appears when an update is available.
   indicator.classList.toggle("hidden", !available || updating);
   indicator.classList.toggle("visible", available && !updating);
   indicator.title = lastState.latest_version
     ? `Software update available: ${lastState.latest_version}`
     : "Software update available";
 
-  overlay.style.display = "";
-  overlay.classList.toggle("visible", updating);
+  overlay.classList.toggle("is-updating", updating);
   overlay.setAttribute("aria-hidden", updating ? "false" : "true");
 
   if (statusText) {
@@ -120,3 +119,18 @@ export function initUpdater() {
 export function getLastUpdateState() {
   return lastState;
 }
+
+/* Console helpers */
+window.showUpdateOverlay = () => {
+  const overlay = ensureOverlay();
+  overlay.classList.add("is-updating");
+  overlay.setAttribute("aria-hidden", "false");
+};
+
+window.hideUpdateOverlay = () => {
+  const overlay = ensureOverlay();
+  overlay.classList.remove("is-updating");
+  overlay.setAttribute("aria-hidden", "true");
+};
+
+window.refreshUpdateStatus = refreshUpdateStatus;
