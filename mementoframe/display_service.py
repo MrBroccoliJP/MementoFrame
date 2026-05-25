@@ -299,14 +299,11 @@ def resolve_moon_phase_icon(moon_phase):
 
 
 def resolve_uv_icon(uv_value):
-    """Return a UV index icon URL for clear daytime weather."""
+    """Return the corresponding UV-index Meteocon URL."""
     try:
         uv = float(uv_value)
     except (TypeError, ValueError):
-        return meteocon_url("uv-index")
-
-    if uv <= 0:
-        return meteocon_url("uv-index")
+        return None
 
     rounded = int(round(uv))
     if rounded >= 12:
@@ -315,9 +312,23 @@ def resolve_uv_icon(uv_value):
     return meteocon_url(f"uv-index-{rounded}")
 
 
-def resolve_weather_icon(condition_code, is_day=True, moon_phase=None):
-    """Map WeatherAPI condition code + day/night state to a bundled Meteocons icon URL."""
+def resolve_weather_icon(condition_code, is_day=True, moon_phase=None, uv_value=None):
+    """Map WeatherAPI condition code + day/night state to a bundled Meteocons icon URL.
+
+    Clear daytime conditions use exactly one icon:
+      - UV-index Meteocon when UV is 5 or above.
+      - clear-day otherwise.
+
+    Clear nighttime conditions use the current moon phase icon.
+    """
     code = int(condition_code or 0)
+
+    if code == 1000 and bool(is_day):
+        uv_icon = resolve_uv_icon(uv_value)
+        if uv_icon and float(uv_value) >= 5:
+            return uv_icon
+        return meteocon_url("clear-day")
+
     entry = WEATHER_CODE_TO_METEOICON.get(code, "not-available")
 
     if isinstance(entry, dict):
@@ -414,6 +425,7 @@ def get_weather_data():
             current_code,
             is_day=current_is_day,
             moon_phase=moon_phase,
+            uv_value=current_uv,
         )
 
         # ── Current conditions ────────────────────────────────────────────
@@ -423,7 +435,6 @@ def get_weather_data():
             "conditionCode": current_code,
             "isDay": current_is_day,
             "uv": current_uv,
-            "uvIcon": resolve_uv_icon(current_uv) if current_code == 1000 and current_is_day else None,
             "moonPhase": moon_phase,
             "icon": current_icon,
             "humidity": current["humidity"],
@@ -453,7 +464,12 @@ def get_weather_data():
 
                 hourly_slots.append({
                     "time": hour_fc["time"].split(" ")[1][:5],  # "HH:MM"
-                    "icon": resolve_weather_icon(condition_code, is_day=is_day, moon_phase=day_moon_phase),
+                    "icon": resolve_weather_icon(
+                        condition_code,
+                        is_day=is_day,
+                        moon_phase=day_moon_phase,
+                        uv_value=hour_fc.get("uv"),
+                    ),
                     "conditionCode": condition_code,
                     "isDay": is_day,
                     "moonPhase": day_moon_phase,
@@ -481,8 +497,12 @@ def get_weather_data():
 
             daily_slots.append({
                 "label": label,
-                "icon": resolve_weather_icon(condition_code, is_day=True, moon_phase=day_fc.get("astro", {}).get("moon_phase")),
-                "uvIcon": resolve_uv_icon(uv_value) if condition_code == 1000 else None,
+                "icon": resolve_weather_icon(
+                    condition_code,
+                    is_day=True,
+                    moon_phase=day_fc.get("astro", {}).get("moon_phase"),
+                    uv_value=uv_value,
+                ),
                 "conditionCode": condition_code,
                 "isDay": True,
                 "moonPhase": day_fc.get("astro", {}).get("moon_phase", ""),

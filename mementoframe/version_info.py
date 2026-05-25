@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 42, #changed the way weather and calendar appear, now showing forecasts and added a new spotify mini player 
+        "version": 43, #small icon fix for uv index
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 24, #new weather information for forecasts 
+        "version": 26, #new weather api functionality, alerts and new icons. 
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
