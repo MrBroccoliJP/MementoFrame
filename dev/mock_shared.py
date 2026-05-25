@@ -138,11 +138,21 @@ DEFAULT_STATE: dict[str, Any] = {
         "enabled": True,
         "temperature": 18.4,
         "condition": "Partly cloudy",
-        "icon": "https://cdn.weatherapi.com/weather/64x64/day/116.png",
+        "conditionCode": 1003,
+        "isDay": True,
+        "uv": 6.0,
+        "moonPhase": "Waxing Crescent",
+        "icon": "/assets/Weather/meteoicons/fill/partly-cloudy-day.svg",
         "humidity": 72,
         "windSpeed": 14.4,
         "city": "Porto",
         "forecast_enabled": True,
+        "alerts_enabled": False,
+        "alert_event": "Thunderstorm warning",
+        "alert_headline": "Mock thunderstorm warning",
+        "alert_severity": "Moderate",
+        "alert_desc": "Mock alert: thunderstorms are possible in your area.",
+        "alert_instruction": "Stay indoors if thunder is heard.",
     },
     "time": {
         "enabled": False,
@@ -492,57 +502,305 @@ def next_track() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Weather
 # ---------------------------------------------------------------------------
+METEOICON_BASE = "/assets/Weather/meteoicons/fill"
+
+MOON_PHASE_TO_METEOICON = {
+    "new moon": "moon-new",
+    "waxing crescent": "moon-waxing-crescent",
+    "first quarter": "moon-first-quarter",
+    "waxing gibbous": "moon-waxing-gibbous",
+    "full moon": "moon-full",
+    "waning gibbous": "moon-waning-gibbous",
+    "last quarter": "moon-last-quarter",
+    "waning crescent": "moon-waning-crescent",
+}
+
+WEATHER_CODE_TO_METEOICON = {
+    1000: {"day": "clear-day", "night": "moon-phase"},
+    1003: {"day": "partly-cloudy-day", "night": "partly-cloudy-night"},
+    1006: "cloudy",
+    1009: {"day": "overcast-day", "night": "overcast-night"},
+
+    1030: {"day": "fog-day", "night": "fog-night"},
+    1135: {"day": "fog-day", "night": "fog-night"},
+    1147: {"day": "fog-day", "night": "fog-night"},
+
+    1063: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+    1180: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+    1240: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+
+    1150: "rain",
+    1153: "rain",
+    1168: "rain",
+    1171: "rain",
+    1072: "rain",
+
+    1183: "rain",
+    1186: "rain",
+    1189: "rain",
+    1192: "rain",
+    1195: "extreme-rain",
+    1198: "rain",
+    1201: "extreme-rain",
+    1243: "rain",
+    1246: "extreme-rain",
+
+    1066: "snow",
+    1210: "snow",
+    1255: "snow",
+    1114: "wind-snow",
+    1117: "extreme-snow",
+    1213: "snow",
+    1216: "snow",
+    1219: "snow",
+    1222: "snow",
+    1225: "extreme-snow",
+    1258: "snow",
+
+    1069: {"day": "partly-cloudy-day-sleet", "night": "partly-cloudy-night-sleet"},
+    1204: "sleet",
+    1207: "sleet",
+    1249: "sleet",
+    1252: "sleet",
+
+    1237: "hail",
+    1261: "hail",
+    1264: "hail",
+
+    1087: {"day": "thunderstorms-day", "night": "thunderstorms-night"},
+    1273: {"day": "thunderstorms-day-rain", "night": "thunderstorms-night-rain"},
+    1276: "thunderstorms-extreme-rain",
+    1279: {"day": "thunderstorms-day-snow", "night": "thunderstorms-night-snow"},
+    1282: "thunderstorms-extreme-snow",
+}
+
+def _meteoicon_url(icon_name: str | None) -> str:
+    """Return a frontend URL for a bundled Meteocons/Meteoicons SVG."""
+    clean = str(icon_name or "not-available").strip().replace(".svg", "")
+    return f"{METEOICON_BASE}/{clean}.svg"
+
+
+def _uv_icon_name(uv: Any) -> str:
+    """Use UV-specific icons only for clear daytime sky when UV is 5 or above."""
+    try:
+        uv_value = int(round(float(uv)))
+    except Exception:
+        return "clear-day"
+
+    if uv_value < 5:
+        return "clear-day"
+    if uv_value >= 12:
+        return "uv-index-11-plus"
+    if uv_value == 11:
+        return "uv-index-11"
+    return f"uv-index-{max(1, min(10, uv_value))}"
+
+
+def _moon_icon_name(moon_phase: Any) -> str:
+    key = str(moon_phase or "").strip().lower()
+    return MOON_PHASE_TO_METEOICON.get(key, "moon-new")
+
+
+def resolve_meteoicon(condition_code: Any, is_day: Any = True, uv: Any = None, moon_phase: Any = None) -> str:
+    """Map a WeatherAPI condition code + day/night context to a local icon URL.
+
+    Special cases:
+      - clear daytime sky uses a UV-index icon when UV >= 5;
+      - clear nighttime sky uses the current moon phase icon;
+      - non-clear nighttime conditions use a night icon when one exists.
+    """
+    try:
+        code = int(condition_code)
+    except Exception:
+        code = 1000
+
+    day = bool(int(is_day)) if isinstance(is_day, (int, str)) and str(is_day).strip() in ("0", "1") else bool(is_day)
+
+    if code == 1000:
+        icon = _uv_icon_name(uv) if day else _moon_icon_name(moon_phase)
+        return _meteoicon_url(icon)
+
+    entry = WEATHER_CODE_TO_METEOICON.get(code, "not-available")
+    if isinstance(entry, dict):
+        icon = entry["day"] if day else entry["night"]
+    else:
+        icon = entry
+    return _meteoicon_url(icon)
+
+
+ALERT_EVENT_ICON_RULES = [
+    ("avalanche", "alert-avalanche-danger"),
+    ("landslide", "alert-falling-rocks"),
+    ("rock", "alert-falling-rocks"),
+    ("debris", "alert-falling-rocks"),
+    ("tornado", "tornado"),
+    ("hurricane", "hurricane"),
+    ("cyclone", "hurricane"),
+    ("typhoon", "hurricane"),
+    ("wind", "wind-alert"),
+    ("gale", "wind-alert"),
+    ("gust", "wind-alert"),
+    ("thunder", "thunderstorms-extreme-rain"),
+    ("lightning", "thunderstorms-extreme-rain"),
+    ("storm", "thunderstorms-extreme"),
+    ("flood", "extreme-rain"),
+    ("rain", "extreme-rain"),
+    ("shower", "extreme-rain"),
+    ("snow", "extreme-snow"),
+    ("blizzard", "extreme-snow"),
+    ("ice", "extreme-snow"),
+    ("freez", "extreme-snow"),
+    ("hail", "hail"),
+    ("heat", "thermometer-warmer"),
+    ("hot", "thermometer-warmer"),
+    ("cold", "thermometer-colder"),
+    ("frost", "thermometer-colder"),
+    ("fog", "fog-day"),
+    ("mist", "fog-day"),
+]
+
+
+def resolve_alert_icon(alert: dict[str, Any]) -> str:
+    """Map WeatherAPI alert text to the closest local alert/severity icon."""
+    haystack = " ".join(
+        str(alert.get(key) or "")
+        for key in ("event", "headline", "desc", "instruction", "severity", "category")
+    ).lower()
+
+    for token, icon in ALERT_EVENT_ICON_RULES:
+        if token in haystack:
+            return _meteoicon_url(icon)
+
+    severity = str(alert.get("severity") or "").lower()
+    if "extreme" in severity:
+        return _meteoicon_url("thunderstorms-extreme")
+    if "severe" in severity:
+        return _meteoicon_url("wind-alert")
+    return _meteoicon_url("not-available")
+
+
 def _weather_icon_url(icon: str | None, fallback: str = "https://cdn.weatherapi.com/weather/64x64/day/116.png") -> str:
-    """Normalize WeatherAPI icon values into browser-ready absolute URLs."""
+    """Normalize WeatherAPI icon values into browser-ready absolute URLs.
+
+    Kept for backward compatibility with old mock state, but new mock payloads
+    prefer local Meteoicons URLs from resolve_meteoicon().
+    """
     value = str(icon or "").strip() or fallback
     if value.startswith("//"):
         return "https:" + value
     return value
 
 
+def _mock_alert_payload(weather: dict[str, Any]) -> list[dict[str, str]]:
+    if not weather.get("alerts_enabled"):
+        return []
+
+    alert = {
+        "headline": str(weather.get("alert_headline") or "Mock weather alert"),
+        "event": str(weather.get("alert_event") or "Weather alert"),
+        "severity": str(weather.get("alert_severity") or "Moderate"),
+        "urgency": "Expected",
+        "areas": str(weather.get("city") or "Mock area"),
+        "effective": datetime.now().isoformat(timespec="minutes"),
+        "expires": (datetime.now() + timedelta(hours=2)).isoformat(timespec="minutes"),
+        "desc": str(weather.get("alert_desc") or "Mock weather alert for display testing."),
+        "instruction": str(weather.get("alert_instruction") or "Follow local guidance."),
+    }
+    alert["icon"] = resolve_alert_icon(alert)
+    return [alert]
+
+
+def _alerts_from_weatherapi(data: dict[str, Any]) -> list[dict[str, str]]:
+    raw_alerts = data.get("alerts", {}).get("alert", []) or []
+    alerts: list[dict[str, str]] = []
+    for raw in raw_alerts:
+        alert = {
+            "headline": str(raw.get("headline") or ""),
+            "event": str(raw.get("event") or ""),
+            "severity": str(raw.get("severity") or ""),
+            "urgency": str(raw.get("urgency") or ""),
+            "areas": str(raw.get("areas") or ""),
+            "effective": str(raw.get("effective") or ""),
+            "expires": str(raw.get("expires") or ""),
+            "desc": str(raw.get("desc") or ""),
+            "instruction": str(raw.get("instruction") or ""),
+            "category": str(raw.get("category") or ""),
+            "certainty": str(raw.get("certainty") or ""),
+        }
+        alert["icon"] = resolve_alert_icon(alert)
+        alerts.append(alert)
+    return alerts
+
+
 def mock_forecast_payload(weather: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
     """Return deterministic local forecast data for the display weather rotation."""
     base_temp = round(float(weather.get("temperature", 18.4)))
     condition = str(weather.get("condition") or "Partly cloudy")
-    icon = _weather_icon_url(weather.get("icon"))
+    condition_code = int(weather.get("conditionCode") or 1003)
+    moon_phase = weather.get("moonPhase") or "Waxing Crescent"
+    uv = weather.get("uv", 6)
 
     now = datetime.now()
     hourly: list[dict[str, str]] = []
-    hourly_conditions = [condition, "Cloudy", "Light rain", "Partly cloudy", "Clear"]
-    hourly_offsets = [0, 1, -1, -2, -1]
-    for index in range(5):
+    hourly_items = [
+        (condition, condition_code, uv, bool(weather.get("isDay", True)), 0),
+        ("Cloudy", 1006, uv, True, 1),
+        ("Light rain", 1183, uv, True, -1),
+        ("Partly cloudy", 1003, uv, False, -2),
+        ("Clear", 1000, uv, False, -1),
+    ]
+
+    for index, (slot_condition, code, slot_uv, is_day, temp_offset) in enumerate(hourly_items):
         slot = now + timedelta(hours=index + 1)
         hourly.append({
             "time": slot.strftime("%H:00"),
-            "icon": icon,
-            "temp": f"{base_temp + hourly_offsets[index]}°C",
-            "condition": hourly_conditions[index],
+            "icon": resolve_meteoicon(code, is_day, slot_uv, moon_phase),
+            "temp": f"{base_temp + temp_offset}°C",
+            "condition": slot_condition,
+            "conditionCode": code,
+            "isDay": bool(is_day),
+            "uv": slot_uv,
+            "moonPhase": moon_phase,
         })
 
     daily: list[dict[str, str]] = []
-    daily_conditions = [condition, "Sunny", "Cloudy", "Light rain", "Partly cloudy"]
-    high_offsets = [3, 4, 2, 1, 3]
-    low_offsets = [-4, -3, -5, -6, -4]
-    for index in range(5):
+    daily_items = [
+        (condition, condition_code, uv, 3, -4),
+        ("Sunny", 1000, 7, 4, -3),
+        ("Cloudy", 1006, 3, 2, -5),
+        ("Light rain", 1183, 2, 1, -6),
+        ("Partly cloudy", 1003, 5, 3, -4),
+    ]
+
+    for index, (day_condition, code, day_uv, high_offset, low_offset) in enumerate(daily_items):
         day = date.today() + timedelta(days=index)
         daily.append({
             "label": "Today" if index == 0 else day.strftime("%a"),
-            "icon": icon,
-            "high": f"{base_temp + high_offsets[index]}°C",
-            "low": f"{base_temp + low_offsets[index]}°C",
-            "condition": daily_conditions[index],
+            "icon": resolve_meteoicon(code, True, day_uv, moon_phase),
+            "high": f"{base_temp + high_offset}°C",
+            "low": f"{base_temp + low_offset}°C",
+            "condition": day_condition,
+            "conditionCode": code,
+            "isDay": True,
+            "uv": day_uv,
+            "moonPhase": moon_phase,
         })
 
     return {"hourly": hourly, "daily": daily}
 
 
-def _forecast_from_weatherapi(data: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+def _forecast_from_weatherapi(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Extract the frontend forecast shape from a WeatherAPI forecast.json response."""
     forecast_days = data.get("forecast", {}).get("forecastday", []) or []
-    hourly: list[dict[str, str]] = []
+    moon_phase = None
+    if forecast_days:
+        moon_phase = (forecast_days[0].get("astro", {}) or {}).get("moon_phase")
+
+    hourly: list[dict[str, Any]] = []
     now_epoch = time.time()
 
     for day_fc in forecast_days:
+        day_moon_phase = (day_fc.get("astro", {}) or {}).get("moon_phase") or moon_phase
         for hour_fc in day_fc.get("hour", []):
             try:
                 if float(hour_fc.get("time_epoch", 0)) <= now_epoch:
@@ -550,18 +808,25 @@ def _forecast_from_weatherapi(data: dict[str, Any]) -> dict[str, list[dict[str, 
             except Exception:
                 pass
             condition = hour_fc.get("condition", {}) or {}
+            code = condition.get("code", 1000)
+            is_day = bool(int(hour_fc.get("is_day", 1)))
+            uv = hour_fc.get("uv")
             hourly.append({
                 "time": str(hour_fc.get("time", "")).split(" ")[-1][:5],
-                "icon": _weather_icon_url(condition.get("icon")),
+                "icon": resolve_meteoicon(code, is_day, uv, day_moon_phase),
                 "temp": f"{round(float(hour_fc.get('temp_c', 0)))}°C",
                 "condition": condition.get("text", ""),
+                "conditionCode": code,
+                "isDay": is_day,
+                "uv": uv,
+                "moonPhase": day_moon_phase,
             })
             if len(hourly) == 5:
                 break
         if len(hourly) == 5:
             break
 
-    daily: list[dict[str, str]] = []
+    daily: list[dict[str, Any]] = []
     today = date.today()
     for day_fc in forecast_days[:5]:
         try:
@@ -570,12 +835,20 @@ def _forecast_from_weatherapi(data: dict[str, Any]) -> dict[str, list[dict[str, 
             day_date = today + timedelta(days=len(daily))
         day_data = day_fc.get("day", {}) or {}
         condition = day_data.get("condition", {}) or {}
+        astro = day_fc.get("astro", {}) or {}
+        code = condition.get("code", 1000)
+        uv = day_data.get("uv")
+        moon = astro.get("moon_phase") or moon_phase
         daily.append({
             "label": "Today" if day_date == today else day_date.strftime("%a"),
-            "icon": _weather_icon_url(condition.get("icon")),
+            "icon": resolve_meteoicon(code, True, uv, moon),
             "high": f"{round(float(day_data.get('maxtemp_c', 0)))}°C",
             "low": f"{round(float(day_data.get('mintemp_c', 0)))}°C",
             "condition": condition.get("text", ""),
+            "conditionCode": code,
+            "isDay": True,
+            "uv": uv,
+            "moonPhase": moon,
         })
 
     return {"hourly": hourly, "daily": daily}
@@ -592,20 +865,33 @@ def real_weather_payload() -> dict[str, Any]:
         import requests
         res = requests.get(
             "https://api.weatherapi.com/v1/forecast.json",
-            params={"key": key, "q": location, "days": 5, "aqi": "no", "alerts": "no"},
+            params={"key": key, "q": location, "days": 5, "aqi": "no", "alerts": "yes"},
             timeout=5,
         )
         res.raise_for_status()
         data = res.json()
         current = data["current"]
         current_condition = current.get("condition", {}) or {}
+        forecast_days = data.get("forecast", {}).get("forecastday", []) or []
+        moon_phase = None
+        if forecast_days:
+            moon_phase = (forecast_days[0].get("astro", {}) or {}).get("moon_phase")
+
+        code = current_condition.get("code", 1000)
+        is_day = bool(int(current.get("is_day", 1)))
+        uv = current.get("uv")
         payload = {
             "temperature": round(float(current["temp_c"]), 1),
             "condition": current_condition.get("text", ""),
-            "icon": _weather_icon_url(current_condition.get("icon")),
+            "conditionCode": code,
+            "isDay": is_day,
+            "uv": uv,
+            "moonPhase": moon_phase,
+            "icon": resolve_meteoicon(code, is_day, uv, moon_phase),
             "humidity": int(current["humidity"]),
             "windSpeed": float(current["wind_kph"]),
             "city": data["location"]["name"],
+            "alerts": _alerts_from_weatherapi(data),
             "source": "real",
         }
         forecast = _forecast_from_weatherapi(data)
@@ -624,13 +910,23 @@ def weather_payload() -> dict[str, Any]:
     if not weather.get("enabled", True):
         return {"error": "Mock weather disabled", "source": "mock"}
 
+    code = int(weather.get("conditionCode") or 1000)
+    is_day = bool(weather.get("isDay", True))
+    uv = weather.get("uv", 6)
+    moon_phase = weather.get("moonPhase") or "Waxing Crescent"
+
     payload = {
         "temperature": round(float(weather.get("temperature", 0)), 1),
         "condition": weather.get("condition", "Clear"),
-        "icon": _weather_icon_url(weather.get("icon")),
+        "conditionCode": code,
+        "isDay": is_day,
+        "uv": uv,
+        "moonPhase": moon_phase,
+        "icon": resolve_meteoicon(code, is_day, uv, moon_phase),
         "humidity": int(float(weather.get("humidity", 0))),
         "windSpeed": float(weather.get("windSpeed", 0)),
         "city": weather.get("city", "Porto"),
+        "alerts": _mock_alert_payload(weather),
         "source": "mock",
     }
     if weather.get("forecast_enabled", True):

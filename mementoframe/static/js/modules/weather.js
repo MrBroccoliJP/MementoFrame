@@ -9,6 +9,14 @@ import { $, fetchJson } from "../utils.js";
 
 let lastWeatherAt = null;
 const STALE = 2 * 60 * 60 * 1000;
+const WEATHER_ALERT_CYCLE_MS = 5 * 60 * 1000;
+const WEATHER_ALERT_VISIBLE_MS = 60 * 1000;
+
+let currentWeatherCondition = "";
+let currentWeatherIconUrl = PATHS.WEATHER_OFFLINE_ICON;
+let currentWeatherUvIconUrl = null;
+let currentWeatherAlerts = [];
+let weatherAlertTimer = null;
 
 export function initWeather() {
   const box = $(SELECTORS.weatherBox);
@@ -30,6 +38,10 @@ export function initWeather() {
     }).catch(() => {});
   }
 
+  if (!weatherAlertTimer) {
+    weatherAlertTimer = setInterval(applyWeatherContainerDisplay, 15000);
+  }
+
   setInterval(updateWeather, INTERVALS.WEATHER);
   updateWeather();
 }
@@ -41,9 +53,12 @@ export async function updateWeather() {
   const icon = $(SELECTORS.weatherIcon);
 
   if (!state.online) {
+    currentWeatherCondition = "Offline";
+    currentWeatherIconUrl = PATHS.WEATHER_OFFLINE_ICON;
+    currentWeatherUvIconUrl = null;
+    currentWeatherAlerts = [];
     if (tEl)  tEl.textContent = "--°C";
-    if (cEl)  setWeatherConditionText(cEl, "Offline");
-    if (icon) icon.src = PATHS.WEATHER_OFFLINE_ICON;
+    applyWeatherContainerDisplay();
     if (!lastWeatherAt || Date.now() - lastWeatherAt > STALE) {
       if (box) box.style.display = "none";
       clearForecasts();
@@ -60,28 +75,21 @@ export async function updateWeather() {
     return;
   }
 
-  if (tEl) tEl.textContent = `${data.temperature}°C`;
-  if (cEl) setWeatherConditionText(cEl, data.condition || "");
+  currentWeatherCondition = data.condition || "";
+  currentWeatherIconUrl = normalizeIconUrl(data.icon || PATHS.WEATHER_OFFLINE_ICON);
+  currentWeatherUvIconUrl = data.uvIcon ? normalizeIconUrl(data.uvIcon) : null;
+  currentWeatherAlerts = Array.isArray(data.alerts) ? data.alerts : [];
 
-  let validIconUrl = PATHS.WEATHER_OFFLINE_ICON;
-  if (icon && data.icon) {
-    icon.crossOrigin = "anonymous";
-    validIconUrl = normalizeIconUrl(data.icon);
-    icon.src = `${validIconUrl}?t=${Date.now()}`;
-  }
+  if (tEl) tEl.textContent = `${data.temperature}°C`;
 
   lastWeatherAt = Date.now();
   if (box) box.style.display = "flex";
+  applyWeatherContainerDisplay();
   scheduleWeatherConditionScrollRefresh();
 
-  // Real forecast data from backend — falls back to mock if absent,
-  // matching the behaviour of the uploaded source file.
-  const forecast = data.forecast || generateMockForecasts(
-    data.temperature || "--",
-    data.condition   || "Unknown",
-    validIconUrl
-  );
-
+  // Forecast data is owned by the backend/mock service.
+  // If /weather.json has no valid forecast, do not generate fake frontend data.
+  const forecast = data.forecast;
   const forecastAvailable = hasValidForecast(forecast);
   updateWeatherAvailability(true, forecastAvailable);
 
@@ -190,6 +198,80 @@ function forecastRow({ label, icon, condition, tempHtml, tempClass = "" }) {
     </div>`;
 }
 
+function applyWeatherContainerDisplay() {
+  const cEl  = $(SELECTORS.weatherCond);
+  const icon = $(SELECTORS.weatherIcon);
+
+  const alert = getActiveWeatherAlert();
+  if (alert) {
+    if (cEl) setWeatherConditionText(cEl, formatWeatherAlertText(alert));
+    if (icon) setWeatherIcon(icon, normalizeIconUrl(alert.icon || currentWeatherIconUrl), null);
+    return;
+  }
+
+  if (cEl) setWeatherConditionText(cEl, currentWeatherCondition);
+  if (icon) setWeatherIcon(icon, currentWeatherIconUrl, currentWeatherUvIconUrl);
+}
+
+function getActiveWeatherAlert() {
+  if (!currentWeatherAlerts.length) return null;
+  const inAlertWindow = Date.now() % WEATHER_ALERT_CYCLE_MS < WEATHER_ALERT_VISIBLE_MS;
+  return inAlertWindow ? currentWeatherAlerts[0] : null;
+}
+
+function formatWeatherAlertText(alert) {
+  const event = String(alert?.event || "").trim();
+  const headline = String(alert?.headline || "").trim();
+  const severity = String(alert?.severity || "").trim();
+
+  if (event && severity) return `⚠ ${severity}: ${event}`;
+  if (event) return `⚠ ${event}`;
+  if (headline) return `⚠ ${headline}`;
+  return "⚠ Weather alert";
+}
+
+function setWeatherIcon(iconEl, iconUrl, uvIconUrl = null) {
+  if (!iconEl) return;
+
+  const normalizedIcon = normalizeIconUrl(iconUrl || PATHS.WEATHER_OFFLINE_ICON);
+  iconEl.crossOrigin = "anonymous";
+
+  if (iconEl.src !== normalizedIcon && !iconEl.src.endsWith(normalizedIcon)) {
+    iconEl.src = normalizedIcon;
+  }
+
+  const parent = iconEl.parentElement;
+  if (!parent) return;
+
+  parent.style.position = parent.style.position || "relative";
+
+  let uvBadge = parent.querySelector(".weather-uv-index-badge");
+  if (!uvIconUrl) {
+    uvBadge?.remove();
+    return;
+  }
+
+  if (!uvBadge) {
+    uvBadge = document.createElement("img");
+    uvBadge.className = "weather-uv-index-badge";
+    uvBadge.alt = "UV index";
+    uvBadge.setAttribute("aria-hidden", "true");
+    Object.assign(uvBadge.style, {
+      position: "absolute",
+      right: "-4px",
+      bottom: "8px",
+      width: "26px",
+      height: "26px",
+      objectFit: "contain",
+      filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.45))",
+      pointerEvents: "none",
+    });
+    parent.appendChild(uvBadge);
+  }
+
+  uvBadge.src = normalizeIconUrl(uvIconUrl);
+}
+
 function setWeatherConditionText(el, condition) {
   const cleanCondition = String(condition || "").trim();
   el.title = cleanCondition;
@@ -268,28 +350,6 @@ function formatTemp(value) {
     .replace("°C", "°")
     .replace("C", "°")
     .replace("°°", "°");
-}
-
-function generateMockForecasts(temp, condition, icon) {
-  const base = Number.parseFloat(temp) || 20;
-  const cleanIcon = normalizeIconUrl(icon);
-
-  return {
-    hourly: [
-      { time: "20:00", icon: cleanIcon, temp: `${Math.round(base)}°C`,     condition },
-      { time: "21:00", icon: cleanIcon, temp: `${Math.round(base - 1)}°C`, condition: "Clear" },
-      { time: "22:00", icon: cleanIcon, temp: `${Math.round(base - 1)}°C`, condition: "Clear" },
-      { time: "23:00", icon: cleanIcon, temp: `${Math.round(base - 1)}°C`, condition: "Clear" },
-      { time: "00:00", icon: cleanIcon, temp: `${Math.round(base - 2)}°C`, condition },
-    ],
-    daily: [
-      { label: "Today", icon: cleanIcon, high: `${Math.round(base + 2)}°C`, low: `${Math.round(base - 4)}°C`, condition },
-      { label: "Sun",   icon: cleanIcon, high: `${Math.round(base + 2)}°C`, low: `${Math.round(base - 5)}°C`, condition },
-      { label: "Mon",   icon: cleanIcon, high: `${Math.round(base + 3)}°C`, low: `${Math.round(base - 5)}°C`, condition: "Sunny" },
-      { label: "Tue",   icon: cleanIcon, high: `${Math.round(base + 1)}°C`, low: `${Math.round(base - 6)}°C`, condition: "Cloudy" },
-      { label: "Wed",   icon: cleanIcon, high: `${Math.round(base + 2)}°C`, low: `${Math.round(base - 4)}°C`, condition },
-    ],
-  };
 }
 
 function escapeHtml(value) {
