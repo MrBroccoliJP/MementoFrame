@@ -1756,3 +1756,27 @@ body:has(.left_panel.swapped) .system-info-box {
     transform: translateY(0);
   }
 }
+
+/* =========================================================
+   Update tray gap fix
+   =========================================================
+   Collapse the update card unless the updater module explicitly marks it
+   visible. This preserves the existing tray styling and prevents an empty
+   flex slot from remaining when no update is available.
+*/
+.system-info-box:not(:has(.update-status-card.visible)) .update-status-card,
+.update-status-card.hidden:not(.visible) {
+  display: none !important;
+  flex: 0 0 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+}
