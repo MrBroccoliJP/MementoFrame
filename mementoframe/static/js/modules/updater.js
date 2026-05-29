@@ -9,6 +9,7 @@ import { fetchJson } from "../utils.js";
 let indicatorEl = null;
 let overlayEl = null;
 let lastState = null;
+let updateStream = null;
 
 function ensureIndicator() {
   if (indicatorEl) return indicatorEl;
@@ -78,7 +79,7 @@ export function ensureOverlay() {
   return overlayEl;
 }
 
-function applyUpdateState(state) {
+export function applyUpdateState(state) {
   lastState = state || {};
 
   const indicator = ensureIndicator();
@@ -109,10 +110,34 @@ async function refreshUpdateStatus() {
   if (state) applyUpdateState(state);
 }
 
+function setupUpdateStream() {
+  if (!window.EventSource || updateStream) return;
+
+  try {
+    updateStream = new EventSource(PATHS.UPDATE_STREAM || "/update/stream");
+
+    updateStream.addEventListener("state", (event) => {
+      try {
+        const state = JSON.parse(event.data || "{}");
+        applyUpdateState(state);
+      } catch (error) {
+        console.warn("Could not parse update stream state", error);
+      }
+    });
+
+    updateStream.onerror = () => {
+      // Keep the normal polling fallback alive. EventSource auto-reconnects.
+    };
+  } catch (error) {
+    updateStream = null;
+  }
+}
+
 export function initUpdater() {
   ensureIndicator();
   ensureOverlay();
   refreshUpdateStatus();
+  setupUpdateStream();
   setInterval(refreshUpdateStatus, INTERVALS.UPDATE_STATUS || 60000);
 }
 
@@ -133,4 +158,4 @@ window.hideUpdateOverlay = () => {
   overlay.setAttribute("aria-hidden", "true");
 };
 
-window.refreshUpdateStatus = refreshUpdateStatus;
+window.applyUpdateState = applyUpdateState;

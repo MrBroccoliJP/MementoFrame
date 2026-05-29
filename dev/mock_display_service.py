@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import json
 import time
 import threading
 from pathlib import Path
@@ -181,6 +182,23 @@ def update_status():
     return jsonify(load_update_state())
 
 
+@app.route("/update/stream")
+def update_stream():
+    def event_stream():
+        last_payload = None
+        while True:
+            state = load_update_state()
+            payload = json.dumps(state, sort_keys=True)
+            if payload != last_payload:
+                last_payload = payload
+                yield f"event: state\ndata: {payload}\n\n"
+            else:
+                yield ": heartbeat\n\n"
+            time.sleep(1)
+
+    return Response(event_stream(), mimetype="text/event-stream")
+
+
 @app.route("/update/check", methods=["POST"])
 def update_check():
     state = check_for_updates_mock()
@@ -190,7 +208,7 @@ def update_check():
 @app.route("/update/install", methods=["POST"])
 def update_install():
     state = mock_install_update_blocked()
-    return jsonify({"status": "blocked", "message": "Mock environment: update install/reboot is disabled.", "updater": state})
+    return jsonify({"status": "started", "message": "Mock environment: simulated update started; install/reboot are disabled.", "updater": state})
 
 
 @app.route("/config/stream")
@@ -313,7 +331,8 @@ def mock_update_pending():
 
 @app.route("/mock/update/autoupdate", methods=["POST"])
 def mock_update_autoupdate():
-    return jsonify(mock_autoupdate()) if request.accept_mimetypes.best == "application/json" else redirect(url_for("mock_management"))
+    mock_autoupdate()
+    return jsonify(load_update_state()) if request.accept_mimetypes.best == "application/json" else redirect(url_for("mock_management"))
 
 
 @app.route("/dev/state", methods=["GET", "POST"])
@@ -368,7 +387,12 @@ def _autoupdate_worker():
     while True:
         time.sleep(60 * 60)
         try:
-            mock_autoupdate()
+            state = load_update_state()
+            if not state.get("auto_update") or state.get("update_in_progress"):
+                continue
+            checked = check_for_updates_mock()
+            if checked.get("available"):
+                mock_autoupdate()
         except Exception as exc:
             print(f"[mock-autoupdate] {exc}")
 

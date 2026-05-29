@@ -73,6 +73,10 @@ function setAccentVar(color) {
   document.documentElement.style.setProperty("--accent-color", color);
   document.documentElement.style.setProperty("--accent-text",  color);
   state.spotify.currentAccent = color;
+
+  window.dispatchEvent(new CustomEvent("mementoframe:accent-changed", {
+    detail: { color },
+  }));
 }
 
 /**
@@ -249,6 +253,7 @@ export async function updateSpotify() {
   const trackChanged = !!trackId && !!previousTrackId && trackId !== previousTrackId;
   const firstTrack = !!trackId && !previousTrackId;
   const artworkKey = albumArt ? `${trackId || "unknown"}|${albumArt}` : null;
+  const resumedFromPaused = isPlaying && state.spotify.wasPaused;
 
   if (!isPlaying) {
     if (!state.spotify.wasPaused) {
@@ -287,7 +292,7 @@ export async function updateSpotify() {
     isPlaying &&
     artworkKey &&
     artworkKey !== lastRenderedArtworkKey &&
-    artworkKey !== lastRequestedArtworkKey;
+    (artworkKey !== lastRequestedArtworkKey || resumedFromPaused);
 
   const revealSpotifyAfterArtwork =
     needsArtworkRender && !spotifyAlreadyVisible;

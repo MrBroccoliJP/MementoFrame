@@ -43,6 +43,51 @@ export function initQR() {
 
   /** @type {string|null} Tracks the last IP used to generate the QR code. */
   let lastIP = null;
+  let lastAccent = null;
+
+  function cssColorToRgb(color) {
+    const probe = document.createElement("span");
+    probe.style.color = color;
+    probe.style.position = "absolute";
+    probe.style.left = "-9999px";
+    document.body.appendChild(probe);
+
+    const rgb = getComputedStyle(probe).color;
+    probe.remove();
+
+    const match = rgb.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
+    if (!match) return null;
+
+    return {
+      r: Number(match[1]),
+      g: Number(match[2]),
+      b: Number(match[3]),
+      css: rgb,
+    };
+  }
+
+  function brightenQrAccent() {
+    const accent = getComputedStyle(document.documentElement)
+      .getPropertyValue("--accent-color")
+      .trim();
+
+    const rgb = cssColorToRgb(accent || "#ffffff");
+    if (!rgb) return "#ffffff";
+
+    // QR modules sit on black, so keep the hue but lift dark album-art accents
+    // instead of replacing them with white. This preserves the app accent while
+    // keeping the QR scannable.
+    const minBrightness = 145;
+    const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+    if (brightness >= minBrightness) return rgb.css;
+
+    const lift = minBrightness - brightness;
+    const r = Math.min(255, Math.round(rgb.r + lift));
+    const g = Math.min(255, Math.round(rgb.g + lift));
+    const b = Math.min(255, Math.round(rgb.b + lift));
+
+    return `rgb(${r}, ${g}, ${b})`;
+  }
 
   /**
    * Render a QR code for the given URL into the container.
@@ -51,16 +96,28 @@ export function initQR() {
    * @param {string} text - The URL to encode in the QR code.
    */
   const generate = (text) => {
+    lastAccent = brightenQrAccent();
     container.innerHTML = "";
     new QRCode(container, {
       text,
-      width:        70,
-      height:       70,
-      colorDark:    "#000",
-      colorLight:   "#fff",
+      width:        58,
+      height:       58,
+      colorDark:    lastAccent,
+      colorLight:   "#000",
       correctLevel: QRCode.CorrectLevel.L,
     });
   };
+
+  function regenerateForAccent() {
+    if (!lastIP) return;
+
+    const accent = brightenQrAccent();
+    if (accent === lastAccent) return;
+
+    generate(`http://${lastIP}:5000`);
+  }
+
+  window.addEventListener("mementoframe:accent-changed", regenerateForAccent);
 
   /**
    * Fetch the Pi's current local IP address from the backend.

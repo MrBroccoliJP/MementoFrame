@@ -771,6 +771,25 @@ def update_status_json():
     """Return read-only software update state for the display UI."""
     return jsonify(load_update_state())
 
+
+@app.route("/update/stream")
+def update_stream():
+    """Notify the display UI immediately when software-update state changes."""
+    def event_stream():
+        last_payload = None
+        while True:
+            state = load_update_state()
+            payload = json.dumps(state, sort_keys=True)
+            if payload != last_payload:
+                last_payload = payload
+                yield f"event: state\ndata: {payload}\n\n"
+            else:
+                yield ": heartbeat\n\n"
+            time.sleep(1)
+
+    return Response(event_stream(), mimetype="text/event-stream")
+
+
 @app.route("/config/stream")
 def config_stream():
     """Open an SSE stream that notifies clients when config or photo metadata changes."""

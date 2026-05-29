@@ -30,12 +30,12 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 44, #weather: if multiple alerts are available, rotate them on the 1 minute window (every 5 minutes)
+        "version": 45, #updater overlay small fix | spotify first play fix | qr code new accent | system info box rework | css cleanup
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 25, #Photo uploads now upload to a tmp folder and then are processed in the device, to avoid the config portal to be stuck loading.
+        "version": 26, #updater overlay small fix
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },

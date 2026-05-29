@@ -460,7 +460,7 @@ def update_check():
 @app.route("/update/install", methods=["POST"])
 def update_install():
     state = mock_install_update_blocked()
-    return jsonify({"status": "blocked", "message": "Mock environment: update install/reboot is disabled.", "updater": state})
+    return jsonify({"status": "started", "message": "Mock environment: simulated update started; install/reboot are disabled.", "updater": state})
 
 
 @app.route("/save_update_settings", methods=["POST"])
@@ -572,9 +572,26 @@ def mock_weather():
         "city": request.form.get("city", "Porto"),
         "temperature": float(request.form.get("temperature", 0) or 0),
         "condition": request.form.get("condition", "Clear"),
-        "icon": request.form.get("icon", ""),
+        "conditionCode": int(float(request.form.get("conditionCode", 1000) or 1000)),
+        "isDay": bool_form("isDay"),
+        "uv": float(request.form.get("uv", 0) or 0),
+        "moonPhase": request.form.get("moonPhase", "Waxing Crescent"),
         "humidity": int(float(request.form.get("humidity", 0) or 0)),
         "windSpeed": float(request.form.get("windSpeed", 0) or 0),
+        "alerts_enabled": bool_form("alerts_enabled"),
+        "alert_event": request.form.get("alert_event", "Thunderstorm warning"),
+        "alert_headline": request.form.get("alert_headline", "Mock thunderstorm warning"),
+        "alert_severity": request.form.get("alert_severity", "Moderate"),
+        "alert_areas": request.form.get("alert_areas", request.form.get("city", "Porto")),
+        "alert_desc": request.form.get("alert_desc", "Mock alert: thunderstorms are possible in your area."),
+        "alert_instruction": request.form.get("alert_instruction", "Stay indoors if thunder is heard."),
+        "alert_second_enabled": bool_form("alert_second_enabled"),
+        "alert_second_event": request.form.get("alert_second_event", "High temperature warning"),
+        "alert_second_headline": request.form.get("alert_second_headline", "Mock heat warning"),
+        "alert_second_severity": request.form.get("alert_second_severity", "Severe"),
+        "alert_second_areas": request.form.get("alert_second_areas", "Portugal"),
+        "alert_second_desc": request.form.get("alert_second_desc", "Mock alert: very hot weather is expected."),
+        "alert_second_instruction": request.form.get("alert_second_instruction", "Drink water and avoid direct sun."),
     })
     save_state(state)
     return redirect(url_for("dashboard"))
@@ -603,7 +620,8 @@ def mock_update_pending():
 
 @app.route("/mock/update/autoupdate", methods=["POST"])
 def mock_update_autoupdate():
-    mock_autoupdate(); return redirect(url_for("dashboard", msg="Mock autoupdate check ran."))
+    mock_autoupdate()
+    return redirect(url_for("dashboard", msg="Mock autoupdate running — overlay should appear on the frame."))
 
 if __name__ == "__main__":
     save_photos(load_photos())

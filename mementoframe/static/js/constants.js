@@ -47,11 +47,12 @@ export const PATHS = {
   SCREEN_OFF:          "/screen/off",
   CONFIG_STREAM:       "/config/stream",
   UPDATE_STATUS:       "/update_status.json",
+  UPDATE_STREAM:       "/update/stream",
 
   PHOTOS_FULL:         "/userdata/Photos/full/",
   PHOTOS_THUMBS:       "/userdata/Photos/thumbs/",
 
-  WEATHER_OFFLINE_ICON: "/assets/Icons/weather_offline.svg",
+  WEATHER_OFFLINE_ICON: "/assets/Weather/meteoicons/fill/not-available.svg",
 };
 
 /**

@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import threading
 import time
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -48,6 +49,7 @@ STATIC_DIR = PROJECT_ROOT / "static"
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 USERDATA_DIR = PROJECT_ROOT / "resources" / "userdata"
 ASSETS_DIR = PROJECT_ROOT / "resources" / "assets"
+FONTS_DIR = PROJECT_ROOT / "resources" / "Fonts"
 PHOTO_DIR = USERDATA_DIR / "Photos"
 FULL_DIR = PHOTO_DIR / "full"
 THUMB_DIR = PHOTO_DIR / "thumbs"
@@ -55,7 +57,7 @@ PHOTO_JSON = PHOTO_DIR / "photos.json"
 PHOTO_JS = PHOTO_DIR / "photos.js"
 CACHE_DIR = USERDATA_DIR / "cache"
 
-for folder in [USERDATA_DIR, ASSETS_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, RUNTIME_DIR]:
+for folder in [USERDATA_DIR, ASSETS_DIR, FONTS_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, RUNTIME_DIR]:
     folder.mkdir(parents=True, exist_ok=True)
 
 MOCK_STATE_FILE = RUNTIME_DIR / "mock_state.json"
@@ -171,11 +173,25 @@ DEFAULT_STATE: dict[str, Any] = {
 }
 
 
+_file_lock = threading.Lock()
+
+
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, indent=2, sort_keys=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    with _file_lock:
+        tmp.write_text(text, encoding="utf-8")
+        # os.replace raises PermissionError on Windows when the destination
+        # file is still open in another thread. Retry with a short backoff.
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.02)
 
 
 def deep_merge(default: Any, current: Any) -> Any:
@@ -584,33 +600,18 @@ WEATHER_CODE_TO_METEOICON = {
 
 ALERT_EVENT_ICON_RULES = [
     ("avalanche", "alert-avalanche-danger"),
-    ("landslide", "alert-falling-rocks"),
-    ("rock", "alert-falling-rocks"),
-    ("debris", "alert-falling-rocks"),
+    ("landslide|rock|debris", "alert-falling-rocks"),
     ("tornado", "tornado"),
-    ("hurricane", "hurricane"),
-    ("cyclone", "hurricane"),
-    ("typhoon", "hurricane"),
-    ("wind", "wind-alert"),
-    ("gale", "wind-alert"),
-    ("gust", "wind-alert"),
-    ("thunder", "thunderstorms-extreme-rain"),
-    ("lightning", "thunderstorms-extreme-rain"),
-    ("storm", "thunderstorms-extreme"),
-    ("flood", "extreme-rain"),
-    ("rain", "extreme-rain"),
-    ("shower", "extreme-rain"),
-    ("snow", "extreme-snow"),
-    ("blizzard", "extreme-snow"),
-    ("ice", "extreme-snow"),
-    ("freez", "extreme-snow"),
+    ("hurricane|cyclone|typhoon", "hurricane"),
+    ("thunder|lightning|storm", "thunderstorms-extreme-rain"),
+    ("rain|shower|flood|precip|coastal|marine|surf", "extreme-rain"),
+    ("snow|blizzard", "extreme-snow"),
+    ("ice|freez|sleet", "sleet"),
     ("hail", "hail"),
-    ("heat", "thermometer-warmer"),
-    ("hot", "thermometer-warmer"),
-    ("cold", "thermometer-colder"),
-    ("frost", "thermometer-colder"),
-    ("fog", "fog-day"),
-    ("mist", "fog-day"),
+    ("wind|gale|gust", "wind-alert"),
+    ("fog|mist", "fog-day"),
+    ("heat|hot|high temperature", "thermometer-warmer"),
+    ("cold|frost|low temperature", "thermometer-colder"),
 ]
 
 
@@ -661,23 +662,29 @@ def resolve_meteoicon(condition_code: Any, is_day: Any = True, uv: Any = None, m
     return _meteoicon_url(icon)
 
 
+ALERT_SEVERITY_FALLBACK_ICON = {
+    "extreme": "thunderstorms-extreme",
+    "severe": "wind-alert",
+    "moderate": "wind-alert",
+    "minor": "wind-alert",
+}
+
+
 def resolve_alert_icon(alert: dict[str, Any]) -> str:
     """Map WeatherAPI alert text to the closest local alert/severity icon."""
-    haystack = " ".join(
+    import re
+
+    text = " ".join(
         str(alert.get(key) or "")
         for key in ("event", "headline", "desc", "instruction", "severity", "category")
     ).lower()
 
-    for token, icon in ALERT_EVENT_ICON_RULES:
-        if token in haystack:
+    for pattern, icon in ALERT_EVENT_ICON_RULES:
+        if re.search(pattern, text, re.IGNORECASE):
             return _meteoicon_url(icon)
 
-    severity = str(alert.get("severity") or "").lower()
-    if "extreme" in severity:
-        return _meteoicon_url("thunderstorms-extreme")
-    if "severe" in severity:
-        return _meteoicon_url("wind-alert")
-    return _meteoicon_url("not-available")
+    severity = str(alert.get("severity") or "").strip().lower()
+    return _meteoicon_url(ALERT_SEVERITY_FALLBACK_ICON.get(severity, "wind-alert"))
 
 
 def normalize_area_text(value: Any) -> str:
@@ -1082,6 +1089,38 @@ def default_update_state() -> dict[str, Any]:
     }
 
 
+MOCK_INSTALL_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_INSTALL_SECONDS", "90"))
+
+
+def _finalize_expired_mock_install(state: dict[str, Any]) -> dict[str, Any]:
+    """Complete the mock install after a wall-clock deadline, not after reads.
+
+    The real updater writes update_in_progress=True to runtime/update_state.json
+    while it is running, and later writes pending_restart=True when installation
+    completes. Reading /update_status.json does not consume that state. The mock
+    follows that same contract so config-page refreshes cannot clear the overlay
+    before the display frontend polls it.
+    """
+    if not state.get("update_in_progress"):
+        return state
+
+    complete_at = float(state.get("_mock_install_complete_at") or 0)
+    if complete_at and time.time() >= complete_at:
+        state.update({
+            "update_in_progress": False,
+            "pending_restart": True,
+            "available": False,
+            "mock_pending_update": False,
+            "last_error": "Mock environment: install completed; reboot is disabled.",
+        })
+        state.pop("_mock_install_complete_at", None)
+        state.pop("_mock_install_started_at", None)
+        state.pop("_mock_install_reads_remaining", None)
+        atomic_write_json(UPDATE_STATE_FILE, state)
+
+    return state
+
+
 def load_update_state() -> dict[str, Any]:
     state = default_update_state()
     state.update(read_json(UPDATE_STATE_FILE, {}))
@@ -1090,8 +1129,17 @@ def load_update_state() -> dict[str, Any]:
     state["auto_update"] = bool(cfg.get("auto_update", False))
     state["repo"] = cfg.get("repo", state.get("repo", "")) or os.getenv("MEMENTOFRAME_UPDATE_REPO", "")
     state["channel"] = cfg.get("channel", state.get("channel", "stable")) or "stable"
-    if bool(state.get("mock_pending_update")):
-        state.update({"available": True, "latest_version": state.get("latest_version") or "9.9.9-mock", "latest_tag": state.get("latest_tag") or "v9.9.9-mock", "last_error": None})
+
+    state = _finalize_expired_mock_install(state)
+
+    if bool(state.get("mock_pending_update")) and not state.get("update_in_progress"):
+        state.update({
+            "available": True,
+            "latest_version": state.get("latest_version") or "9.9.9-mock",
+            "latest_tag": state.get("latest_tag") or "v9.9.9-mock",
+            "last_error": None,
+        })
+
     return state
 
 
@@ -1152,22 +1200,45 @@ def check_for_updates_mock() -> dict[str, Any]:
 
 
 def mock_install_update_blocked() -> dict[str, Any]:
+    """Simulate the real updater lifecycle without modifying project files.
+
+    The mock writes update_in_progress=True immediately, leaves it in place for
+    long enough for the real frontend polling loop to observe it, and then moves
+    to pending_restart=True. Reads are passive, matching the real services.
+    """
+    now = time.time()
     state = load_update_state()
-    state.update({"update_in_progress": False, "pending_restart": False, "last_error": "Mock environment: install/reboot is disabled."})
+    state.update({
+        "available": False,
+        "mock_pending_update": False,
+        "update_in_progress": True,
+        "pending_restart": False,
+        "last_error": None,
+        "_mock_install_started_at": now,
+        "_mock_install_complete_at": now + MOCK_INSTALL_DURATION_SECONDS,
+    })
+    state.pop("_mock_install_reads_remaining", None)
     save_update_state(state)
     return state
 
 
 def mock_autoupdate() -> dict[str, Any]:
+    """Simulate a full autoupdate cycle, always triggering the install overlay.
+
+    The "Run autoupdate test" button calls this regardless of the auto_update
+    config flag — it is a manual test, not the scheduled background check.
+    Nothing is ever installed or rebooted.
+    """
+    # Ensure there is a pending update to install.
     state = load_update_state()
-    if not state.get("auto_update"):
-        state.update({"last_autoupdate_check": time.time(), "auto_update_skipped": "disabled"})
+    if not state.get("available"):
+        state.update({
+            "available": True,
+            "mock_pending_update": True,
+            "latest_version": state.get("latest_version") or "9.9.9-mock",
+            "latest_tag": state.get("latest_tag") or "v9.9.9-mock",
+        })
         save_update_state(state)
-        return state
-    checked = check_for_updates_mock()
-    if checked.get("available"):
-        checked["last_error"] = "Mock environment: autoupdate found an update but install/reboot is disabled."
-        checked["update_in_progress"] = False
-        checked["pending_restart"] = False
-        save_update_state(checked)
-    return load_update_state()
+
+    # Delegate to the install simulator (sets update_in_progress + auto-clears).
+    return mock_install_update_blocked()
