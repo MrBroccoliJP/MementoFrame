@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 45, #updater overlay small fix | spotify first play fix | qr code new accent | system info box rework | css cleanup
+        "version": 46, #bug fix on visibility of update flag when there are no updates available.
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
