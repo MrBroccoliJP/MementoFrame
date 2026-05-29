@@ -23,7 +23,7 @@
 import { state } from "../state.js";
 import { PATHS, INTERVALS, SELECTORS } from "../constants.js";
 import { $, $$, fetchJson } from "../utils.js";
-import { showCalendar, setCalendarOpacity, updatePanelState } from "./layout.js";
+import { showCalendar, showSpotify } from "./layout.js";
 
 /** SVG markup for the play button icon. */
 const playSVG  = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M3 22v-20l18 10-18 10z"/></svg>`;
@@ -73,6 +73,10 @@ function setAccentVar(color) {
   document.documentElement.style.setProperty("--accent-color", color);
   document.documentElement.style.setProperty("--accent-text",  color);
   state.spotify.currentAccent = color;
+
+  window.dispatchEvent(new CustomEvent("mementoframe:accent-changed", {
+    detail: { color },
+  }));
 }
 
 /**
@@ -197,27 +201,6 @@ function stopAccentColorCycle() {
   }
 }
 
-// ─── Spotify Polling / Rendering ────────────────────────────────────────────
-
-/**
- * Show the Spotify panel and hide the calendar panel.
- * Used after the first album art + accent are ready, so the placeholder
- * does not flash before the real cover appears.
- */
-function showSpotifyPanelNow() {
-  setCalendarOpacity(1);
-  updatePanelState({ calendarFullOpacity: false, spotifyPlaying: true });
-
-  const spotifyBox  = $(SELECTORS.spotifyBox);
-  const calendarBox = $(SELECTORS.calendarBox);
-
-  calendarBox?.classList.add("hidden");
-  calendarBox?.classList.remove("visible");
-
-  spotifyBox?.classList.remove("hidden");
-  spotifyBox?.classList.add("visible");
-}
-
 
 /**
  * Fetch current Spotify playback state and update the UI.
@@ -270,6 +253,7 @@ export async function updateSpotify() {
   const trackChanged = !!trackId && !!previousTrackId && trackId !== previousTrackId;
   const firstTrack = !!trackId && !previousTrackId;
   const artworkKey = albumArt ? `${trackId || "unknown"}|${albumArt}` : null;
+  const resumedFromPaused = isPlaying && state.spotify.wasPaused;
 
   if (!isPlaying) {
     if (!state.spotify.wasPaused) {
@@ -289,6 +273,10 @@ export async function updateSpotify() {
   } else {
     state.spotify.wasPaused = false;
 
+    if (!state.spotify.currentAccent) {
+       applyAccent(state.spotify.currentAccent || "rgb(80, 80, 80)", true);
+    }
+
     if (state.spotify.hideTimeout) {
       clearTimeout(state.spotify.hideTimeout);
       state.spotify.hideTimeout = null;
@@ -304,13 +292,13 @@ export async function updateSpotify() {
     isPlaying &&
     artworkKey &&
     artworkKey !== lastRenderedArtworkKey &&
-    artworkKey !== lastRequestedArtworkKey;
+    (artworkKey !== lastRequestedArtworkKey || resumedFromPaused);
 
   const revealSpotifyAfterArtwork =
     needsArtworkRender && !spotifyAlreadyVisible;
 
   if (isPlaying && !revealSpotifyAfterArtwork) {
-    showSpotifyPanelNow();
+    showSpotify();
   }
 
   // Only render artwork/colour when the artwork actually changes. This avoids
@@ -512,7 +500,7 @@ function renderArtworkAndAccent({
         lastRequestedArtworkKey = null;
 
         if (revealWhenReady) {
-          showSpotifyPanelNow();
+          showSpotify();
         }
 
         if (fade) restartFadeIn(albumEl, trackInfoEl);
@@ -531,7 +519,7 @@ function renderArtworkAndAccent({
       applyAccent(state.spotify.currentAccent || "rgb(80, 80, 80)", transition);
 
       if (revealWhenReady) {
-        showSpotifyPanelNow();
+        showSpotify();
       }
     }
   }, minimumFadeMs);

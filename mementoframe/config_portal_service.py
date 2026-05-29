@@ -699,6 +699,15 @@ def run_updater(command, background=False):
     """Run updater.py with a controlled command from the config portal."""
     cmd = [sys.executable, "updater.py", command]
     if background:
+        # Mark update_in_progress immediately so the display overlay activates
+        # before updater.py has had a chance to write the file itself.
+        try:
+            state = load_update_state()
+            state["update_in_progress"] = True
+            state["pending_restart"] = False
+            _atomic_write_json(UPDATE_STATE_FILE, state)
+        except Exception as e:
+            print(f"⚠️ Could not pre-set update_in_progress: {e}")
         subprocess.Popen(cmd, cwd=os.getcwd(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return {"status": "started", "command": command}
 

@@ -154,43 +154,63 @@ export function updateClock() {
  * `updateClock` detects that the date has rolled over.
  */
 export function generateCalendar() {
-  const el = $(SELECTORS.calendarEl);
-  if (!el) return;
-
-  const now      = new Date(new Date().toLocaleString("en-US", { timeZone: state.clocks.clock1Tz }));
-  const today    = now.getDate();
-  const month    = now.getMonth();
-  const year     = now.getFullYear();
-
-  // Determine the weekday of the 1st (Monday = 0, Sunday = 6)
-  const firstDayObj = new Date(new Date(year, month, 1).toLocaleString("en-US", { timeZone: state.clocks.clock1Tz }));
-  const firstDay    = (firstDayObj.getDay() + 6) % 7;
-  const lastDate    = new Date(year, month + 1, 0).getDate();
-
+  const monthEl = document.getElementById('calendar-month');
+  const weekEl = document.getElementById('calendar-week');
+  
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: state.clocks.clock1Tz }));
+  const today = now.getDate();
+  const month = now.getMonth();
+  const year = now.getFullYear();
   const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-  // Leading blank cells to align the 1st with the correct weekday column
-  const blanks = Array.from({ length: firstDay }, () => "<td></td>").join("");
+  // 1. GENERATE MONTH VIEW
+  if (monthEl) {
+    const firstDayObj = new Date(new Date(year, month, 1).toLocaleString("en-US", { timeZone: state.clocks.clock1Tz }));
+    const firstDay = (firstDayObj.getDay() + 6) % 7;
+    const lastDate = new Date(year, month + 1, 0).getDate();
 
-  // One <td> per day; today gets the "today" class
-  const cells = Array.from({ length: lastDate }, (_, i) => {
-    const day     = i + 1;
-    const isToday = day === today ? "today" : "";
-    return `<td class="${isToday}">${day}</td>`;
-  }).join("");
+    const blanks = Array.from({ length: firstDay }, () => "<td></td>").join("");
+    const cells = Array.from({ length: lastDate }, (_, i) => {
+      const day = i + 1;
+      const isToday = day === today ? "today" : "";
+      return `<td class="${isToday}">${day}</td>`;
+    }).join("");
 
-  // Group cells into rows of 7
-  const all  = blanks + cells;
-  const rows = all.match(/(?:<td.*?<\/td>){1,7}/g)?.join("</tr><tr>") || "";
+    const all = blanks + cells;
+    const rows = all.match(/(?:<td.*?<\/td>){1,7}/g)?.join("</tr><tr>") || "";
 
-  el.innerHTML = `<table>
-    <thead>
-      <tr><th class="calendar-title" colspan="7">${monthNames[month]} ${year}</th></tr>
-      <tr class="calendar-weekdays">
-        <th>Mon</th><th>Tue</th><th>Wed</th>
-        <th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
-      </tr>
-    </thead>
-    <tbody><tr>${rows}</tr></tbody>
-  </table>`;
+    monthEl.innerHTML = `<table>
+      <thead>
+        <tr><th class="calendar-title" colspan="7">${monthNames[month]} ${year}</th></tr>
+        <tr class="calendar-weekdays">
+          <th>Mon</th><th>Tue</th><th>Wed</th>
+          <th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th>
+        </tr>
+      </thead>
+      <tbody><tr>${rows}</tr></tbody>
+    </table>`;
+  }
+
+  // 2. GENERATE WEEK VIEW
+  if (weekEl) {
+    const currentDayOfWeek = (now.getDay() + 6) % 7; // Monday = 0
+    const weekStart = new Date(now);
+    weekStart.setDate(today - currentDayOfWeek);
+
+    let weekCells = "";
+    const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart);
+        d.setDate(weekStart.getDate() + i);
+        const isToday = d.getDate() === today && d.getMonth() === month ? "today" : "";
+        weekCells += `
+          <td class="${isToday}">
+            <div class="wk-day">${days[i]}</div>
+            <div class="wk-date">${d.getDate()}</div>
+          </td>`;
+    }
+
+    weekEl.innerHTML = `<table><tbody><tr>${weekCells}</tr></tbody></table>`;
+  }
 }

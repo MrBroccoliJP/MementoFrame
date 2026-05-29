@@ -9,6 +9,7 @@ import { fetchJson } from "../utils.js";
 let indicatorEl = null;
 let overlayEl = null;
 let lastState = null;
+let updateStream = null;
 
 function ensureIndicator() {
   if (indicatorEl) return indicatorEl;
@@ -30,6 +31,7 @@ function ensureIndicator() {
 
     const systemInfo = document.querySelector(".system-info-box");
     const wifiInfo = document.querySelector(".wifi-info");
+
     if (systemInfo && wifiInfo) wifiInfo.after(indicatorEl);
     else if (systemInfo) systemInfo.appendChild(indicatorEl);
     else document.body.appendChild(indicatorEl);
@@ -38,7 +40,7 @@ function ensureIndicator() {
   return indicatorEl;
 }
 
-function ensureOverlay() {
+export function ensureOverlay() {
   if (overlayEl) return overlayEl;
 
   overlayEl = document.getElementById("mf-update-overlay");
@@ -70,10 +72,14 @@ function ensureOverlay() {
     document.body.appendChild(overlayEl);
   }
 
+  // Keep the overlay controlled by opacity/visibility only.
+  // Do not use inline display toggles.
+  overlayEl.style.removeProperty("display");
+
   return overlayEl;
 }
 
-function applyUpdateState(state) {
+export function applyUpdateState(state) {
   lastState = state || {};
 
   const indicator = ensureIndicator();
@@ -83,14 +89,13 @@ function applyUpdateState(state) {
   const available = !!lastState.available;
   const updating = !!lastState.update_in_progress;
 
-  // Requested behavior: the rounded update card only appears when an update is available.
   indicator.classList.toggle("hidden", !available || updating);
   indicator.classList.toggle("visible", available && !updating);
   indicator.title = lastState.latest_version
     ? `Software update available: ${lastState.latest_version}`
     : "Software update available";
 
-  overlay.classList.toggle("visible", updating);
+  overlay.classList.toggle("is-updating", updating);
   overlay.setAttribute("aria-hidden", updating ? "false" : "true");
 
   if (statusText) {
@@ -105,13 +110,52 @@ async function refreshUpdateStatus() {
   if (state) applyUpdateState(state);
 }
 
+function setupUpdateStream() {
+  if (!window.EventSource || updateStream) return;
+
+  try {
+    updateStream = new EventSource(PATHS.UPDATE_STREAM || "/update/stream");
+
+    updateStream.addEventListener("state", (event) => {
+      try {
+        const state = JSON.parse(event.data || "{}");
+        applyUpdateState(state);
+      } catch (error) {
+        console.warn("Could not parse update stream state", error);
+      }
+    });
+
+    updateStream.onerror = () => {
+      // Keep the normal polling fallback alive. EventSource auto-reconnects.
+    };
+  } catch (error) {
+    updateStream = null;
+  }
+}
+
 export function initUpdater() {
   ensureIndicator();
   ensureOverlay();
   refreshUpdateStatus();
+  setupUpdateStream();
   setInterval(refreshUpdateStatus, INTERVALS.UPDATE_STATUS || 60000);
 }
 
 export function getLastUpdateState() {
   return lastState;
 }
+
+/* Console helpers */
+window.showUpdateOverlay = () => {
+  const overlay = ensureOverlay();
+  overlay.classList.add("is-updating");
+  overlay.setAttribute("aria-hidden", "false");
+};
+
+window.hideUpdateOverlay = () => {
+  const overlay = ensureOverlay();
+  overlay.classList.remove("is-updating");
+  overlay.setAttribute("aria-hidden", "true");
+};
+
+window.applyUpdateState = applyUpdateState;

@@ -1,10 +1,6 @@
 /*
  * MementoFrame - Raspberry Pi Smart Photo Frame
  * Copyright (c) 2026 João Fernandes
- *
- * This work is licensed under the Creative Commons Attribution-NonCommercial
- * 4.0 International License. To view a copy of this license, visit:
- * http://creativecommons.org/licenses/by-nc/4.0/
  */
 
 /**
@@ -12,175 +8,105 @@
  * @description Shared application state — single source of truth for all modules.
  *
  * Exported as a single mutable object so every module reads and writes
- * the same reference. No state is duplicated across modules; if a module
- * needs to know something about another module's domain it reads it here.
- *
- * State is grouped into logical namespaces:
- *
- *   state.online   — Whether the device has internet access.
- *                    Set by wifi.js; read by spotify.js and weather.js
- *                    to skip API calls when offline.
- *
- *   state.config   — Raw config object loaded from config.json.
- *                    Populated by config.js; read by power.js for the
- *                    auto_power schedule.
- *
- *   state.clocks   — Clock display settings and calendar tracking.
- *                    Populated by config.js from config.json fields;
- *                    read and mutated by clock.js on every tick.
- *
- *   state.panels   — Right-panel layout flags.
- *                    Mutated by layout.js and spotify.js; read by
- *                    layout.js to compute panel dimensions and by
- *                    photoslideshow.js to position burst photos.
- *
- *   state.spotify  — Spotify widget runtime state.
- *                    Mutated exclusively by spotify.js; not read by
- *                    other modules (they use state.panels.spotifyPlaying
- *                    for layout decisions).
- *
- *   state.photos   — Slideshow runtime state.
- *                    Mutated exclusively by photoslideshow.js.
- *
- *   state.timers   — Cross-module timer handles.
- *                    Currently holds the calendar full-opacity timeout
- *                    which is set by layout.js and cleared by multiple
- *                    callers, so it lives here rather than in a closure.
+ * the same reference. No state is duplicated across modules.
  */
 
 export const state = {
   /**
-   * Whether the device currently has internet access.
-   * Updated by wifi.js on every connectivity check.
+   * Network connection status.
    * @type {boolean}
    */
   online: false,
 
   /**
-   * Parsed contents of config.json.
-   * Populated by config.js; used by power.js (auto_power schedule).
+   * Application configuration loaded from backend.
    * @type {Object}
    */
   config: {},
 
   /**
-   * Clock display configuration and calendar change tracking.
-   * @type {Object}
-   * @property {boolean}     enableSecond      - Whether the second clock (clock 2) is shown.
-   * @property {string}      clock1Tz          - IANA timezone for clock 1 (e.g. "Europe/Lisbon").
-   * @property {string}      clock2Tz          - IANA timezone for clock 2 (e.g. "Asia/Shanghai").
-   * @property {string}      clock1Label       - Display label shown below clock 1.
-   * @property {string}      clock2Label       - Display label shown below clock 2.
-   * @property {string|null} lastCalendarDate  - ISO date string (YYYY-MM-DD) of the last calendar
-   *                                            render in clock 1's timezone. Used to detect day
-   *                                            rollovers and trigger a calendar regeneration.
+   * Clock and calendar tracking.
    */
   clocks: {
-    enableSecond:     false,
-    clock1Tz:         "UTC",
-    clock2Tz:         "UTC",
-    clock1Label:      "Clock 1",
-    clock2Label:      "Clock 2",
+    clock1Tz: "UTC",
+    clock2Tz: "UTC",
+    clock1Label: "",
+    clock2Label: "",
+    enableSecond: false,
     lastCalendarDate: null,
   },
 
   /**
-   * Right-panel layout flags.
-   * @type {Object}
-   * @property {boolean} swapped            - Whether the panels have been swapped
-   *                                          (right panel moved to left side of screen).
-   * @property {boolean} calendarFullOpacity - Whether the calendar is currently in
-   *                                          full-opacity (hourly highlight) mode.
-   *                                          When true, the left panel narrows to NARROW
-   *                                          width to give the calendar more visual space.
-   * @property {boolean} spotifyPlaying     - Whether Spotify is currently playing.
-   *                                          When true, the Spotify widget is shown and
-   *                                          the left panel narrows to NARROW width.
+   * Display panel layouts, dimensions, and explicit widget views.
    */
   panels: {
-    swapped:            false,
-    calendarFullOpacity: false,
-    spotifyPlaying:     false,
+    /** Whether the right panel is currently positioned on the left side. */
+    swapped: false,
+
+    /** Whether the calendar is currently in its 10-minute full-opacity mode. */
+    bigModeActive: false,
+
+    /** Whether Spotify is currently reporting active playback. */
+    spotifyPlaying: false,
+
+    // --- DYNAMIC WIDGET STATES ---
+    /** * Current Spotify View mode.
+     * @type {'hidden' | 'shrunk' | 'big'} 
+     */
+    spotifyView: 'hidden',
+
+    /** * Current Calendar View mode.
+     * @type {'hidden' | 'month' | 'week'} 
+     */
+    calendarView: 'month',
+
+    /** * Current Forecast View mode.
+     * @type {'hidden' | '5h-icons' | '5h-big' | '5d-big'} 
+     */
+    forecastView: 'hidden',
   },
 
   /**
-   * Spotify widget runtime state.
-   * @type {Object}
-   * @property {string|null}  lastTrackId    - Spotify track ID of the last seen track.
-   *                                          Used to detect track changes for fade transitions.
-   * @property {number|null}  hideTimeout   - setTimeout handle for the 30 s grace period
-   *                                          after Spotify pauses. Cleared if playback resumes.
-   * @property {number|null}  accentTimer   - setInterval handle for the hourly ambient pastel
-   *                                          colour cycle. Null when album-art accent is active.
-   * @property {string}       currentAccent - Most recently applied CSS accent colour string.
-   *                                          Used as a fallback if canvas sampling fails.
-   * @property {boolean}      wasPaused     - True during a pause grace period; prevents
-   *                                          duplicate hideTimeout timers from being created.
-   * @property {number|null}  pollTimer     - setInterval handle for the Spotify polling loop.
-   */
-  spotify: {
-    lastTrackId:    null,
-    hideTimeout:    null,
-    accentTimer:    null,
-    currentAccent:  "rgb(50, 50, 50)",
-    wasPaused:      false,
-    pollTimer:      null,
-  },
-
-  /**
-   * Photo slideshow runtime state.
-   * @type {Object}
-   * @property {string[]}          shuffled         - Shuffled copy of window.photos filenames.
-   *                                                 Reshuffled every 36 slides (burst cycle).
-   * @property {number}            index            - Current position within `shuffled`.
-   * @property {HTMLDivElement|null} thumbsContainer - Hidden off-screen div holding preloaded
-   *                                                  <img> elements for the burst animation.
-   *                                                  Null until preloadAllThumbs() runs.
+   * Photo slideshow internal state tracking.
    */
   photos: {
-    shuffled:        [],
-    index:           0,
+    cyclePool: [],
+    currentBatch: [],
+    nextBatch: [],
+    index: 0,
     thumbsContainer: null,
-    /**
-     * Promise that resolves when all thumbnails have finished loading.
-     * Set by preloadAllThumbs(); awaited by burstPhotos() to ensure
-     * all images are decoded before the animation starts.
-     * @type {Promise<void>|null}
-     */
-    thumbsReady:     null,
+    thumbsReady: null,
   },
 
   /**
-   * Cross-module timer handles and window timestamps.
-   * @type {Object}
-   * @property {number|null} calendarFullTimeout - setTimeout handle for the active 10-min
-   *                                              full-opacity window. Cleared by hideCalendarFull()
-   *                                              and showSpotify().
-   * @property {number|null} calendarWindowUntil - Epoch ms when the current full-opacity window
-   *                                              expires. Null when no window is active. Read by
-   *                                              showCalendar() to resume the window correctly
-   *                                              after Spotify hides.
-   * @property {number|null} calendarNextTrigger - Epoch ms when the next 30-min cycle is due.
-   *                                              Stored so showCalendar() can reschedule the
-   *                                              cycle from "now + 30 min" when Spotify hides
-   *                                              instead of waiting for the original trigger.
+   * Weather data availability tracking.
+   */
+  weather: {
+    /** Whether the compact current weather card has valid fresh data. */
+    available: false,
+
+    /** Whether the forecast rotation has enough valid data to render. */
+    forecastAvailable: false,
+  },
+
+  /**
+   * Spotify playback and background accent color tracking.
+   */
+  spotify: {
+    pollTimer: null,
+    accentTimer: null,
+    currentAccent: null,
+    lastTrackId: null,
+    wasPaused: false,
+    hideTimeout: null,
+  },
+
+  /**
+   * Global timers for layout scheduling.
    */
   timers: {
-    calendarFullTimeout: null,
-    /**
-     * Timestamp (ms) when the current full-opacity window expires.
-     * Null when no window is active. Used by showCalendar() to decide
-     * whether to resume full opacity when Spotify hides.
-     * @type {number|null}
-     */
-    calendarWindowUntil: null,
-    /**
-     * Timestamp (ms) when the next calendar cycle is scheduled to fire.
-     * Set by scheduleCalendarCycle() so that showCalendar() can reschedule
-     * the cycle from "now + 30 min" when Spotify hides, rather than
-     * waiting for the original trigger time.
-     * @type {number|null}
-     */
-    calendarNextTrigger: null,
+    bigModeTimeout: null,       
+    bigModeWindowUntil: null,   
+    bigModeNextTrigger: null,  
   },
 };

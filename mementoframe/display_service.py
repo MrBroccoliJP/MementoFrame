@@ -184,11 +184,294 @@ def safe_spotify_call(endpoint_key, func, *args, **kwargs):
         print(f"[{endpoint_key}] Unexpected error: {e}")
         return None
 
+
+# =============================================================================
+# Weather icon mapping and alert area filtering
+# =============================================================================
+METEOICON_BASE_URL = "/assets/Weather/meteoicons/fill"
+
+MOON_PHASE_TO_METEOICON = {
+    "new moon": "moon-new",
+    "waxing crescent": "moon-waxing-crescent",
+    "first quarter": "moon-first-quarter",
+    "waxing gibbous": "moon-waxing-gibbous",
+    "full moon": "moon-full",
+    "waning gibbous": "moon-waning-gibbous",
+    "last quarter": "moon-last-quarter",
+    "waning crescent": "moon-waning-crescent",
+}
+
+WEATHER_CODE_TO_METEOICON = {
+    1000: {"day": "clear-day", "night": "moon-phase"},
+    1003: {"day": "partly-cloudy-day", "night": "partly-cloudy-night"},
+    1006: "cloudy",
+    1009: {"day": "overcast-day", "night": "overcast-night"},
+
+    1030: {"day": "fog-day", "night": "fog-night"},
+    1135: {"day": "fog-day", "night": "fog-night"},
+    1147: {"day": "fog-day", "night": "fog-night"},
+
+    1063: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+    1180: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+    1240: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+
+    1072: "sleet",
+    1150: "rain",
+    1153: "rain",
+    1168: "sleet",
+    1171: "sleet",
+
+    1183: "rain",
+    1186: "rain",
+    1189: "rain",
+    1192: "extreme-rain",
+    1195: "extreme-rain",
+    1198: "rain",
+    1201: "extreme-rain",
+    1243: "rain",
+    1246: "extreme-rain",
+
+    1066: "snow",
+    1114: "wind-snow",
+    1117: "extreme-snow",
+    1210: "snow",
+    1213: "snow",
+    1216: "snow",
+    1219: "snow",
+    1222: "extreme-snow",
+    1225: "extreme-snow",
+    1255: "snow",
+    1258: "snow",
+
+    1069: {"day": "partly-cloudy-day-sleet", "night": "partly-cloudy-night-sleet"},
+    1204: "sleet",
+    1207: "sleet",
+    1249: "sleet",
+    1252: "sleet",
+
+    1237: "hail",
+    1261: "hail",
+    1264: "hail",
+
+    1087: {"day": "thunderstorms-day", "night": "thunderstorms-night"},
+    1273: {"day": "thunderstorms-day-rain", "night": "thunderstorms-night-rain"},
+    1276: "thunderstorms-extreme-rain",
+    1279: {"day": "thunderstorms-day-snow", "night": "thunderstorms-night-snow"},
+    1282: "thunderstorms-extreme-snow",
+}
+
+ALERT_EVENT_ICON_RULES = [
+    ("avalanche", "alert-avalanche-danger"),
+    ("rock|landslide|debris", "alert-falling-rocks"),
+    ("tornado", "tornado"),
+    ("hurricane|cyclone|typhoon", "hurricane"),
+    ("thunder|lightning|storm", "thunderstorms-extreme-rain"),
+    ("rain|shower|flood|precip|coastal|marine|surf", "extreme-rain"),
+    ("snow|blizzard", "extreme-snow"),
+    ("ice|freez|sleet", "sleet"),
+    ("hail", "hail"),
+    ("wind|gale|gust", "wind-alert"),
+    ("fog|mist", "fog-day"),
+    ("heat|hot|high temperature", "thermometer-warmer"),
+    ("cold|frost|low temperature", "thermometer-colder"),
+]
+
+ALERT_SEVERITY_FALLBACK_ICON = {
+    "extreme": "thunderstorms-extreme",
+    "severe": "wind-alert",
+    "moderate": "wind-alert",
+    "minor": "wind-alert",
+}
+
+
+def meteocon_url(icon_name):
+    """Return a browser URL for a bundled Meteoicons SVG."""
+    clean = str(icon_name or "not-available").strip().replace(".svg", "")
+    return f"{METEOICON_BASE_URL}/{clean}.svg"
+
+
+def normalize_moon_phase(phase):
+    return str(phase or "").strip().lower()
+
+
+def resolve_moon_phase_icon(moon_phase):
+    return MOON_PHASE_TO_METEOICON.get(normalize_moon_phase(moon_phase), "moon-new")
+
+
+def resolve_uv_icon_name(uv_value):
+    """Use UV-specific icons only for clear daytime sky when UV is 5 or above."""
+    try:
+        rounded = int(round(float(uv_value)))
+    except (TypeError, ValueError):
+        return "clear-day"
+
+    if rounded < 5:
+        return "clear-day"
+    if rounded >= 12:
+        return "uv-index-11-plus"
+    if rounded == 11:
+        return "uv-index-11"
+    return f"uv-index-{max(1, min(10, rounded))}"
+
+
+def resolve_weather_icon(condition_code, is_day=True, moon_phase=None, uv_value=None):
+    """Map WeatherAPI condition code + day/night state to a bundled Meteoicon URL."""
+    try:
+        code = int(condition_code or 0)
+    except (TypeError, ValueError):
+        code = 0
+
+    if code == 1000 and bool(is_day):
+        return meteocon_url(resolve_uv_icon_name(uv_value))
+
+    entry = WEATHER_CODE_TO_METEOICON.get(code, "not-available")
+
+    if isinstance(entry, dict):
+        icon_name = entry["day"] if bool(is_day) else entry["night"]
+    else:
+        icon_name = entry
+
+    if icon_name == "moon-phase":
+        icon_name = resolve_moon_phase_icon(moon_phase)
+
+    return meteocon_url(icon_name)
+
+
+def resolve_alert_icon(alert):
+    """Map WeatherAPI alert text/severity to one of the bundled alert icons."""
+    import re
+
+    text = " ".join(str(alert.get(key, "")) for key in [
+        "event", "headline", "desc", "instruction", "category", "severity"
+    ]).lower()
+
+    for pattern, icon_name in ALERT_EVENT_ICON_RULES:
+        if re.search(pattern, text, re.IGNORECASE):
+            return meteocon_url(icon_name)
+
+    severity = str(alert.get("severity", "")).strip().lower()
+    return meteocon_url(ALERT_SEVERITY_FALLBACK_ICON.get(severity, "wind-alert"))
+
+
+def normalize_area_text(value):
+    """Normalize area names for fuzzy but safe alert matching."""
+    import re
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def area_words(value):
+    return {
+        word
+        for word in normalize_area_text(value).split()
+        if len(word) >= 3
+    }
+
+
+def alert_area_candidates(configured_location, api_location):
+    candidates = []
+
+    for part in str(configured_location or "").replace(";", ",").split(","):
+        part = part.strip()
+        if part:
+            candidates.append(part)
+
+    if isinstance(api_location, dict):
+        for key in ("name", "region", "country"):
+            value = str(api_location.get(key) or "").strip()
+            if value:
+                candidates.append(value)
+
+    seen = set()
+    clean = []
+    for candidate in candidates:
+        normalized = normalize_area_text(candidate)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            clean.append(candidate)
+
+    return clean
+
+
+def alert_matches_configured_area(alert, configured_location, api_location):
+    """Return True if the alert area appears to cover the configured weather area.
+
+    WeatherAPI alert areas are often broader than a city. So "Aveiro,Portugal"
+    should match an alert for "Aveiro", the API-resolved region, or "Portugal".
+    Alerts with no area value are kept because WeatherAPI already returned them
+    for the requested location and there is no safer filter.
+    """
+    raw_areas = str(alert.get("areas") or "").strip()
+    if not raw_areas:
+        return True
+
+    normalized_areas = normalize_area_text(raw_areas)
+    if not normalized_areas:
+        return True
+
+    candidates = alert_area_candidates(configured_location, api_location)
+    area_word_set = area_words(raw_areas)
+
+    for candidate in candidates:
+        normalized_candidate = normalize_area_text(candidate)
+        if not normalized_candidate:
+            continue
+
+        if normalized_candidate in normalized_areas:
+            return True
+
+        candidate_words = area_words(candidate)
+        if candidate_words and any(word in area_word_set for word in candidate_words):
+            return True
+
+    broad_markers = [
+        "all areas",
+        "entire country",
+        "whole country",
+        "countrywide",
+        "nationwide",
+        "all districts",
+        "mainland",
+    ]
+    return any(marker in normalized_areas for marker in broad_markers)
+
+
+def normalize_weather_alerts(data, configured_location=None):
+    alerts = data.get("alerts", {}).get("alert", []) or []
+    api_location = data.get("location", {}) or {}
+    normalized = []
+
+    for alert in alerts:
+        if not alert_matches_configured_area(alert, configured_location, api_location):
+            continue
+
+        item = {
+            "headline": alert.get("headline", ""),
+            "event": alert.get("event", ""),
+            "severity": alert.get("severity", ""),
+            "urgency": alert.get("urgency", ""),
+            "areas": alert.get("areas", ""),
+            "category": alert.get("category", ""),
+            "certainty": alert.get("certainty", ""),
+            "effective": alert.get("effective", ""),
+            "expires": alert.get("expires", ""),
+            "desc": alert.get("desc", ""),
+            "instruction": alert.get("instruction", ""),
+        }
+        item["icon"] = resolve_alert_icon(item)
+        normalized.append(item)
+
+    return normalized
+
+
 # =============================================================================
 # Weather data helper
 # =============================================================================
 def get_weather_data():
-    """Fetch current weather, using cached data when fresh or when requests fail."""
+    """Fetch current weather + 3-day forecast from WeatherAPI.com free tier.
+
+    Uses forecast.json so current conditions, forecast, astronomy/moon phase,
+    UV index, and alerts are available from the same API response.
+    """
     now = time.time()
     if "weather" in cache:
         cached_data, cached_time = cache["weather"]
@@ -199,19 +482,122 @@ def get_weather_data():
         return {"error": "Weather API key not configured"}
 
     try:
-        url = "https://api.weatherapi.com/v1/current.json"
-        params = {"key": WEATHER_API_KEY, "q": WEATHER_LOCATION, "aqi": "no"}
+        url = "https://api.weatherapi.com/v1/forecast.json"
+        params = {
+            "key": WEATHER_API_KEY,
+            "q": WEATHER_LOCATION,
+            "days": 3,
+            "aqi": "no",
+            "alerts": "yes",
+        }
         response = requests.get(url, params=params, timeout=5)
         response.raise_for_status()
         data = response.json()
 
+        forecast_days = data.get("forecast", {}).get("forecastday", [])
+        today_forecast = forecast_days[0] if forecast_days else {}
+        moon_phase = today_forecast.get("astro", {}).get("moon_phase", "")
+
+        current = data["current"]
+        current_condition = current["condition"]
+        current_code = current_condition.get("code")
+        current_is_day = bool(current.get("is_day", 1))
+        current_uv = current.get("uv")
+
+        # ── Current conditions ────────────────────────────────────────────
         weather_info = {
-            "temperature": round(data["current"]["temp_c"], 1),
-            "condition": data["current"]["condition"]["text"],
-            "icon": "https:" + data["current"]["condition"]["icon"],
-            "humidity": data["current"]["humidity"],
-            "windSpeed": data["current"]["wind_kph"],
+            "temperature": round(current["temp_c"], 1),
+            "condition": current_condition.get("text", ""),
+            "conditionCode": current_code,
+            "isDay": current_is_day,
+            "uv": current_uv,
+            "moonPhase": moon_phase,
+            "icon": resolve_weather_icon(
+                current_code,
+                is_day=current_is_day,
+                moon_phase=moon_phase,
+                uv_value=current_uv,
+            ),
+            "humidity": current["humidity"],
+            "windSpeed": current["wind_kph"],
             "city": data["location"]["name"],
+            "alerts": normalize_weather_alerts(data, WEATHER_LOCATION),
+        }
+
+        # ── Hourly forecast: next 5 whole hours from now ──────────────────
+        current_hour = int(time.strftime("%H"))  # local server hour 0-23
+        hourly_slots = []
+        today_str = forecast_days[0]["date"] if forecast_days else ""
+
+        for day_fc in forecast_days:
+            day_moon_phase = day_fc.get("astro", {}).get("moon_phase") or moon_phase
+            for hour_fc in day_fc.get("hour", []):
+                slot_hour = int(hour_fc["time"].split(" ")[1].split(":")[0])
+                slot_date = hour_fc["time"].split(" ")[0]
+
+                if slot_date == today_str and slot_hour <= current_hour:
+                    continue
+
+                condition = hour_fc["condition"]
+                condition_code = condition.get("code")
+                is_day = bool(hour_fc.get("is_day", 1))
+
+                hourly_slots.append({
+                    "time": hour_fc["time"].split(" ")[1][:5],
+                    "icon": resolve_weather_icon(
+                        condition_code,
+                        is_day=is_day,
+                        moon_phase=day_moon_phase,
+                        uv_value=hour_fc.get("uv"),
+                    ),
+                    "conditionCode": condition_code,
+                    "isDay": is_day,
+                    "moonPhase": day_moon_phase,
+                    "uv": hour_fc.get("uv"),
+                    "temp": f"{round(hour_fc['temp_c'])}°C",
+                    "condition": condition.get("text", ""),
+                })
+
+                if len(hourly_slots) == 5:
+                    break
+
+            if len(hourly_slots) == 5:
+                break
+
+        # ── Daily forecast: today + next 2 days (3 days free plan max) ────
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        daily_slots = []
+
+        for day_fc in forecast_days:
+            import datetime
+            date_obj = datetime.date.fromisoformat(day_fc["date"])
+            label = "Today" if date_obj == datetime.date.today() else day_names[date_obj.weekday()]
+            day_data = day_fc["day"]
+            condition = day_data["condition"]
+            condition_code = condition.get("code")
+            uv_value = day_data.get("uv")
+            day_moon_phase = day_fc.get("astro", {}).get("moon_phase", "")
+
+            daily_slots.append({
+                "label": label,
+                "icon": resolve_weather_icon(
+                    condition_code,
+                    is_day=True,
+                    moon_phase=day_moon_phase,
+                    uv_value=uv_value,
+                ),
+                "conditionCode": condition_code,
+                "isDay": True,
+                "moonPhase": day_moon_phase,
+                "uv": uv_value,
+                "high": f"{round(day_data['maxtemp_c'])}°C",
+                "low": f"{round(day_data['mintemp_c'])}°C",
+                "condition": condition.get("text", ""),
+            })
+
+        weather_info["forecast"] = {
+            "hourly": hourly_slots,
+            "daily": daily_slots,
         }
 
         cache["weather"] = (weather_info, now)
@@ -223,6 +609,7 @@ def get_weather_data():
         return {"error": f"Weather request failed: {e}"}
     except Exception as e:
         return {"error": f"Unexpected error: {e}"}
+
 
 # =============================================================================
 # Utility helpers
@@ -383,6 +770,25 @@ def versions():
 def update_status_json():
     """Return read-only software update state for the display UI."""
     return jsonify(load_update_state())
+
+
+@app.route("/update/stream")
+def update_stream():
+    """Notify the display UI immediately when software-update state changes."""
+    def event_stream():
+        last_payload = None
+        while True:
+            state = load_update_state()
+            payload = json.dumps(state, sort_keys=True)
+            if payload != last_payload:
+                last_payload = payload
+                yield f"event: state\ndata: {payload}\n\n"
+            else:
+                yield ": heartbeat\n\n"
+            time.sleep(1)
+
+    return Response(event_stream(), mimetype="text/event-stream")
+
 
 @app.route("/config/stream")
 def config_stream():

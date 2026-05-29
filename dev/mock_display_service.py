@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import json
 import time
 import threading
 from pathlib import Path
@@ -83,7 +84,7 @@ def mock_management_html() -> str:
 <section class="card"><h2>Forced time</h2><p>Override enabled: <code>{time_cfg['enabled']}</code></p><form method="post" action="/mock/time"><label><input type="checkbox" name="enabled" {'checked' if time_cfg['enabled'] else ''}> Enable browser Date override on frame page</label><label>Fixed ISO datetime</label><input name="fixed_iso" value="{time_cfg['fixed_iso']}" placeholder="2026-05-15T10:08:00+01:00"><label><input type="checkbox" name="tick" {'checked' if time_cfg['tick'] else ''}> Let forced time continue ticking</label><button>Save time override</button></form><p class="muted">The frame route injects <code>/mock/time-override.js</code> before the frontend runs.</p></section>
 <section class="card"><h2>Config portal PIN</h2><p>Active PIN: <code>{pin.get('pin') or 'none'}</code>{' — ' + str(pin.get('seconds_remaining')) + 's remaining' if pin.get('active') else ''}</p><form method="post" action="/mock/pin/create"><button>Create/show PIN</button></form><form method="post" action="/mock/pin/clear"><button class="danger">Clear PIN</button></form><p class="muted">Current real endpoint: <code>/config_portal_pin.json</code>. Legacy aliases are also included for local testing.</p></section>
 <section class="card"><h2>Spotify</h2><p>Source: <code>{state['spotify'].get('source','mock')}</code></p><p>Current: <code>{track.get('track','not playing')}</code> {('— ' + track.get('artist','')) if track.get('artist') else ''}</p>{f'<p class="muted">{track.get("error")}</p>' if track.get('error') else ''}<form method="post" action="/mock/spotify"><label>Data source</label><select name="source"><option value="mock" {'selected' if state['spotify'].get('source','mock')=='mock' else ''}>mock data</option><option value="real" {'selected' if state['spotify'].get('source')=='real' else ''}>real Spotify</option></select><label><input type="checkbox" name="connected" {'checked' if state['spotify'].get('connected') else ''}> Connected</label><label><input type="checkbox" name="playing" {'checked' if state['spotify'].get('playing') else ''}> Playing</label><label>Mock track</label><select name="track_index">{''.join(f'<option value="{i}" {"selected" if i == int(state["spotify"].get("track_index",0)) else ""}>{t["track"]} — {t["artist"]}</option>' for i,t in enumerate(MOCK_TRACKS))}</select><button>Save Spotify</button></form><form method="post" action="/dev/toggle_spotify"><button class="secondary">Toggle play</button></form><form method="post" action="/dev/next_track"><button class="secondary">Next track</button></form><form method="get" action="/spotify/connect"><button>Connect real Spotify</button></form><form method="post" action="/spotify/manual"><label>Paste Spotify callback URL</label><input name="spotify_url" placeholder="https://httpbin.org/anything?code=..."><button>Save real Spotify token</button></form><form method="post" action="/spotify/disconnect"><button class="danger">Disconnect Spotify</button></form></section>
-<section class="card"><h2>Weather</h2><p>Source: <code>{weather.get('source','mock')}</code></p><form method="post" action="/mock/weather"><label>Data source</label><select name="source"><option value="mock" {'selected' if weather.get('source','mock')=='mock' else ''}>mock data</option><option value="real" {'selected' if weather.get('source')=='real' else ''}>real WeatherAPI</option></select><label><input type="checkbox" name="enabled" {'checked' if weather.get('enabled') else ''}> Enabled</label><label>City</label><input name="city" value="{weather.get('city','')}"><label>Temperature °C</label><input name="temperature" type="number" step="0.1" value="{weather.get('temperature',0)}"><label>Condition</label><input name="condition" value="{weather.get('condition','')}"><label>Icon URL</label><input name="icon" value="{weather.get('icon','')}"><label>Humidity %</label><input name="humidity" type="number" value="{weather.get('humidity',0)}"><label>Wind kph</label><input name="windSpeed" type="number" step="0.1" value="{weather.get('windSpeed',0)}"><button>Save weather</button></form><p class="muted">Real mode uses WeatherAPI key and region from <code>config.json</code>/<code>.env</code>.</p></section>
+<section class="card"><h2>Weather</h2><p>Source: <code>{weather.get('source','mock')}</code></p><p><a href="/weather.json">Weather JSON</a></p><form method="post" action="/mock/weather"><label>Data source</label><select name="source"><option value="mock" {'selected' if weather.get('source','mock')=='mock' else ''}>mock data</option><option value="real" {'selected' if weather.get('source')=='real' else ''}>real WeatherAPI</option></select><label><input type="checkbox" name="enabled" {'checked' if weather.get('enabled') else ''}> Enabled / show weather</label><label><input type="checkbox" name="forecast_enabled" {'checked' if weather.get('forecast_enabled', True) else ''}> Include mock forecast data</label><label>City / alert matching area</label><input name="city" value="{weather.get('city','')}"><label>Temperature °C</label><input name="temperature" type="number" step="0.1" value="{weather.get('temperature',0)}"><label>Condition text</label><input name="condition" value="{weather.get('condition','')}"><label>WeatherAPI condition code</label><input name="conditionCode" type="number" value="{weather.get('conditionCode',1000)}"><label><input type="checkbox" name="isDay" {'checked' if weather.get('isDay', True) else ''}> Daytime condition</label><label>UV index</label><input name="uv" type="number" step="0.1" value="{weather.get('uv',0)}"><label>Moon phase</label><select name="moonPhase">{''.join(f'<option value="{phase}" {"selected" if str(weather.get("moonPhase","Waxing Crescent")) == phase else ""}>{phase}</option>' for phase in ["New Moon","Waxing Crescent","First Quarter","Waxing Gibbous","Full Moon","Waning Gibbous","Last Quarter","Waning Crescent"])}</select><label>Humidity %</label><input name="humidity" type="number" value="{weather.get('humidity',0)}"><label>Wind kph</label><input name="windSpeed" type="number" step="0.1" value="{weather.get('windSpeed',0)}"><hr><label><input type="checkbox" name="alerts_enabled" {'checked' if weather.get('alerts_enabled') else ''}> Include mock weather alert</label><label>Alert event</label><input name="alert_event" value="{weather.get('alert_event','Thunderstorm warning')}"><label>Alert headline</label><input name="alert_headline" value="{weather.get('alert_headline','Mock thunderstorm warning')}"><label>Alert severity</label><select name="alert_severity">{''.join(f'<option value="{sev}" {"selected" if str(weather.get("alert_severity","Moderate")) == sev else ""}>{sev}</option>' for sev in ["Minor","Moderate","Severe","Extreme"])}</select><label>Alert areas</label><input name="alert_areas" value="{weather.get('alert_areas', weather.get('city', 'Porto'))}"><label>Alert description</label><textarea name="alert_desc" rows="3">{weather.get('alert_desc','Mock alert: thunderstorms are possible in your area.')}</textarea><label>Alert instruction</label><input name="alert_instruction" value="{weather.get('alert_instruction','Stay indoors if thunder is heard.')}"><label><input type="checkbox" name="alert_second_enabled" {'checked' if weather.get('alert_second_enabled') else ''}> Include second mock alert</label><label>Second alert event</label><input name="alert_second_event" value="{weather.get('alert_second_event','High temperature warning')}"><label>Second alert headline</label><input name="alert_second_headline" value="{weather.get('alert_second_headline','Mock heat warning')}"><label>Second alert severity</label><select name="alert_second_severity">{''.join(f'<option value="{sev}" {"selected" if str(weather.get("alert_second_severity","Severe")) == sev else ""}>{sev}</option>' for sev in ["Minor","Moderate","Severe","Extreme"])}</select><label>Second alert areas</label><input name="alert_second_areas" value="{weather.get('alert_second_areas','Portugal')}"><label>Second alert description</label><textarea name="alert_second_desc" rows="3">{weather.get('alert_second_desc','Mock alert: very hot weather is expected.')}</textarea><label>Second alert instruction</label><input name="alert_second_instruction" value="{weather.get('alert_second_instruction','Drink water and avoid direct sun.')}"><button>Save weather</button></form><p class="muted">Mock weather uses local <code>/assets/Weather/meteoicons/fill</code> icons. Alert areas are filtered against the city/area above. Use a broader area like <code>Portugal</code> to test country-wide alerts.</p></section>
 <section class="card"><h2>Software updates</h2><p>Installed: <code>{update_state.get('installed_version') or 'unknown'}</code></p><p>Latest: <code>{update_state.get('latest_version') or update_state.get('latest_tag') or 'not checked'}</code></p><p>Status: <code>{'mock pending update' if update_state.get('mock_pending_update') else ('available' if update_state.get('available') else 'not available')}</code></p><form method="post" action="/mock/update/pending"><label><input type="checkbox" name="mock_pending_update" {'checked' if update_state.get('mock_pending_update') else ''}> Mock pending update</label><button>Save mock flag</button></form><form method="post" action="/update/check"><button>Check GitHub releases</button></form><form method="post" action="/update/install"><button class="secondary">Install endpoint test</button></form><form method="post" action="/mock/update/autoupdate"><button class="secondary">Run autoupdate test</button></form>{f'<p class="muted">{update_state.get("last_error")}</p>' if update_state.get('last_error') else ''}<p class="muted">Mocks never install, reboot, or change project files.</p></section>
 </div></main></body></html>"""
 
@@ -181,6 +182,23 @@ def update_status():
     return jsonify(load_update_state())
 
 
+@app.route("/update/stream")
+def update_stream():
+    def event_stream():
+        last_payload = None
+        while True:
+            state = load_update_state()
+            payload = json.dumps(state, sort_keys=True)
+            if payload != last_payload:
+                last_payload = payload
+                yield f"event: state\ndata: {payload}\n\n"
+            else:
+                yield ": heartbeat\n\n"
+            time.sleep(1)
+
+    return Response(event_stream(), mimetype="text/event-stream")
+
+
 @app.route("/update/check", methods=["POST"])
 def update_check():
     state = check_for_updates_mock()
@@ -190,7 +208,7 @@ def update_check():
 @app.route("/update/install", methods=["POST"])
 def update_install():
     state = mock_install_update_blocked()
-    return jsonify({"status": "blocked", "message": "Mock environment: update install/reboot is disabled.", "updater": state})
+    return jsonify({"status": "started", "message": "Mock environment: simulated update started; install/reboot are disabled.", "updater": state})
 
 
 @app.route("/config/stream")
@@ -261,7 +279,34 @@ def save_mock_spotify_form():
 @app.route("/mock/weather", methods=["POST"])
 def save_mock_weather_form():
     state = load_state()
-    state["weather"].update({"source": request.form.get("source", "mock"), "enabled": bool_form("enabled"), "city": request.form.get("city", "Porto"), "temperature": float(request.form.get("temperature", 0) or 0), "condition": request.form.get("condition", "Clear"), "icon": request.form.get("icon", ""), "humidity": int(float(request.form.get("humidity", 0) or 0)), "windSpeed": float(request.form.get("windSpeed", 0) or 0)})
+    state["weather"].update({
+        "source": request.form.get("source", "mock"),
+        "enabled": bool_form("enabled"),
+        "forecast_enabled": bool_form("forecast_enabled"),
+        "city": request.form.get("city", "Porto"),
+        "temperature": float(request.form.get("temperature", 0) or 0),
+        "condition": request.form.get("condition", "Clear"),
+        "conditionCode": int(float(request.form.get("conditionCode", 1000) or 1000)),
+        "isDay": bool_form("isDay"),
+        "uv": float(request.form.get("uv", 0) or 0),
+        "moonPhase": request.form.get("moonPhase", "Waxing Crescent"),
+        "humidity": int(float(request.form.get("humidity", 0) or 0)),
+        "windSpeed": float(request.form.get("windSpeed", 0) or 0),
+        "alerts_enabled": bool_form("alerts_enabled"),
+        "alert_event": request.form.get("alert_event", "Thunderstorm warning"),
+        "alert_headline": request.form.get("alert_headline", "Mock thunderstorm warning"),
+        "alert_severity": request.form.get("alert_severity", "Moderate"),
+        "alert_areas": request.form.get("alert_areas", request.form.get("city", "Porto")),
+        "alert_desc": request.form.get("alert_desc", "Mock alert: thunderstorms are possible in your area."),
+        "alert_instruction": request.form.get("alert_instruction", "Stay indoors if thunder is heard."),
+        "alert_second_enabled": bool_form("alert_second_enabled"),
+        "alert_second_event": request.form.get("alert_second_event", "High temperature warning"),
+        "alert_second_headline": request.form.get("alert_second_headline", "Mock heat warning"),
+        "alert_second_severity": request.form.get("alert_second_severity", "Severe"),
+        "alert_second_areas": request.form.get("alert_second_areas", "Portugal"),
+        "alert_second_desc": request.form.get("alert_second_desc", "Mock alert: very hot weather is expected."),
+        "alert_second_instruction": request.form.get("alert_second_instruction", "Drink water and avoid direct sun."),
+    })
     save_state(state)
     return redirect(url_for("mock_management"))
 
@@ -286,7 +331,8 @@ def mock_update_pending():
 
 @app.route("/mock/update/autoupdate", methods=["POST"])
 def mock_update_autoupdate():
-    return jsonify(mock_autoupdate()) if request.accept_mimetypes.best == "application/json" else redirect(url_for("mock_management"))
+    mock_autoupdate()
+    return jsonify(load_update_state()) if request.accept_mimetypes.best == "application/json" else redirect(url_for("mock_management"))
 
 
 @app.route("/dev/state", methods=["GET", "POST"])
@@ -341,7 +387,12 @@ def _autoupdate_worker():
     while True:
         time.sleep(60 * 60)
         try:
-            mock_autoupdate()
+            state = load_update_state()
+            if not state.get("auto_update") or state.get("update_in_progress"):
+                continue
+            checked = check_for_updates_mock()
+            if checked.get("available"):
+                mock_autoupdate()
         except Exception as exc:
             print(f"[mock-autoupdate] {exc}")
 

@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import threading
 import time
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -48,6 +49,7 @@ STATIC_DIR = PROJECT_ROOT / "static"
 TEMPLATES_DIR = PROJECT_ROOT / "templates"
 USERDATA_DIR = PROJECT_ROOT / "resources" / "userdata"
 ASSETS_DIR = PROJECT_ROOT / "resources" / "assets"
+FONTS_DIR = PROJECT_ROOT / "resources" / "Fonts"
 PHOTO_DIR = USERDATA_DIR / "Photos"
 FULL_DIR = PHOTO_DIR / "full"
 THUMB_DIR = PHOTO_DIR / "thumbs"
@@ -55,7 +57,7 @@ PHOTO_JSON = PHOTO_DIR / "photos.json"
 PHOTO_JS = PHOTO_DIR / "photos.js"
 CACHE_DIR = USERDATA_DIR / "cache"
 
-for folder in [USERDATA_DIR, ASSETS_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, RUNTIME_DIR]:
+for folder in [USERDATA_DIR, ASSETS_DIR, FONTS_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, CACHE_DIR, RUNTIME_DIR]:
     folder.mkdir(parents=True, exist_ok=True)
 
 MOCK_STATE_FILE = RUNTIME_DIR / "mock_state.json"
@@ -138,10 +140,29 @@ DEFAULT_STATE: dict[str, Any] = {
         "enabled": True,
         "temperature": 18.4,
         "condition": "Partly cloudy",
-        "icon": "https://cdn.weatherapi.com/weather/64x64/day/116.png",
+        "conditionCode": 1003,
+        "isDay": True,
+        "uv": 6.0,
+        "moonPhase": "Waxing Crescent",
+        "icon": "/assets/Weather/meteoicons/fill/partly-cloudy-day.svg",
         "humidity": 72,
         "windSpeed": 14.4,
         "city": "Porto",
+        "forecast_enabled": True,
+        "alerts_enabled": False,
+        "alert_event": "Thunderstorm warning",
+        "alert_headline": "Mock thunderstorm warning",
+        "alert_severity": "Moderate",
+        "alert_areas": "Porto, Portugal",
+        "alert_desc": "Mock alert: thunderstorms are possible in your area.",
+        "alert_instruction": "Stay indoors if thunder is heard.",
+        "alert_second_enabled": False,
+        "alert_second_event": "High temperature warning",
+        "alert_second_headline": "Mock heat warning",
+        "alert_second_severity": "Severe",
+        "alert_second_areas": "Portugal",
+        "alert_second_desc": "Mock alert: very hot weather is expected.",
+        "alert_second_instruction": "Drink water and avoid direct sun.",
     },
     "time": {
         "enabled": False,
@@ -152,11 +173,25 @@ DEFAULT_STATE: dict[str, Any] = {
 }
 
 
+_file_lock = threading.Lock()
+
+
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, indent=2, sort_keys=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    with _file_lock:
+        tmp.write_text(text, encoding="utf-8")
+        # os.replace raises PermissionError on Windows when the destination
+        # file is still open in another thread. Retry with a short backoff.
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.02)
 
 
 def deep_merge(default: Any, current: Any) -> Any:
@@ -491,27 +526,485 @@ def next_track() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Weather
 # ---------------------------------------------------------------------------
+METEOICON_BASE = "/assets/Weather/meteoicons/fill"
+
+MOON_PHASE_TO_METEOICON = {
+    "new moon": "moon-new",
+    "waxing crescent": "moon-waxing-crescent",
+    "first quarter": "moon-first-quarter",
+    "waxing gibbous": "moon-waxing-gibbous",
+    "full moon": "moon-full",
+    "waning gibbous": "moon-waning-gibbous",
+    "last quarter": "moon-last-quarter",
+    "waning crescent": "moon-waning-crescent",
+}
+
+WEATHER_CODE_TO_METEOICON = {
+    1000: {"day": "clear-day", "night": "moon-phase"},
+    1003: {"day": "partly-cloudy-day", "night": "partly-cloudy-night"},
+    1006: "cloudy",
+    1009: {"day": "overcast-day", "night": "overcast-night"},
+
+    1030: {"day": "fog-day", "night": "fog-night"},
+    1135: {"day": "fog-day", "night": "fog-night"},
+    1147: {"day": "fog-day", "night": "fog-night"},
+
+    1063: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+    1180: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+    1240: {"day": "partly-cloudy-day-rain", "night": "partly-cloudy-night-rain"},
+
+    1072: "sleet",
+    1150: "rain",
+    1153: "rain",
+    1168: "sleet",
+    1171: "sleet",
+
+    1183: "rain",
+    1186: "rain",
+    1189: "rain",
+    1192: "extreme-rain",
+    1195: "extreme-rain",
+    1198: "rain",
+    1201: "extreme-rain",
+    1243: "rain",
+    1246: "extreme-rain",
+
+    1066: "snow",
+    1114: "wind-snow",
+    1117: "extreme-snow",
+    1210: "snow",
+    1213: "snow",
+    1216: "snow",
+    1219: "snow",
+    1222: "extreme-snow",
+    1225: "extreme-snow",
+    1255: "snow",
+    1258: "snow",
+
+    1069: {"day": "partly-cloudy-day-sleet", "night": "partly-cloudy-night-sleet"},
+    1204: "sleet",
+    1207: "sleet",
+    1249: "sleet",
+    1252: "sleet",
+
+    1237: "hail",
+    1261: "hail",
+    1264: "hail",
+
+    1087: {"day": "thunderstorms-day", "night": "thunderstorms-night"},
+    1273: {"day": "thunderstorms-day-rain", "night": "thunderstorms-night-rain"},
+    1276: "thunderstorms-extreme-rain",
+    1279: {"day": "thunderstorms-day-snow", "night": "thunderstorms-night-snow"},
+    1282: "thunderstorms-extreme-snow",
+}
+
+ALERT_EVENT_ICON_RULES = [
+    ("avalanche", "alert-avalanche-danger"),
+    ("landslide|rock|debris", "alert-falling-rocks"),
+    ("tornado", "tornado"),
+    ("hurricane|cyclone|typhoon", "hurricane"),
+    ("thunder|lightning|storm", "thunderstorms-extreme-rain"),
+    ("rain|shower|flood|precip|coastal|marine|surf", "extreme-rain"),
+    ("snow|blizzard", "extreme-snow"),
+    ("ice|freez|sleet", "sleet"),
+    ("hail", "hail"),
+    ("wind|gale|gust", "wind-alert"),
+    ("fog|mist", "fog-day"),
+    ("heat|hot|high temperature", "thermometer-warmer"),
+    ("cold|frost|low temperature", "thermometer-colder"),
+]
+
+
+def _meteoicon_url(icon_name: str | None) -> str:
+    clean = str(icon_name or "not-available").strip().replace(".svg", "")
+    return f"{METEOICON_BASE}/{clean}.svg"
+
+
+def _uv_icon_name(uv: Any) -> str:
+    """Use UV-specific icons only for clear daytime sky when UV is 5 or above."""
+    try:
+        uv_value = int(round(float(uv)))
+    except Exception:
+        return "clear-day"
+
+    if uv_value < 5:
+        return "clear-day"
+    if uv_value >= 12:
+        return "uv-index-11-plus"
+    if uv_value == 11:
+        return "uv-index-11"
+    return f"uv-index-{max(1, min(10, uv_value))}"
+
+
+def _moon_icon_name(moon_phase: Any) -> str:
+    key = str(moon_phase or "").strip().lower()
+    return MOON_PHASE_TO_METEOICON.get(key, "moon-new")
+
+
+def resolve_meteoicon(condition_code: Any, is_day: Any = True, uv: Any = None, moon_phase: Any = None) -> str:
+    """Map WeatherAPI condition code + day/night context to a local icon URL."""
+    try:
+        code = int(condition_code)
+    except Exception:
+        code = 1000
+
+    day = bool(int(is_day)) if isinstance(is_day, (int, str)) and str(is_day).strip() in ("0", "1") else bool(is_day)
+
+    if code == 1000:
+        icon = _uv_icon_name(uv) if day else _moon_icon_name(moon_phase)
+        return _meteoicon_url(icon)
+
+    entry = WEATHER_CODE_TO_METEOICON.get(code, "not-available")
+    if isinstance(entry, dict):
+        icon = entry["day"] if day else entry["night"]
+    else:
+        icon = entry
+    return _meteoicon_url(icon)
+
+
+ALERT_SEVERITY_FALLBACK_ICON = {
+    "extreme": "thunderstorms-extreme",
+    "severe": "wind-alert",
+    "moderate": "wind-alert",
+    "minor": "wind-alert",
+}
+
+
+def resolve_alert_icon(alert: dict[str, Any]) -> str:
+    """Map WeatherAPI alert text to the closest local alert/severity icon."""
+    import re
+
+    text = " ".join(
+        str(alert.get(key) or "")
+        for key in ("event", "headline", "desc", "instruction", "severity", "category")
+    ).lower()
+
+    for pattern, icon in ALERT_EVENT_ICON_RULES:
+        if re.search(pattern, text, re.IGNORECASE):
+            return _meteoicon_url(icon)
+
+    severity = str(alert.get("severity") or "").strip().lower()
+    return _meteoicon_url(ALERT_SEVERITY_FALLBACK_ICON.get(severity, "wind-alert"))
+
+
+def normalize_area_text(value: Any) -> str:
+    """Normalize area names for alert matching without requiring exact formatting."""
+    import re
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def area_words(value: Any) -> set[str]:
+    return {
+        word
+        for word in normalize_area_text(value).split()
+        if len(word) >= 3
+    }
+
+
+def alert_area_candidates(configured_location: Any, api_location: dict[str, Any] | None = None) -> list[str]:
+    candidates: list[str] = []
+
+    for part in str(configured_location or "").replace(";", ",").split(","):
+        part = part.strip()
+        if part:
+            candidates.append(part)
+
+    if isinstance(api_location, dict):
+        for key in ("name", "region", "country"):
+            value = str(api_location.get(key) or "").strip()
+            if value:
+                candidates.append(value)
+
+    seen: set[str] = set()
+    clean: list[str] = []
+    for candidate in candidates:
+        normalized = normalize_area_text(candidate)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            clean.append(candidate)
+
+    return clean
+
+
+def alert_matches_configured_area(alert: dict[str, Any], configured_location: Any, api_location: dict[str, Any] | None = None) -> bool:
+    """Return True if the alert area appears to cover the configured weather area.
+
+    This intentionally supports broad WeatherAPI alert areas. For example,
+    a configured value like "Aveiro,Portugal" matches alerts for "Aveiro",
+    the API-resolved region, or "Portugal".
+    """
+    raw_areas = str(alert.get("areas") or "").strip()
+    if not raw_areas:
+        return True
+
+    normalized_areas = normalize_area_text(raw_areas)
+    if not normalized_areas:
+        return True
+
+    area_word_set = area_words(raw_areas)
+
+    for candidate in alert_area_candidates(configured_location, api_location):
+        normalized_candidate = normalize_area_text(candidate)
+        if normalized_candidate and normalized_candidate in normalized_areas:
+            return True
+
+        candidate_words = area_words(candidate)
+        if candidate_words and any(word in area_word_set for word in candidate_words):
+            return True
+
+    broad_markers = [
+        "all areas",
+        "entire country",
+        "whole country",
+        "countrywide",
+        "nationwide",
+        "all districts",
+        "mainland",
+    ]
+    return any(marker in normalized_areas for marker in broad_markers)
+
+
+def _mock_alert_payload(weather: dict[str, Any]) -> list[dict[str, str]]:
+    if not weather.get("alerts_enabled"):
+        return []
+
+    alerts = [
+        {
+            "headline": str(weather.get("alert_headline") or "Mock weather alert"),
+            "event": str(weather.get("alert_event") or "Weather alert"),
+            "severity": str(weather.get("alert_severity") or "Moderate"),
+            "urgency": "Expected",
+            "areas": str(weather.get("alert_areas") or weather.get("city") or "Mock area"),
+            "effective": datetime.now().isoformat(timespec="minutes"),
+            "expires": (datetime.now() + timedelta(hours=2)).isoformat(timespec="minutes"),
+            "desc": str(weather.get("alert_desc") or "Mock weather alert for display testing."),
+            "instruction": str(weather.get("alert_instruction") or "Follow local guidance."),
+        }
+    ]
+
+    if weather.get("alert_second_enabled"):
+        alerts.append({
+            "headline": str(weather.get("alert_second_headline") or "Second mock weather alert"),
+            "event": str(weather.get("alert_second_event") or "Second weather alert"),
+            "severity": str(weather.get("alert_second_severity") or "Severe"),
+            "urgency": "Expected",
+            "areas": str(weather.get("alert_second_areas") or weather.get("city") or "Mock area"),
+            "effective": datetime.now().isoformat(timespec="minutes"),
+            "expires": (datetime.now() + timedelta(hours=3)).isoformat(timespec="minutes"),
+            "desc": str(weather.get("alert_second_desc") or "Second mock weather alert for display testing."),
+            "instruction": str(weather.get("alert_second_instruction") or "Follow local guidance."),
+        })
+
+    configured_area = weather.get("city") or "Porto"
+    filtered: list[dict[str, str]] = []
+
+    for alert in alerts:
+        if not alert_matches_configured_area(alert, configured_area, {
+            "name": weather.get("city"),
+            "region": weather.get("city"),
+            "country": configured_area,
+        }):
+            continue
+        alert["icon"] = resolve_alert_icon(alert)
+        filtered.append(alert)
+
+    return filtered
+
+
+def _alerts_from_weatherapi(data: dict[str, Any], configured_location: Any = None) -> list[dict[str, str]]:
+    raw_alerts = data.get("alerts", {}).get("alert", []) or []
+    api_location = data.get("location", {}) or {}
+    alerts: list[dict[str, str]] = []
+
+    for raw in raw_alerts:
+        if not alert_matches_configured_area(raw, configured_location, api_location):
+            continue
+
+        alert = {
+            "headline": str(raw.get("headline") or ""),
+            "event": str(raw.get("event") or ""),
+            "severity": str(raw.get("severity") or ""),
+            "urgency": str(raw.get("urgency") or ""),
+            "areas": str(raw.get("areas") or ""),
+            "effective": str(raw.get("effective") or ""),
+            "expires": str(raw.get("expires") or ""),
+            "desc": str(raw.get("desc") or ""),
+            "instruction": str(raw.get("instruction") or ""),
+            "category": str(raw.get("category") or ""),
+            "certainty": str(raw.get("certainty") or ""),
+        }
+        alert["icon"] = resolve_alert_icon(alert)
+        alerts.append(alert)
+
+    return alerts
+
+
+def mock_forecast_payload(weather: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return deterministic local forecast data for the display weather rotation."""
+    base_temp = round(float(weather.get("temperature", 18.4)))
+    condition = str(weather.get("condition") or "Partly cloudy")
+    condition_code = int(weather.get("conditionCode") or 1003)
+    moon_phase = weather.get("moonPhase") or "Waxing Crescent"
+    uv = weather.get("uv", 6)
+
+    now = datetime.now()
+    hourly: list[dict[str, Any]] = []
+    hourly_items = [
+        (condition, condition_code, uv, bool(weather.get("isDay", True)), 0),
+        ("Cloudy", 1006, uv, True, 1),
+        ("Light rain", 1183, uv, True, -1),
+        ("Partly cloudy", 1003, uv, False, -2),
+        ("Clear", 1000, uv, False, -1),
+    ]
+
+    for index, (slot_condition, code, slot_uv, is_day, temp_offset) in enumerate(hourly_items):
+        slot = now + timedelta(hours=index + 1)
+        hourly.append({
+            "time": slot.strftime("%H:00"),
+            "icon": resolve_meteoicon(code, is_day, slot_uv, moon_phase),
+            "temp": f"{base_temp + temp_offset}°C",
+            "condition": slot_condition,
+            "conditionCode": code,
+            "isDay": bool(is_day),
+            "uv": slot_uv,
+            "moonPhase": moon_phase,
+        })
+
+    daily: list[dict[str, Any]] = []
+    daily_items = [
+        (condition, condition_code, uv, 3, -4),
+        ("Sunny", 1000, 7, 4, -3),
+        ("Cloudy", 1006, 3, 2, -5),
+        ("Light rain", 1183, 2, 1, -6),
+        ("Partly cloudy", 1003, 5, 3, -4),
+    ]
+
+    for index, (day_condition, code, day_uv, high_offset, low_offset) in enumerate(daily_items):
+        day = date.today() + timedelta(days=index)
+        daily.append({
+            "label": "Today" if index == 0 else day.strftime("%a"),
+            "icon": resolve_meteoicon(code, True, day_uv, moon_phase),
+            "high": f"{base_temp + high_offset}°C",
+            "low": f"{base_temp + low_offset}°C",
+            "condition": day_condition,
+            "conditionCode": code,
+            "isDay": True,
+            "uv": day_uv,
+            "moonPhase": moon_phase,
+        })
+
+    return {"hourly": hourly, "daily": daily}
+
+
+def _forecast_from_weatherapi(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Extract the frontend forecast shape from a WeatherAPI forecast.json response."""
+    forecast_days = data.get("forecast", {}).get("forecastday", []) or []
+    moon_phase = None
+    if forecast_days:
+        moon_phase = (forecast_days[0].get("astro", {}) or {}).get("moon_phase")
+
+    hourly: list[dict[str, Any]] = []
+    now_epoch = time.time()
+
+    for day_fc in forecast_days:
+        day_moon_phase = (day_fc.get("astro", {}) or {}).get("moon_phase") or moon_phase
+        for hour_fc in day_fc.get("hour", []):
+            try:
+                if float(hour_fc.get("time_epoch", 0)) <= now_epoch:
+                    continue
+            except Exception:
+                pass
+            condition = hour_fc.get("condition", {}) or {}
+            code = condition.get("code", 1000)
+            is_day = bool(int(hour_fc.get("is_day", 1)))
+            uv = hour_fc.get("uv")
+            hourly.append({
+                "time": str(hour_fc.get("time", "")).split(" ")[-1][:5],
+                "icon": resolve_meteoicon(code, is_day, uv, day_moon_phase),
+                "temp": f"{round(float(hour_fc.get('temp_c', 0)))}°C",
+                "condition": condition.get("text", ""),
+                "conditionCode": code,
+                "isDay": is_day,
+                "uv": uv,
+                "moonPhase": day_moon_phase,
+            })
+            if len(hourly) == 5:
+                break
+        if len(hourly) == 5:
+            break
+
+    daily: list[dict[str, Any]] = []
+    today = date.today()
+    for day_fc in forecast_days[:5]:
+        try:
+            day_date = date.fromisoformat(str(day_fc.get("date")))
+        except Exception:
+            day_date = today + timedelta(days=len(daily))
+        day_data = day_fc.get("day", {}) or {}
+        condition = day_data.get("condition", {}) or {}
+        astro = day_fc.get("astro", {}) or {}
+        code = condition.get("code", 1000)
+        uv = day_data.get("uv")
+        moon = astro.get("moon_phase") or moon_phase
+        daily.append({
+            "label": "Today" if day_date == today else day_date.strftime("%a"),
+            "icon": resolve_meteoicon(code, True, uv, moon),
+            "high": f"{round(float(day_data.get('maxtemp_c', 0)))}°C",
+            "low": f"{round(float(day_data.get('mintemp_c', 0)))}°C",
+            "condition": condition.get("text", ""),
+            "conditionCode": code,
+            "isDay": True,
+            "uv": uv,
+            "moonPhase": moon,
+        })
+
+    return {"hourly": hourly, "daily": daily}
+
+
 def real_weather_payload() -> dict[str, Any]:
     load_env_files()
     cfg = load_config()
     key = cfg.get("weather_api_key") or os.getenv("WEATHER_API_KEY")
     location = cfg.get("weather_region") or "Porto"
     if not key:
-        return {"error": "Weather API key not configured"}
+        return {"error": "Weather API key not configured", "source": "real"}
     try:
         import requests
-        res = requests.get("https://api.weatherapi.com/v1/current.json", params={"key": key, "q": location, "aqi": "no"}, timeout=5)
+        res = requests.get(
+            "https://api.weatherapi.com/v1/forecast.json",
+            params={"key": key, "q": location, "days": 5, "aqi": "no", "alerts": "yes"},
+            timeout=5,
+        )
         res.raise_for_status()
         data = res.json()
-        return {
-            "temperature": round(float(data["current"]["temp_c"]), 1),
-            "condition": data["current"]["condition"]["text"],
-            "icon": "https:" + data["current"]["condition"]["icon"],
-            "humidity": int(data["current"]["humidity"]),
-            "windSpeed": float(data["current"]["wind_kph"]),
+        current = data["current"]
+        current_condition = current.get("condition", {}) or {}
+        forecast_days = data.get("forecast", {}).get("forecastday", []) or []
+        moon_phase = None
+        if forecast_days:
+            moon_phase = (forecast_days[0].get("astro", {}) or {}).get("moon_phase")
+
+        code = current_condition.get("code", 1000)
+        is_day = bool(int(current.get("is_day", 1)))
+        uv = current.get("uv")
+        payload = {
+            "temperature": round(float(current["temp_c"]), 1),
+            "condition": current_condition.get("text", ""),
+            "conditionCode": code,
+            "isDay": is_day,
+            "uv": uv,
+            "moonPhase": moon_phase,
+            "icon": resolve_meteoicon(code, is_day, uv, moon_phase),
+            "humidity": int(current["humidity"]),
+            "windSpeed": float(current["wind_kph"]),
             "city": data["location"]["name"],
+            "alerts": _alerts_from_weatherapi(data, location),
             "source": "real",
         }
+        forecast = _forecast_from_weatherapi(data)
+        if forecast.get("hourly") and forecast.get("daily"):
+            payload["forecast"] = forecast
+        return payload
     except Exception as exc:
         return {"error": f"Weather request failed: {exc}", "source": "real"}
 
@@ -522,16 +1015,31 @@ def weather_payload() -> dict[str, Any]:
     if weather.get("source") == "real":
         return real_weather_payload()
     if not weather.get("enabled", True):
-        return {"error": "Weather API key not configured"}
-    return {
+        return {"error": "Mock weather disabled", "source": "mock"}
+
+    code = int(weather.get("conditionCode") or 1000)
+    is_day = bool(weather.get("isDay", True))
+    uv = weather.get("uv", 6)
+    moon_phase = weather.get("moonPhase") or "Waxing Crescent"
+
+    payload = {
         "temperature": round(float(weather.get("temperature", 0)), 1),
         "condition": weather.get("condition", "Clear"),
-        "icon": weather.get("icon"),
+        "conditionCode": code,
+        "isDay": is_day,
+        "uv": uv,
+        "moonPhase": moon_phase,
+        "icon": resolve_meteoicon(code, is_day, uv, moon_phase),
         "humidity": int(float(weather.get("humidity", 0))),
         "windSpeed": float(weather.get("windSpeed", 0)),
         "city": weather.get("city", "Porto"),
+        "alerts": _mock_alert_payload(weather),
         "source": "mock",
     }
+    if weather.get("forecast_enabled", True):
+        payload["forecast"] = mock_forecast_payload(weather)
+    return payload
+
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +1089,38 @@ def default_update_state() -> dict[str, Any]:
     }
 
 
+MOCK_INSTALL_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_INSTALL_SECONDS", "90"))
+
+
+def _finalize_expired_mock_install(state: dict[str, Any]) -> dict[str, Any]:
+    """Complete the mock install after a wall-clock deadline, not after reads.
+
+    The real updater writes update_in_progress=True to runtime/update_state.json
+    while it is running, and later writes pending_restart=True when installation
+    completes. Reading /update_status.json does not consume that state. The mock
+    follows that same contract so config-page refreshes cannot clear the overlay
+    before the display frontend polls it.
+    """
+    if not state.get("update_in_progress"):
+        return state
+
+    complete_at = float(state.get("_mock_install_complete_at") or 0)
+    if complete_at and time.time() >= complete_at:
+        state.update({
+            "update_in_progress": False,
+            "pending_restart": True,
+            "available": False,
+            "mock_pending_update": False,
+            "last_error": "Mock environment: install completed; reboot is disabled.",
+        })
+        state.pop("_mock_install_complete_at", None)
+        state.pop("_mock_install_started_at", None)
+        state.pop("_mock_install_reads_remaining", None)
+        atomic_write_json(UPDATE_STATE_FILE, state)
+
+    return state
+
+
 def load_update_state() -> dict[str, Any]:
     state = default_update_state()
     state.update(read_json(UPDATE_STATE_FILE, {}))
@@ -589,8 +1129,17 @@ def load_update_state() -> dict[str, Any]:
     state["auto_update"] = bool(cfg.get("auto_update", False))
     state["repo"] = cfg.get("repo", state.get("repo", "")) or os.getenv("MEMENTOFRAME_UPDATE_REPO", "")
     state["channel"] = cfg.get("channel", state.get("channel", "stable")) or "stable"
-    if bool(state.get("mock_pending_update")):
-        state.update({"available": True, "latest_version": state.get("latest_version") or "9.9.9-mock", "latest_tag": state.get("latest_tag") or "v9.9.9-mock", "last_error": None})
+
+    state = _finalize_expired_mock_install(state)
+
+    if bool(state.get("mock_pending_update")) and not state.get("update_in_progress"):
+        state.update({
+            "available": True,
+            "latest_version": state.get("latest_version") or "9.9.9-mock",
+            "latest_tag": state.get("latest_tag") or "v9.9.9-mock",
+            "last_error": None,
+        })
+
     return state
 
 
@@ -651,22 +1200,45 @@ def check_for_updates_mock() -> dict[str, Any]:
 
 
 def mock_install_update_blocked() -> dict[str, Any]:
+    """Simulate the real updater lifecycle without modifying project files.
+
+    The mock writes update_in_progress=True immediately, leaves it in place for
+    long enough for the real frontend polling loop to observe it, and then moves
+    to pending_restart=True. Reads are passive, matching the real services.
+    """
+    now = time.time()
     state = load_update_state()
-    state.update({"update_in_progress": False, "pending_restart": False, "last_error": "Mock environment: install/reboot is disabled."})
+    state.update({
+        "available": False,
+        "mock_pending_update": False,
+        "update_in_progress": True,
+        "pending_restart": False,
+        "last_error": None,
+        "_mock_install_started_at": now,
+        "_mock_install_complete_at": now + MOCK_INSTALL_DURATION_SECONDS,
+    })
+    state.pop("_mock_install_reads_remaining", None)
     save_update_state(state)
     return state
 
 
 def mock_autoupdate() -> dict[str, Any]:
+    """Simulate a full autoupdate cycle, always triggering the install overlay.
+
+    The "Run autoupdate test" button calls this regardless of the auto_update
+    config flag — it is a manual test, not the scheduled background check.
+    Nothing is ever installed or rebooted.
+    """
+    # Ensure there is a pending update to install.
     state = load_update_state()
-    if not state.get("auto_update"):
-        state.update({"last_autoupdate_check": time.time(), "auto_update_skipped": "disabled"})
+    if not state.get("available"):
+        state.update({
+            "available": True,
+            "mock_pending_update": True,
+            "latest_version": state.get("latest_version") or "9.9.9-mock",
+            "latest_tag": state.get("latest_tag") or "v9.9.9-mock",
+        })
         save_update_state(state)
-        return state
-    checked = check_for_updates_mock()
-    if checked.get("available"):
-        checked["last_error"] = "Mock environment: autoupdate found an update but install/reboot is disabled."
-        checked["update_in_progress"] = False
-        checked["pending_restart"] = False
-        save_update_state(checked)
-    return load_update_state()
+
+    # Delegate to the install simulator (sets update_in_progress + auto-clears).
+    return mock_install_update_blocked()

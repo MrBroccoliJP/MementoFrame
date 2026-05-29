@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 4
+RELEASE_COUNTER = 5 
 
 VERSION_ORDER = [
     "frontend",
@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 38, #rework on photoslideshow: better randomization to make sure all photos are shown before shuffling the array.
+        "version": 45, #updater overlay small fix | spotify first play fix | qr code new accent | system info box rework | css cleanup
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 25, #Photo uploads now upload to a tmp folder and then are processed in the device, to avoid the config portal to be stuck loading.
+        "version": 26, #updater overlay small fix
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 23, #updated to use chromium and handle spotify without permissions
+        "version": 27, #Filter alerts for current area only. 
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
