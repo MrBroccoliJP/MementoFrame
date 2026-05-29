@@ -8,6 +8,8 @@
  * - Removed invalid/no-op declarations such as negative padding and -0px margins.
  * - Kept feature-specific !important rules only where they protect runtime class toggles.
  * - Consolidated the system tray rules into one section.
+ * - Integrated update-card collapse into the tray section; no trailing override block.
+ * - PIN state now keeps the Wi-Fi icon visible and places the PIN details to its right.
  */
 
 /* Fonts */
@@ -1366,11 +1368,11 @@ body {
    System tray, Wi-Fi, QR, update, and PIN display
    =========================
    Compact bottom tray using the existing HTML:
-   - The tray wrapper is translucent and only as wide as its contents.
-   - Left/right padding gives the tray breathing room without increasing height.
-   - The QR card is black for scan reliability; the QR modules use the accent
-     colour generated in qr.js.
-   - The update cell is removed from layout when hidden, so the tray shrinks.
+   - Wrapper is translucent and only as wide as its visible cells.
+   - Horizontal padding adds breathing room without increasing tray height.
+   - QR card stays black for scan reliability; qr.js supplies the accent modules.
+   - Update cell is removed from layout while hidden, so no empty flex slot remains.
+   - PIN state keeps the Wi-Fi icon visible and places the PIN details beside it.
 */
 .system-info-box {
   --system-tray-cell: 52px;
@@ -1506,6 +1508,36 @@ body:has(.left_panel.swapped) .system-info-box {
 
 .update-status-card.hidden {
   display: none !important;
+  flex: 0 0 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
+}
+
+/* Safety guard for any future state mismatch: only a visible update card
+   may reserve space inside the tray. */
+.system-info-box:not(:has(.update-status-card.visible)) .update-status-card {
+  display: none !important;
+  flex: 0 0 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  overflow: hidden !important;
 }
 
 .update-status-card__text {
@@ -1575,20 +1607,29 @@ body:has(.left_panel.swapped) .system-info-box {
   line-height: 0 !important;
 }
 
-/* PIN state expands only the Wi-Fi cell, keeping the same tray wrapper. */
+/* PIN state expands only the Wi-Fi cell, keeping the same tray wrapper.
+   The Wi-Fi icon remains visible and the PIN details sit to its right. */
 .wifi-info.pin-expanded {
   width: auto !important;
-  min-width: 126px !important;
+  min-width: 158px !important;
   max-width: none !important;
   flex-basis: auto !important;
   height: var(--system-tray-cell) !important;
-  padding: 0 10px !important;
+  padding: 0 12px 0 8px !important;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
   background: var(--system-tray-cell-bg) !important;
   border-radius: var(--system-tray-radius) !important;
 }
 
 .wifi-info.pin-expanded .wifistatus {
-  display: none !important;
+  display: flex !important;
+  width: 34px !important;
+  height: 34px !important;
+  flex: 0 0 34px !important;
 }
 
 .frame-pin-row {
@@ -1596,6 +1637,13 @@ body:has(.left_panel.swapped) .system-info-box {
   flex-direction: column;
   align-items: center;
   width: 100%;
+}
+
+.wifi-info.pin-expanded .frame-pin-row {
+  align-items: flex-start;
+  justify-content: center;
+  width: auto;
+  min-width: 0;
 }
 
 .frame-pin-label {
@@ -1618,6 +1666,13 @@ body:has(.left_panel.swapped) .system-info-box {
   padding-left: 0.18em;
 }
 
+.wifi-info.pin-expanded .frame-pin-digits {
+  font-size: 1.25rem;
+  letter-spacing: 0.16em;
+  line-height: 1.08;
+  padding-left: 0;
+}
+
 .frame-pin-url {
   font-family: "Inter", sans-serif;
   font-size: 0.58rem;
@@ -1625,6 +1680,16 @@ body:has(.left_panel.swapped) .system-info-box {
   color: rgba(242, 242, 242, 0.62) !important;
   line-height: 1.1;
   white-space: nowrap;
+}
+
+.wifi-info.pin-expanded .frame-pin-label {
+  font-size: 0.5rem;
+  letter-spacing: 0.18em;
+}
+
+.wifi-info.pin-expanded .frame-pin-url {
+  font-size: 0.52rem;
+  line-height: 1;
 }
 
 /* =========================
@@ -1755,28 +1820,4 @@ body:has(.left_panel.swapped) .system-info-box {
   91.01%, 100% {
     transform: translateY(0);
   }
-}
-
-/* =========================================================
-   Update tray gap fix
-   =========================================================
-   Collapse the update card unless the updater module explicitly marks it
-   visible. This preserves the existing tray styling and prevents an empty
-   flex slot from remaining when no update is available.
-*/
-.system-info-box:not(:has(.update-status-card.visible)) .update-status-card,
-.update-status-card.hidden:not(.visible) {
-  display: none !important;
-  flex: 0 0 0 !important;
-  width: 0 !important;
-  min-width: 0 !important;
-  max-width: 0 !important;
-  height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-  overflow: hidden !important;
 }
