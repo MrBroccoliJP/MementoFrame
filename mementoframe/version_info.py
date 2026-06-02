@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 46, #bug fix on visibility of update flag when there are no updates available.
+        "version": 47, #keep wifi symbol visible when pin is shown
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
