@@ -16,15 +16,21 @@ export function initLayout() {
 }
 
 export function setCalendarOpacity(opacity) {
-  const calendarBox = document.getElementById('calendar-box');
-  const forecastBox = document.getElementById('forecast-box');
+  const fullOpacity = Number(opacity) >= 1;
+
+  // Keep content fully opaque. The visual transparency now lives in CSS
+  // background variables, so text/icons remain sharp while the card surface
+  // gets the frosted-glass effect.
+  document.body?.classList.toggle("mf-info-full-opacity", fullOpacity);
+
+  const calendarBox = document.getElementById("calendar-box");
+  const forecastBox = document.getElementById("forecast-box");
   const dateBox = $(SELECTORS.dateBox);
   const weatherBox = $(SELECTORS.weatherBox);
 
-  if (calendarBox) calendarBox.style.opacity = opacity;
-  if (forecastBox) forecastBox.style.opacity = opacity;
-  if (dateBox) dateBox.style.opacity = opacity;
-  if (weatherBox) weatherBox.style.opacity = opacity;
+  [calendarBox, forecastBox, dateBox, weatherBox].forEach((el) => {
+    el?.style.removeProperty("opacity");
+  });
 }
 
 export function showSpotify() {
@@ -312,9 +318,9 @@ function applyWidgetVisibility() {
     if (forecastView === '5h-big')   f5hBig?.classList.remove('hidden');
     if (forecastView === '5d-big')   f5dBig?.classList.remove('hidden');
 
-    // Big forecast panels should be fully opaque, matching the other right-panel cards.
+    // Big forecast panels use the same card background mode as the rest of the right panel.
     if (forecastView === '5h-big' || forecastView === '5d-big') {
-      forecastBox.style.opacity = "1";
+      forecastBox?.style.removeProperty("opacity");
     }
   }
 
