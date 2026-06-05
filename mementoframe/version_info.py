@@ -35,7 +35,7 @@ COMPONENTS = {
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 26, #updater overlay small fix
+        "version": 27, #Wi-Fi/AP fallback watchdog improvements, on reconnection attempts
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
@@ -47,7 +47,7 @@ COMPONENTS = {
     },
     "network_manager": {
         "label": "Network Manager",
-        "version": 21,
+        "version": 22, #Wi-Fi/AP fallback watchdog improvements
         "file": "network_manager_service.py",
         "description": "NetworkManager Wi-Fi/AP fallback watchdog",
     },

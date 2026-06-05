@@ -204,9 +204,12 @@ RUNTIME_DIR = "runtime"
 os.makedirs(RUNTIME_DIR, exist_ok=True)
 
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
+CONFIG_PORTAL_ACTIVITY_FILE = os.path.join(RUNTIME_DIR, "config_portal_activity.json")
+WIFI_REBOOT_FLAG_FILE = os.path.join(RUNTIME_DIR, "rebooted_for_wifi_failure.flag")
 UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
 CONFIG_PORTAL_PIN_LENGTH = 6
 CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
+CONFIG_PORTAL_ACTIVITY_GRACE_SECONDS = 5 * 60
 
 CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS = {
     "config_portal_pin_page",
@@ -223,6 +226,34 @@ def _atomic_write_json(path, data):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
+
+
+
+def mark_config_portal_active(reason="dashboard"):
+    """Tell the network watchdog to keep AP mode stable for a short window."""
+    now = time.time()
+    record = {
+        "reason": reason,
+        "last_seen": now,
+        "quiet_until": now + CONFIG_PORTAL_ACTIVITY_GRACE_SECONDS,
+        "grace_seconds": CONFIG_PORTAL_ACTIVITY_GRACE_SECONDS,
+    }
+
+    try:
+        _atomic_write_json(CONFIG_PORTAL_ACTIVITY_FILE, record)
+        os.chmod(CONFIG_PORTAL_ACTIVITY_FILE, 0o600)
+    except Exception as e:
+        print(f"⚠️ Could not write config portal activity marker: {e}")
+
+
+def clear_wifi_reboot_flag():
+    """Allow a future one-shot Wi-Fi recovery reboot after Wi-Fi is healthy."""
+    try:
+        os.remove(WIFI_REBOOT_FLAG_FILE)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"⚠️ Could not clear Wi-Fi reboot flag: {e}")
 
 
 def remove_config_portal_pin():
@@ -333,15 +364,6 @@ def config_portal_pin_submit():
     wake_screen()
     get_or_create_config_portal_pin_record()
     return render_template("pin.html", error="Incorrect or expired PIN — try again.")
-
-def clear_config_portal_pin():
-    """Remove any stale PIN file during application startup or shutdown cleanup."""
-    try:
-        os.remove(CONFIG_PORTAL_PIN_FILE)
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        print(f"⚠️ Could not clear config portal PIN: {e}")
 
 
 # =============================================================================
@@ -532,39 +554,92 @@ def process_uploaded_photo_batch(batch_id, batch_dir):
 # =============================================================================
 # Network helpers
 # =============================================================================
-def _run(cmd):
+def _run(cmd, timeout=None):
     """Run a subprocess command and return its status, stdout, and stderr."""
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except subprocess.TimeoutExpired as e:
+        return 124, (e.stdout or "").strip() if isinstance(e.stdout, str) else "", "command timed out"
 
-def connect_wifi_sudo(ssid, psk, ifname="wlan0", stop_ap=True, timeout=10):
-    """Create/update a NetworkManager Wi-Fi profile and attempt to connect to it."""
+def connect_wifi_sudo(ssid, psk, ifname="wlan0", stop_ap=True, timeout=45):
+    """
+    Create/update a NetworkManager Wi-Fi profile and attempt to connect to it.
+
+    The AP-to-client transition restarts NetworkManager because Raspberry Pi
+    Wi-Fi can get stuck after AP mode. If the connection fails, MementoAP is
+    restored so the config portal remains reachable.
+    """
+    ssid = ssid.strip()
+    if not ssid:
+        return False, "No SSID provided."
+
+    mark_config_portal_active("wifi-connect")
+
     try:
         if stop_ap:
             _run(["sudo", "systemctl", "stop", "hostapd"])
             _run(["sudo", "systemctl", "stop", "dnsmasq"])
+
+        # Replace only the clean profile that matches this SSID. Old netplan-* profiles
+        # are left alone until the new connection succeeds.
         _run(["sudo", "nmcli", "connection", "delete", ssid])
+
         rc, out, err = _run([
             "sudo", "nmcli", "connection", "add",
             "type", "wifi", "ifname", ifname,
-            "con-name", ssid, "ssid", ssid, "autoconnect", "no"
+            "con-name", ssid, "ssid", ssid, "autoconnect", "no",
         ])
         if rc != 0:
-            return False, f"failed to add connection: {err or out}"
-        _run(["sudo", "nmcli", "connection", "modify", ssid,
-              "802-11-wireless-security.key-mgmt", "wpa-psk"])
-        _run(["sudo", "nmcli", "connection", "modify", ssid,
-              "802-11-wireless-security.psk", psk])
-        _run(["sudo", "nmcli", "connection", "modify", ssid,
-              "connection.autoconnect", "yes"])
-        _run(["sudo", "nmcli", "connection", "up", ssid])
-        _run(["sudo", "nmcli", "device", "connect", ifname])
-        time.sleep(min(max(timeout, 1), 30))
-        rc, out, _ = _run(["nmcli", "-t", "-f", "DEVICE,STATE", "device", "status"])
-        if f"{ifname}:connected" in out:
-            return True, f"Connected to {ssid}"
-        return True, f"Connection attempt OK; verify network state"
+            return False, f"Failed to add Wi-Fi profile: {err or out}"
+
+        settings = [
+            ["connection.autoconnect", "yes"],
+            ["802-11-wireless-security.key-mgmt", "wpa-psk"],
+            ["802-11-wireless-security.psk", psk],
+            ["802-11-wireless-security.wps-method", "disabled"],
+        ]
+        for key, value in settings:
+            rc, out, err = _run(["sudo", "nmcli", "connection", "modify", ssid, key, value])
+            if rc != 0 and key != "802-11-wireless-security.wps-method":
+                return False, f"Failed to configure Wi-Fi profile: {err or out}"
+
+        if stop_ap:
+            _run(["sudo", "nmcli", "connection", "down", "MementoAP"])
+            _run(["sudo", "nmcli", "device", "disconnect", ifname])
+
+        rc, out, err = _run(["sudo", "systemctl", "restart", "NetworkManager"], timeout=30)
+        if rc != 0:
+            print(f"⚠️ NetworkManager restart failed during Wi-Fi connect: {err or out}")
+
+        time.sleep(10)
+
+        _run(["sudo", "nmcli", "radio", "wifi", "on"])
+        time.sleep(2)
+        _run(["sudo", "nmcli", "device", "wifi", "rescan", "ifname", ifname])
+        time.sleep(5)
+
+        rc, out, err = _run(["sudo", "nmcli", "connection", "up", ssid], timeout=timeout + 10)
+        if rc != 0:
+            _run(["sudo", "nmcli", "connection", "up", "MementoAP"])
+            return False, f"Wi-Fi connection failed: {err or out}"
+
+        deadline = time.time() + max(10, min(timeout, 90))
+        while time.time() < deadline:
+            rc, out, _ = _run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"])
+            for line in out.splitlines():
+                parts = line.split(":")
+                if len(parts) >= 4 and parts[0] == ifname and parts[1] == "wifi" and parts[2] == "connected":
+                    if parts[3] != "MementoAP":
+                        clear_wifi_reboot_flag()
+                        return True, f"Connected to {ssid}"
+            time.sleep(2)
+
+        _run(["sudo", "nmcli", "connection", "up", "MementoAP"])
+        return False, "Wi-Fi did not become active before timeout; AP mode was restored."
+
     except Exception as e:
+        _run(["sudo", "nmcli", "connection", "up", "MementoAP"])
         return False, f"exception: {e}"
 
 def get_local_ip():
@@ -785,6 +860,8 @@ def set_screen_on():
 @app.route("/", methods=["GET", "POST"])
 def dashboard():
     """Render the configuration dashboard and handle Wi-Fi connection submissions."""
+    mark_config_portal_active("dashboard")
+
     mode = get_mode()
     ip = get_local_ip()
     photos = load_photos()
@@ -1125,7 +1202,7 @@ def spotify_disconnect():
 
 
 if __name__ == "__main__":
-    clear_config_portal_pin()
+    remove_config_portal_pin()
     photos = load_photos()
     sync_photo_js(photos)
     app.run(host="0.0.0.0", port=5000)
