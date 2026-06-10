@@ -15,17 +15,6 @@ export function initLayout() {
   evaluateLayout(true); // Run once immediately to set the initial state
 }
 
-export function setCalendarOpacity(opacity) {
-  const calendarBox = document.getElementById('calendar-box');
-  const forecastBox = document.getElementById('forecast-box');
-  const dateBox = $(SELECTORS.dateBox);
-  const weatherBox = $(SELECTORS.weatherBox);
-
-  if (calendarBox) calendarBox.style.opacity = opacity;
-  if (forecastBox) forecastBox.style.opacity = opacity;
-  if (dateBox) dateBox.style.opacity = opacity;
-  if (weatherBox) weatherBox.style.opacity = opacity;
-}
 
 export function showSpotify() {
   // Spotify interrupts: Pause the Big Mode timeout so it doesn't expire in the background
@@ -33,7 +22,6 @@ export function showSpotify() {
     clearTimeout(state.timers.bigModeTimeout);
     state.timers.bigModeTimeout = null;
   }
-  setCalendarOpacity(1);
   state.panels.bigModeActive = false; 
   state.panels.spotifyPlaying = true;
   evaluateLayout(true);
@@ -49,7 +37,6 @@ export function showCalendar() {
 
   if (remaining > 0) {
     // Resume Big Mode for the remaining time
-    setCalendarOpacity(1);
     state.panels.bigModeActive = true;
     if (state.timers.bigModeTimeout) clearTimeout(state.timers.bigModeTimeout);
     state.timers.bigModeTimeout = setTimeout(disableBigMode, remaining);
@@ -60,7 +47,6 @@ export function showCalendar() {
       state.timers.bigModeTimeout = null;
     }
     state.timers.bigModeWindowUntil = null;
-    setCalendarOpacity(0.75);
     scheduleBigModeCycle();
   }
   evaluateLayout(true);
@@ -161,7 +147,6 @@ export function swapPanels() {
 // ============================================
 
 export function enableBigMode() {
-  setCalendarOpacity(1);
   state.panels.bigModeActive = true;
   if (state.timers.bigModeTimeout) clearTimeout(state.timers.bigModeTimeout);
   state.timers.bigModeWindowUntil = Date.now() + INTERVALS.CALENDAR_FULL_TIMEOUT;
@@ -170,7 +155,6 @@ export function enableBigMode() {
 }
 
 export function disableBigMode() {
-  setCalendarOpacity(0.75);
   state.panels.bigModeActive = false;
   if (state.timers.bigModeTimeout) {
     clearTimeout(state.timers.bigModeTimeout);
@@ -311,11 +295,6 @@ function applyWidgetVisibility() {
     if (forecastView === '5h-icons') f5hIcons?.classList.remove('hidden');
     if (forecastView === '5h-big')   f5hBig?.classList.remove('hidden');
     if (forecastView === '5d-big')   f5dBig?.classList.remove('hidden');
-
-    // Big forecast panels should be fully opaque, matching the other right-panel cards.
-    if (forecastView === '5h-big' || forecastView === '5d-big') {
-      forecastBox.style.opacity = "1";
-    }
   }
 
   window.dispatchEvent(new CustomEvent("mementoframe:forecast-view-changed", {

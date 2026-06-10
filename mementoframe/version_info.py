@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 47, #keep wifi symbol visible when pin is shown
+        "version": 48, #new weather icons for alerts | some updates on the css for a frosted glass effect 
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 27, #Filter alerts for current area only. 
+        "version": 28, #added alert filter for portuguese language (my local)
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

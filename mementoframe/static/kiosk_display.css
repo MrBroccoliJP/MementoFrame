@@ -10,6 +10,17 @@
  * - Consolidated the system tray rules into one section.
  * - Integrated update-card collapse into the tray section; no trailing override block.
  * - PIN state now keeps the Wi-Fi icon visible and places the PIN details to its right.
+ *
+ * VARIANT: v4_frosted_glass
+ * - No backdrop-filter anywhere (zero blur cost on VideoCore IV).
+ * - Container backgrounds lowered to ~0.48–0.52 alpha so photo colours bleed
+ *   through visibly — frosted glass feel without any filter cost.
+ * - Translucent fill lives in ::before pseudo-elements on .rounded-box,
+ *   .dual_clock-box, .date-box, #forecast-box so children render at full opacity.
+ * - No inset box-shadows; edge definition from border: 1px solid rgba(255,255,255,0.07).
+ * - setCalendarOpacity() in layout.js should be removed — inline opacity on the
+ *   parent box would dim content too; ambient state is now expressed purely via
+ *   the ::before alpha and does not need a JS override.
  */
 
 /* Fonts */
@@ -306,7 +317,10 @@ body {
 }
 .rounded-box {
   border-radius: 20px;
-  background-color: #1c1c1c;
+  background-color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  position: relative;
+  isolation: isolate;
   margin: 5px;
   flex-grow: 1;
   display: flex;
@@ -317,6 +331,20 @@ body {
   transform: scale(1);
   visibility: visible;
   pointer-events: auto;
+}
+/* Background lives here — completely decoupled from children opacity */
+.rounded-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  background-color: rgba(22, 22, 22, 0.48);
+}
+.rounded-box > * {
+  position: relative;
+  z-index: 1;
 }
 .first-row {
   display: flex;
@@ -361,7 +389,10 @@ body {
 }
 .first-row .date-box {
   margin-left: auto;
-  background-color: #1c1c1c;
+  background-color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  position: relative;
+  isolation: isolate;
   border-radius: 20px;
   padding: 8px 14px;
   display: flex;
@@ -371,6 +402,19 @@ body {
   flex: 1;
   box-sizing: border-box;
   max-height: 80px;
+}
+.first-row .date-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  background-color: rgba(22, 22, 22, 0.48);
+}
+.first-row .date-box > * {
+  position: relative;
+  z-index: 1;
 }
 .first-row .clock-box-left .region {
   width: 200%;
@@ -509,7 +553,10 @@ body {
   margin-right: 5px;
 }
 .dual_clock-box {
-  background-color: #1c1c1c;
+  background-color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  position: relative;
+  isolation: isolate;
   border-radius: 20px;
   margin: 5px;
   display: flex;
@@ -519,6 +566,19 @@ body {
   justify-content: center;
   transition: border-color 1s ease;
   max-height: 80px;
+}
+.dual_clock-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  background-color: rgba(22, 22, 22, 0.48);
+}
+.dual_clock-box > * {
+  position: relative;
+  z-index: 1;
 }
 .clock-box {
   display: flex;
@@ -602,7 +662,8 @@ body {
   color: var(--accent-text);
   text-align: center;
   padding: 10px 0;
-  background-color: #2c2c2c;
+  background-color: rgba(38, 38, 38, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 10px;
   transition: background 0.3s;
 }
@@ -664,7 +725,8 @@ body {
   margin: 0 auto;
   box-sizing: border-box;
   border-radius: 8px;
-  background-color: #2c2c2c;
+  background-color: rgba(38, 38, 38, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   color: var(--accent-color);
   font-family: "Roboto Mono", monospace;
   font-size: 15px;
@@ -687,7 +749,8 @@ body {
 #calendar-month td {
   text-align: center;
   padding: 10px 0;
-  background-color: #2c2c2c;
+  background-color: rgba(38, 38, 38, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 10px;
   color: var(--accent-text);
   transition: color 1s ease, background-color 1s ease, border-color 1s ease;
@@ -808,9 +871,27 @@ body {
    ========================= */
 #forecast-box {
   border-right: 3px solid var(--accent-color);
-  background-color: #1c1c1c;
+  background-color: transparent;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+  position: relative;
+  isolation: isolate;
   padding: 5px;
   flex-grow: 0;
+}
+#forecast-box::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+  background-color: rgba(22, 22, 22, 0.48);
+}
+#forecast-box > * {
+  position: relative;
+  z-index: 1;
 }
 .forecast-box {
   display: flex;
@@ -836,7 +917,8 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: #2c2c2c;
+  background: rgba(38, 38, 38, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   padding: 4px 2px;
   border-radius: 8px;
   flex: 1 1 0;
@@ -877,7 +959,8 @@ body {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  background: #2c2c2c;
+  background: rgba(38, 38, 38, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   padding: 6px 12px;
   border-radius: 10px;
   width: 100%;
@@ -1067,8 +1150,8 @@ body {
 #forecast-box.widget-visible:has(#forecast-5h-big:not(.hidden)),
 #forecast-box.widget-visible:has(#forecast-5d-big:not(.hidden)) {
   opacity: 1 !important;
-  background: #1c1c1c !important;
-  background-color: #1c1c1c !important;
+  background: rgba(22, 22, 22, 0.48) !important;
+  background-color: rgba(22, 22, 22, 0.48) !important;
   overflow: hidden !important;
 }
 #forecast-5h-big,
@@ -1381,7 +1464,7 @@ body {
   --system-tray-qr-radius: 22px;
   --system-tray-gap: 5px;
   --system-tray-x-padding: 6px;
-  --system-tray-bg: rgba(28, 28, 28, 0.66);
+  --system-tray-bg: rgba(22, 22, 22, 0.52);
   --system-tray-cell-bg: rgba(255, 255, 255, 0.045);
 
   display: flex !important;
@@ -1401,10 +1484,10 @@ body {
   box-sizing: border-box !important;
   flex-shrink: 0 !important;
   background: var(--system-tray-bg) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
   border-radius: var(--system-tray-qr-radius) !important;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18) !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28) !important;
   overflow: hidden !important;
-  backdrop-filter: blur(6px);
   transition:
     justify-content 0.8s ease,
     background-color 1s ease,

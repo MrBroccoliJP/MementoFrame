@@ -261,26 +261,34 @@ WEATHER_CODE_TO_METEOICON = {
 }
 
 ALERT_EVENT_ICON_RULES = [
-    ("avalanche", "alert-avalanche-danger"),
-    ("rock|landslide|debris", "alert-falling-rocks"),
+    ("avalanche|avalancha", "alert-avalanche-danger"),
+    ("rock|landslide|debris|rocha|derrocada|deslizamento|deslizamento de terras|queda de pedras", "alert-falling-rocks"),
     ("tornado", "tornado"),
-    ("hurricane|cyclone|typhoon", "hurricane"),
-    ("thunder|lightning|storm", "thunderstorms-extreme-rain"),
-    ("rain|shower|flood|precip|coastal|marine|surf", "extreme-rain"),
-    ("snow|blizzard", "extreme-snow"),
-    ("ice|freez|sleet", "sleet"),
-    ("hail", "hail"),
-    ("wind|gale|gust", "wind-alert"),
-    ("fog|mist", "fog-day"),
-    ("heat|hot|high temperature", "thermometer-warmer"),
-    ("cold|frost|low temperature", "thermometer-colder"),
+    ("hurricane|cyclone|typhoon|furacão|furacao|ciclone|tufão|tufao", "hurricane"),
+    ("thunder|lightning|storm|trovoada|trovão|trovao|relâmpago|relampago|tempestade", "thunderstorms-extreme-rain"),
+    ("rain|shower|flood|precip|coastal|marine|surf|chuva|aguaceiro|aguaceiros|inundação|inundacao|cheia|precipitação|precipitacao|costeiro|costeira|marítimo|maritimo|ondulação|ondulacao|agitação marítima|agitacao maritima", "extreme-rain"),
+    ("snow|blizzard|neve|nevão|nevao", "extreme-snow"),
+    ("ice|freez|sleet|gelo|geada|congelamento|granizo miúdo|granizo miudo|saraiva", "sleet"),
+    ("hail|granizo", "hail"),
+    ("wind|gale|gust|vento|ventos|rajada|rajadas|vendaval", "wind-alert"),
+    ("fog|mist|nevoeiro|neblina|bruma", "fog-day"),
+    ("heat|hot|high temperature|calor|quente|temperatura alta|temperatura elevada|temperaturas elevadas|valores elevados da temperatura", "thermometer-warmer"),
+    ("cold|frost|low temperature|frio|geada|temperatura baixa|temperatura mínima|temperatura minima|valores baixos da temperatura", "thermometer-colder"),
 ]
 
 ALERT_SEVERITY_FALLBACK_ICON = {
-    "extreme": "thunderstorms-extreme",
-    "severe": "wind-alert",
-    "moderate": "wind-alert",
-    "minor": "wind-alert",
+    "extreme": "code-red",
+    "severe": "code-orange",
+    "moderate": "code-yellow",
+    "minor": "code-green",
+
+    # Portuguese / localized aliases
+    "extremo": "code-red",
+    "severo": "code-orange",
+    "grave": "code-orange",
+    "moderado": "code-yellow",
+    "menor": "code-green",
+    "ligeiro": "code-green",
 }
 
 
