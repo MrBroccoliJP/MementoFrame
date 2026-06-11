@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 48, #new weather icons for alerts | some updates on the css for a frosted glass effect 
+        "version": 49, # updates on the css for a frosted glass effect 
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {

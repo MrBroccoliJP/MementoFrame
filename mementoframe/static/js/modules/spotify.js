@@ -40,6 +40,7 @@ let spotifyFadeCleanupTimer = null;
 let lastRenderedArtworkKey = null;
 let lastRequestedArtworkKey = null;
 let lastPreloadedArtworkKey = null;
+const MIN_RANDOM_ACCENT_BRIGHTNESS = 115;
 
 // ─── Public Init ────────────────────────────────────────────────────────────
 
@@ -80,21 +81,34 @@ function setAccentVar(color) {
 }
 
 /**
- * Ensure an RGB colour is bright enough to be readable on a dark background.
+ * Ensure a colour is bright enough to be readable on a dark background.
  * Keeps neutral colours neutral; it never invents hue/saturation.
  *
- * @param {string} rgb - CSS rgb() string, e.g. "rgb(20, 10, 50)".
- * @returns {string} Original or brightened rgb() string.
+ * @param {string} color - CSS rgb() or hsl() colour string.
+ * @returns {string} Original or brightened colour string.
  */
 function ensureReadable(color) {
   if (typeof color !== "string") return color;
 
   const value = color.trim();
 
-  // Do not parse hsl(...) as rgb(...).
-  // Browser can use HSL directly, and your randomColor() already returns light colours.
-  if (value.startsWith("hsl")) {
-    return value;
+  const hsl = value.match(/hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)/i);
+  if (hsl) {
+    const hue = Number(hsl[1]);
+    const sat = Number(hsl[2]);
+    let light = Number(hsl[3]);
+
+    if (!Number.isFinite(hue) || !Number.isFinite(sat) || !Number.isFinite(light)) {
+      return color;
+    }
+
+    let rgb = hslToRgb(hue / 360, sat / 100, light / 100);
+    while (perceivedBrightness(rgb) < MIN_RANDOM_ACCENT_BRIGHTNESS && light < 74) {
+      light += 2;
+      rgb = hslToRgb(hue / 360, sat / 100, light / 100);
+    }
+
+    return `hsl(${Math.round(hue)}, ${Math.round(sat)}%, ${Math.round(light)}%)`;
   }
 
   // Spotify album-art extraction returns rgb(...), so keep supporting rgb/rgba.
@@ -167,7 +181,7 @@ function applyAccent(color, transition = true) {
 }
 
 /**
- * Generate a random color colour in HSL space.
+ * Generate a random accent colour in HSL space.
  *
  * @returns {string} HSL colour string.
  */

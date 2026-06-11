@@ -3,24 +3,11 @@
  * Copyright (c) 2026 João Fernandes
  * Licensed under Creative Commons Attribution-NonCommercial 4.0 International.
  *
- * Cleaned stylesheet notes:
- * - Consolidated repeated selector blocks so later overrides are expressed once.
- * - Removed invalid/no-op declarations such as negative padding and -0px margins.
- * - Kept feature-specific !important rules only where they protect runtime class toggles.
- * - Consolidated the system tray rules into one section.
- * - Integrated update-card collapse into the tray section; no trailing override block.
- * - PIN state now keeps the Wi-Fi icon visible and places the PIN details to its right.
- *
- * VARIANT: v4_frosted_glass
- * - No backdrop-filter anywhere (zero blur cost on VideoCore IV).
- * - Container backgrounds lowered to ~0.48–0.52 alpha so photo colours bleed
- *   through visibly — frosted glass feel without any filter cost.
- * - Translucent fill lives in ::before pseudo-elements on .rounded-box,
- *   .dual_clock-box, .date-box, #forecast-box so children render at full opacity.
- * - No inset box-shadows; edge definition from border: 1px solid rgba(255,255,255,0.07).
- * - setCalendarOpacity() in layout.js should be removed — inline opacity on the
- *   parent box would dim content too; ambient state is now expressed purely via
- *   the ::before alpha and does not need a JS override.
+ * Kiosk display stylesheet.
+ * Panel contrast is controlled by --panel-bg and --panel-cell-bg:
+ * the default state is dark for narrow, burst, and vertical-photo layouts, while
+ * body.photo-panel-full-mode switches to light grey when a horizontal photo
+ * fills the display behind the widgets. No backdrop-filter or generated blur is used.
  */
 
 /* Fonts */
@@ -55,9 +42,16 @@ body {
 :root {
   --accent-color: #1DB954;
   --accent-text: #f2f2f2;
+  --panel-dark-bg: rgba(38, 38, 38, 0.74);
+  --panel-dark-cell-bg: rgba(54, 54, 54, 0.78);
+  --pin-expanded-bg: rgba(32, 32, 32, 0.82);
+  --panel-light-bg: rgba(88, 88, 88, 0.74);
+  --panel-light-cell-bg: rgba(64, 64, 64, 0.72);
+  --panel-bg: var(--panel-dark-bg);
+  --panel-cell-bg: var(--panel-dark-cell-bg);
+  --panel-transition: background-color 650ms ease-in-out;
 }
 body {
-  background-color: black;
   display: flex;
   height: 100vh;
   margin: 0;
@@ -66,6 +60,16 @@ body {
   background: black;
   position: relative;
   overflow: hidden;
+}
+body.photo-panel-full-mode {
+  --panel-bg: var(--panel-light-bg);
+  --panel-cell-bg: var(--panel-light-cell-bg);
+  --pin-expanded-bg: rgba(44, 44, 44, 0.84);
+}
+body.photo-burst-active {
+  --panel-bg: var(--panel-dark-bg);
+  --panel-cell-bg: var(--panel-dark-cell-bg);
+  --pin-expanded-bg: rgba(32, 32, 32, 0.82);
 }
 
 /* =========================
@@ -305,7 +309,7 @@ body {
   left: 70%;
   width: 30%;
   padding-left: 0;
-  padding-right: 0px;
+  padding-right: 0;
   transform-origin: right center;
   transform: scale(1);
   transition: left 1.2s cubic-bezier(0.4, 0, 0.2, 1),
@@ -318,7 +322,6 @@ body {
 .rounded-box {
   border-radius: 20px;
   background-color: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.07);
   position: relative;
   isolation: isolate;
   margin: 5px;
@@ -340,7 +343,8 @@ body {
   border-radius: inherit;
   pointer-events: none;
   z-index: 0;
-  background-color: rgba(22, 22, 22, 0.48);
+  background-color: var(--panel-bg);
+  transition: var(--panel-transition);
 }
 .rounded-box > * {
   position: relative;
@@ -390,7 +394,6 @@ body {
 .first-row .date-box {
   margin-left: auto;
   background-color: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.07);
   position: relative;
   isolation: isolate;
   border-radius: 20px;
@@ -410,7 +413,8 @@ body {
   border-radius: inherit;
   pointer-events: none;
   z-index: 0;
-  background-color: rgba(22, 22, 22, 0.48);
+  background-color: var(--panel-bg);
+  transition: var(--panel-transition);
 }
 .first-row .date-box > * {
   position: relative;
@@ -534,18 +538,15 @@ body {
    Clock and date widgets
    ========================= */
 .clock {
-  color: var(--accent-text);
   margin-top: 5px;
   font-size: 40px;
   font-weight: bold;
 }
 .region {
-  color: var(--accent-text);
   font-size: 12px;
   margin-top: 5px;
 }
 .day {
-  color: var(--accent-text);
   padding-left: 10px;
   padding-bottom: 8px;
   font-size: 50px;
@@ -554,7 +555,6 @@ body {
 }
 .dual_clock-box {
   background-color: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.07);
   position: relative;
   isolation: isolate;
   border-radius: 20px;
@@ -564,7 +564,6 @@ body {
   flex: 1;
   align-items: center;
   justify-content: center;
-  transition: border-color 1s ease;
   max-height: 80px;
 }
 .dual_clock-box::before {
@@ -574,7 +573,8 @@ body {
   border-radius: inherit;
   pointer-events: none;
   z-index: 0;
-  background-color: rgba(22, 22, 22, 0.48);
+  background-color: var(--panel-bg);
+  transition: var(--panel-transition);
 }
 .dual_clock-box > * {
   position: relative;
@@ -612,7 +612,7 @@ body {
 .update-status-card__text,
 #calendar th,
 #calendar td {
-  transition: color 1s ease, background-color 1s ease, border-color 1s ease;
+  transition: color 1s ease, var(--panel-transition);
 }
 .date-box {
   font-family: "Roboto Mono", monospace;
@@ -645,7 +645,19 @@ body {
 .weather-condition,
 .region,
 .day,
-.month-year {
+.month-year,
+.track-name,
+.track-artist,
+.frame-pin-label,
+.frame-pin-digits,
+.frame-pin-url,
+.update-status-card__text,
+.forecast-item .time,
+.forecast-item .temp,
+.forecast-item .cond,
+.forecast-list-item .time,
+.forecast-list-item .temp,
+.forecast-list-item .cond {
   color: var(--accent-text);
 }
 
@@ -662,10 +674,9 @@ body {
   color: var(--accent-text);
   text-align: center;
   padding: 10px 0;
-  background-color: rgba(38, 38, 38, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background-color: var(--panel-cell-bg);
   border-radius: 10px;
-  transition: background 0.3s;
+  transition: var(--panel-transition);
 }
 #calendar table {
   width: 100%;
@@ -677,7 +688,7 @@ body {
   background-color: var(--accent-color);
   color: #111;
   font-weight: bold;
-  transition: background-color 1s ease, color 1s ease;
+  transition: var(--panel-transition), color 1s ease;
 }
 .calendar-box.week-mode {
   flex-grow: 0;
@@ -690,21 +701,14 @@ body {
   border-spacing: 5px 0;
 }
 #calendar-week td {
-  background-color: #2c2c2c;
-  transition: background 0.3s;
-  background: transparent !important;
+  background-color: transparent !important;
   padding: 0 !important;
   border-radius: 0 !important;
   text-align: center;
   overflow: visible;
   vertical-align: top;
 }
-#calendar-week td.today {
-  background-color: var(--accent-color);
-  color: #111;
-}
 #calendar-week .wk-day {
-  margin-bottom: 3px;
   display: block;
   margin: 0 0 5px 0;
   font-size: 10px;
@@ -725,14 +729,13 @@ body {
   margin: 0 auto;
   box-sizing: border-box;
   border-radius: 8px;
-  background-color: rgba(38, 38, 38, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background-color: var(--panel-cell-bg);
   color: var(--accent-color);
   font-family: "Roboto Mono", monospace;
   font-size: 15px;
   font-weight: 700;
   line-height: 1;
-  transition: color 1s ease, background-color 1s ease, border-color 1s ease;
+  transition: color 1s ease, var(--panel-transition);
 }
 #calendar-month table {
   width: 100%;
@@ -749,11 +752,10 @@ body {
 #calendar-month td {
   text-align: center;
   padding: 10px 0;
-  background-color: rgba(38, 38, 38, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background-color: var(--panel-cell-bg);
   border-radius: 10px;
   color: var(--accent-text);
-  transition: color 1s ease, background-color 1s ease, border-color 1s ease;
+  transition: color 1s ease, var(--panel-transition);
 }
 #calendar-month td.today {
   background-color: var(--accent-color) !important;
@@ -872,9 +874,6 @@ body {
 #forecast-box {
   border-right: 3px solid var(--accent-color);
   background-color: transparent;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-  border-left: 1px solid rgba(255, 255, 255, 0.07);
   position: relative;
   isolation: isolate;
   padding: 5px;
@@ -887,7 +886,8 @@ body {
   border-radius: inherit;
   pointer-events: none;
   z-index: 0;
-  background-color: rgba(22, 22, 22, 0.48);
+  background-color: var(--panel-bg);
+  transition: var(--panel-transition);
 }
 #forecast-box > * {
   position: relative;
@@ -917,21 +917,21 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(38, 38, 38, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background-color: var(--panel-cell-bg);
   padding: 4px 2px;
   border-radius: 8px;
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   max-height: 70px;
+  transition: var(--panel-transition);
 }
 .forecast-item img {
   width: 100%;
   max-width: 45px;
   height: 45px;
   object-fit: contain;
-  margin: 0px 0;
+  margin: 0;
 }
 .forecast-item .time {
   font-size: 10px;
@@ -959,13 +959,13 @@ body {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  background: rgba(38, 38, 38, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background-color: var(--panel-cell-bg);
   padding: 6px 12px;
   border-radius: 10px;
   width: 100%;
   height: 42px;
   box-sizing: border-box;
+  transition: var(--panel-transition);
 }
 .forecast-list-item img {
   width: 30px;
@@ -1147,21 +1147,6 @@ body {
 #forecast-5h-icons .forecast-item .cond {
   display: none !important;
 }
-#forecast-box.widget-visible:has(#forecast-5h-big:not(.hidden)),
-#forecast-box.widget-visible:has(#forecast-5d-big:not(.hidden)) {
-  opacity: 1 !important;
-  background: rgba(22, 22, 22, 0.48) !important;
-  background-color: rgba(22, 22, 22, 0.48) !important;
-  overflow: hidden !important;
-}
-#forecast-5h-big,
-#forecast-5d-big,
-#forecast-5h-big .forecast-list,
-#forecast-5d-big .forecast-list {
-  min-width: 0 !important;
-  overflow: hidden !important;
-  box-sizing: border-box !important;
-}
 #forecast-5h-big .forecast-list-item .cond-inner,
 #forecast-5d-big .forecast-list-item .cond-inner {
   display: inline-block !important;
@@ -1195,7 +1180,14 @@ body {
   align-items: center;
   text-align: center;
   opacity: 1;
-  transition: all 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition:
+    opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
+    height 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
+    max-height 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.spotify-box::before {
+  background-color: rgba(0, 0, 0, 0.64);
 }
 .track-info {
   display: flex;
@@ -1310,7 +1302,11 @@ body {
   padding: 10px 0;
 }
 .spotify-box .album-art {
-  transition: all 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+  transition:
+    opacity 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
+    width 0.6s cubic-bezier(0.25, 0.8, 0.25, 1),
+    height 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
   width: 100%;
 }
 .spotify-box.spotify-shrunk .album-art {
@@ -1395,7 +1391,6 @@ body {
    Current weather widget
    ========================= */
 .weather-temperature {
-  color: var(--accent-text);
   margin-top: -10px;
   font-size: 30px;
   font-weight: bold;
@@ -1450,12 +1445,8 @@ body {
 /* =========================
    System tray, Wi-Fi, QR, update, and PIN display
    =========================
-   Compact bottom tray using the existing HTML:
-   - Wrapper is translucent and only as wide as its visible cells.
-   - Horizontal padding adds breathing room without increasing tray height.
-   - QR card stays black for scan reliability; qr.js supplies the accent modules.
-   - Update cell is removed from layout while hidden, so no empty flex slot remains.
-   - PIN state keeps the Wi-Fi icon visible and places the PIN details beside it.
+   The tray shares panel material variables with the widgets. QR remains black
+   for scan reliability, and sizing overrides keep the tray compact.
 */
 .system-info-box {
   --system-tray-cell: 52px;
@@ -1464,8 +1455,8 @@ body {
   --system-tray-qr-radius: 22px;
   --system-tray-gap: 5px;
   --system-tray-x-padding: 6px;
-  --system-tray-bg: rgba(22, 22, 22, 0.52);
-  --system-tray-cell-bg: rgba(255, 255, 255, 0.045);
+  --system-tray-bg: var(--panel-bg);
+  --system-tray-cell-bg: var(--panel-cell-bg);
 
   display: flex !important;
   flex-direction: row !important;
@@ -1483,14 +1474,13 @@ body {
   gap: var(--system-tray-gap) !important;
   box-sizing: border-box !important;
   flex-shrink: 0 !important;
-  background: var(--system-tray-bg) !important;
-  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  background-color: var(--system-tray-bg) !important;
   border-radius: var(--system-tray-qr-radius) !important;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28) !important;
+  box-shadow: none !important;
   overflow: hidden !important;
   transition:
     justify-content 0.8s ease,
-    background-color 1s ease,
+    var(--panel-transition),
     width 0.35s ease,
     opacity 0.35s ease;
 }
@@ -1500,8 +1490,11 @@ body:has(.left_panel.swapped) .system-info-box {
   align-self: flex-start;
 }
 
+.system-info-box:has(.wifi-info.pin-expanded) {
+  max-width: none !important;
+}
+
 .wifi-info,
-.system-info-box .update-status-card.rounded-box,
 .update-status-card {
   width: var(--system-tray-cell) !important;
   height: var(--system-tray-cell) !important;
@@ -1513,7 +1506,8 @@ body:has(.left_panel.swapped) .system-info-box {
   box-sizing: border-box !important;
   border: 0 !important;
   border-radius: var(--system-tray-radius) !important;
-  background: var(--system-tray-cell-bg) !important;
+  background-color: var(--system-tray-cell-bg) !important;
+  transition: var(--panel-transition) !important;
   box-shadow: none !important;
   overflow: hidden !important;
 }
@@ -1534,9 +1528,12 @@ body:has(.left_panel.swapped) .system-info-box {
   box-shadow: none !important;
 }
 
+.system-info-box .rounded-box::before {
+  content: none;
+}
+
 .wifi-info,
 .qrcode_icon,
-.system-info-box .update-status-card.rounded-box,
 .update-status-card,
 .wifistatus {
   display: flex !important;
@@ -1544,7 +1541,6 @@ body:has(.left_panel.swapped) .system-info-box {
   justify-content: center !important;
 }
 
-/* Wi-Fi is already inside .wifi-info, so the old inner black circle is removed. */
 .wifistatus {
   width: 100% !important;
   height: 100% !important;
@@ -1571,7 +1567,7 @@ body:has(.left_panel.swapped) .system-info-box {
   filter: invert(43%) sepia(99%) saturate(1676%) hue-rotate(183deg) brightness(94%) contrast(98%);
 }
 
-/* Update card: removed from layout completely when hidden so the tray width shrinks. */
+/* Hidden update cards are removed from layout so the tray width shrinks. */
 .update-status-card {
   position: relative !important;
   color: var(--accent-color) !important;
@@ -1579,7 +1575,8 @@ body:has(.left_panel.swapped) .system-info-box {
   transition:
     opacity 0.35s ease,
     transform 0.35s ease,
-    color 1s ease !important;
+    color 1s ease,
+    var(--panel-transition) !important;
 }
 
 .update-status-card.visible {
@@ -1589,24 +1586,7 @@ body:has(.left_panel.swapped) .system-info-box {
   pointer-events: auto !important;
 }
 
-.update-status-card.hidden {
-  display: none !important;
-  flex: 0 0 0 !important;
-  width: 0 !important;
-  min-width: 0 !important;
-  max-width: 0 !important;
-  height: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-  overflow: hidden !important;
-}
-
-/* Safety guard for any future state mismatch: only a visible update card
-   may reserve space inside the tray. */
+.update-status-card.hidden,
 .system-info-box:not(:has(.update-status-card.visible)) .update-status-card {
   display: none !important;
   flex: 0 0 0 !important;
@@ -1645,10 +1625,7 @@ body:has(.left_panel.swapped) .system-info-box {
   filter: none !important;
 }
 
-/* QR code cell. The card itself stays black because a faded/gray QR background
-   reduces contrast and can make scanning unreliable, especially with dynamic
-   album-art accent colours. qr.js provides the accent foreground and black
-   background; CSS only gives it a quiet-zone/frame so the edges never clip. */
+/* QR cell stays black; qr.js supplies the modules and quiet zone. */
 .qrcode_icon {
   position: relative !important;
   overflow: hidden !important;
@@ -1690,21 +1667,23 @@ body:has(.left_panel.swapped) .system-info-box {
   line-height: 0 !important;
 }
 
-/* PIN state expands only the Wi-Fi cell, keeping the same tray wrapper.
-   The Wi-Fi icon remains visible and the PIN details sit to its right. */
+/* PIN state expands only the Wi-Fi cell. */
 .wifi-info.pin-expanded {
   width: auto !important;
-  min-width: 158px !important;
+  min-width: 168px !important;
   max-width: none !important;
   flex-basis: auto !important;
   height: var(--system-tray-cell) !important;
-  padding: 0 12px 0 8px !important;
+  margin: 0 !important;
+  margin-left: 8px !important;
+  padding: 0 12px 0 18px !important;
   display: flex !important;
   flex-direction: row !important;
   align-items: center !important;
-  justify-content: center !important;
+  justify-content: flex-start !important;
   gap: 10px !important;
-  background: var(--system-tray-cell-bg) !important;
+  background-color: var(--pin-expanded-bg) !important;
+  transition: var(--panel-transition) !important;
   border-radius: var(--system-tray-radius) !important;
 }
 
