@@ -4,10 +4,8 @@
  * Licensed under Creative Commons Attribution-NonCommercial 4.0 International.
  *
  * Kiosk display stylesheet.
- * Panel contrast is controlled by --panel-bg and --panel-cell-bg:
- * the default state is dark for narrow, burst, and vertical-photo layouts, while
- * body.photo-panel-full-mode switches to light grey when a horizontal photo
- * fills the display behind the widgets. No backdrop-filter or generated blur is used.
+ * Widget panels use one dark translucent material across all photo layouts.
+ * No backdrop-filter, generated blur, or photo-dependent contrast switching is used.
  */
 
 /* Fonts */
@@ -42,13 +40,9 @@ body {
 :root {
   --accent-color: #1DB954;
   --accent-text: #f2f2f2;
-  --panel-dark-bg: rgba(38, 38, 38, 0.74);
-  --panel-dark-cell-bg: rgba(54, 54, 54, 0.78);
-  --pin-expanded-bg: rgba(32, 32, 32, 0.82);
-  --panel-light-bg: rgba(88, 88, 88, 0.74);
-  --panel-light-cell-bg: rgba(64, 64, 64, 0.72);
-  --panel-bg: var(--panel-dark-bg);
-  --panel-cell-bg: var(--panel-dark-cell-bg);
+  --panel-bg: rgba(28, 28, 28, 0.84);
+  --panel-cell-bg: rgba(44, 44, 44, 0.88);
+  --pin-expanded-bg: var(--panel-cell-bg);
   --panel-transition: background-color 650ms ease-in-out;
 }
 body {
@@ -61,17 +55,6 @@ body {
   position: relative;
   overflow: hidden;
 }
-body.photo-panel-full-mode {
-  --panel-bg: var(--panel-light-bg);
-  --panel-cell-bg: var(--panel-light-cell-bg);
-  --pin-expanded-bg: rgba(44, 44, 44, 0.84);
-}
-body.photo-burst-active {
-  --panel-bg: var(--panel-dark-bg);
-  --panel-cell-bg: var(--panel-dark-cell-bg);
-  --pin-expanded-bg: rgba(32, 32, 32, 0.82);
-}
-
 /* =========================
    Loading and update-overlay shared artwork
    ========================= */

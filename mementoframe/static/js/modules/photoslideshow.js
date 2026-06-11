@@ -105,17 +105,6 @@ function shuffle(arr) {
 }
 
 /**
- * Light panel material is only used when a horizontal photo fills the display
- * and the layout has not narrowed the photo panel for Spotify or big mode.
- */
-export function updatePhotoPanelFullModeClass() {
-  const activePhotoVertical = document.body.classList.contains("active-photo-vertical");
-  const burstActive = document.body.classList.contains("photo-burst-active");
-  const panelIsNarrow = state.panels.bigModeActive || state.panels.spotifyPlaying;
-  document.body.classList.toggle("photo-panel-full-mode", !activePhotoVertical && !panelIsNarrow && !burstActive);
-}
-
-/**
  * Load and cross-fade a photo into the slideshow container.
  *
  * Creates a new `<img>` element and sets its src to the full-size photo
@@ -146,13 +135,10 @@ function showPhoto(index) {
     if (img.naturalHeight > img.naturalWidth) {
       img.classList.add("vertical");
       img.classList.remove("horizontal");
-      document.body.classList.add("active-photo-vertical");
     } else {
       img.classList.add("horizontal");
       img.classList.remove("vertical");
-      document.body.classList.remove("active-photo-vertical");
     }
-    updatePhotoPanelFullModeClass();
 
     const frame = document.createElement("div");
     frame.className = "photo-frame";
@@ -359,9 +345,6 @@ async function burstPhotos(photosToShow) {
     : (state.photos.nextBatch || []);
   if (!photos.length) return;
 
-  document.body.classList.add("photo-burst-active");
-  updatePhotoPanelFullModeClass();
-
   // ── Layout constants ──────────────────────────────────────────────────────
   const COLS = 3;
   const ROWS = 3;
@@ -524,19 +507,14 @@ async function burstPhotos(photosToShow) {
   // ── Page through all photos ───────────────────────────────────────────────
   const total = Math.min(photos.length, 36);
 
-  try {
-    for (let offset = 0; offset < total; offset += PAGE_SIZE) {
-      const pagePhotos = photos.slice(offset, offset + PAGE_SIZE);
-      await showPage(pagePhotos);
+  for (let offset = 0; offset < total; offset += PAGE_SIZE) {
+    const pagePhotos = photos.slice(offset, offset + PAGE_SIZE);
+    await showPage(pagePhotos);
 
-      // Brief blank pause between pages (skip after the last one).
-      if (offset + PAGE_SIZE < total) {
-        await new Promise((r) => setTimeout(r, BETWEEN_MS));
-      }
+    // Brief blank pause between pages (skip after the last one).
+    if (offset + PAGE_SIZE < total) {
+      await new Promise((r) => setTimeout(r, BETWEEN_MS));
     }
-  } finally {
-    document.body.classList.remove("photo-burst-active");
-    updatePhotoPanelFullModeClass();
   }
 }
 

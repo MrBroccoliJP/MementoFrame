@@ -6,7 +6,7 @@
 import { state } from "../state.js";
 import { SELECTORS, INTERVALS } from "../constants.js";
 import { $, $$ } from "../utils.js";
-import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize, updatePhotoPanelFullModeClass } from "./photoslideshow.js";
+import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize } from "./photoslideshow.js";
 
 // EXPORTED INIT FUNCTION: Safely starts the layout ticker only when called
 export function initLayout() {
@@ -92,7 +92,6 @@ function applyPanelDimensions() {
   left.style.width = dim.width;
   left.classList.toggle("swapped", state.panels.swapped);
   left.classList.toggle("photo-narrow", willBeNarrow);
-  updatePhotoPanelFullModeClass();
   updateBurstOffset();
 }
 
