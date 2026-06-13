@@ -43,6 +43,12 @@ body {
   --panel-bg: rgba(28, 28, 28, 0.84);
   --panel-cell-bg: rgba(44, 44, 44, 0.88);
   --pin-expanded-bg: var(--panel-cell-bg);
+  --spotify-gradient-start: rgb(80, 80, 80);
+  --spotify-gradient-end: rgb(42, 42, 42);
+  --spotify-foreground: #f2f2f2;
+  --spotify-muted: rgba(242, 242, 242, 0.72);
+  --spotify-progress-track: rgba(0, 0, 0, 0.28);
+  --spotify-progress-fill: #f2f2f2;
   --panel-transition: background-color 650ms ease-in-out;
 }
 body {
@@ -1170,7 +1176,16 @@ body {
     max-height 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
 }
 .spotify-box::before {
-  background-color: rgba(0, 0, 0, 0.64);
+  background: linear-gradient(135deg, var(--spotify-gradient-start) 0%, var(--spotify-gradient-end) 100%);
+  transition: background 1s ease, var(--panel-transition);
+}
+.spotify-box .track-name,
+.spotify-box .track-artist,
+.spotify-box .play_pause-icon {
+  color: var(--spotify-foreground);
+}
+.spotify-box .track-artist {
+  color: var(--spotify-muted);
 }
 .track-info {
   display: flex;
@@ -1188,8 +1203,27 @@ body {
 }
 .track-name,
 .track-artist {
+  width: 100%;
+  overflow: hidden;
   white-space: nowrap;
+  display: block;
+  text-overflow: clip;
+}
+.spotify-scroll-inner {
   display: inline-block;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+  transform: translateX(0);
+  will-change: transform;
+  animation: none;
+}
+.track-name.is-scroll .spotify-scroll-inner,
+.track-artist.is-scroll .spotify-scroll-inner {
+  animation-name: spotifyTextScrollToEnd;
+  animation-duration: var(--spotify-text-scroll-duration, 8.5s);
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
 }
 .track-artist {
   font-size: 0.7em;
@@ -1214,7 +1248,7 @@ body {
 .progress-bar {
   height: 100%;
   width: 0%;
-  background: var(--accent-color);
+  background: var(--spotify-progress-fill);
   transition: width 0.5s linear;
 }
 .scroll {
@@ -1230,7 +1264,7 @@ body {
 }
 .progress-container {
   flex-grow: 1;
-  background: #333;
+  background: var(--spotify-progress-track);
   height: 6px;
   border-radius: 3px;
   overflow: hidden;
@@ -1241,6 +1275,8 @@ body {
   display: inline-block;
   align-items: center;
   height: 233px;
+  margin-bottom: 10px;
+  margin-top: -10px;
 }
 .album-art img {
   position: relative;
@@ -1281,8 +1317,14 @@ body {
   align-items: flex-start;
   text-align: left;
   flex-grow: 1;
+  width: auto;
+  min-width: 0;
   gap: 2px;
   padding: 10px 0;
+}
+.spotify-box.spotify-shrunk .track-name-wrapper {
+  width: 100%;
+  min-width: 0;
 }
 .spotify-box .album-art {
   transition:
@@ -1814,6 +1856,19 @@ body:has(.left_panel.swapped) .system-info-box {
 
   100% {
     transform: translateX(-100%);
+  }
+}
+@keyframes spotifyTextScrollToEnd {
+  0%, 14% {
+    transform: translateX(0);
+  }
+
+  78%, 92% {
+    transform: translateX(calc(-1 * var(--spotify-text-scroll-distance, 0px)));
+  }
+
+  92.01%, 100% {
+    transform: translateX(0);
   }
 }
 @keyframes forecastCondScroll {

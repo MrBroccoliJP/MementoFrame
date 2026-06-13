@@ -48,6 +48,13 @@ const MIN_RANDOM_ACCENT_BRIGHTNESS = 115;
  * Initialise Spotify polling and the ambient accent colour cycle.
  */
 export function initSpotify() {
+  window.addEventListener("mementoframe:forecast-view-changed", scheduleSpotifyTextScrollRefresh);
+  window.addEventListener("resize", scheduleSpotifyTextScrollRefresh);
+
+  if (document.fonts?.ready) {
+    document.fonts.ready.then(scheduleSpotifyTextScrollRefresh).catch(() => {});
+  }
+
   startAccentColorCycle();
   startSpotifyPolling(INTERVALS.SPOTIFY);
 }
@@ -141,7 +148,7 @@ function ensureReadable(color) {
  * @param {string}  color      - CSS colour string to apply.
  * @param {boolean} transition - Whether to animate the colour change.
  */
-function applyAccent(color, transition = true) {
+function applyAccent(color, transition = true, spotifyGradient = null) {
   color = ensureReadable(color);
   setAccentVar(color);
 
@@ -158,7 +165,15 @@ function applyAccent(color, transition = true) {
 
   if (spotify) {
     spotify.style.transition = ts;
-    spotify.style.background = `linear-gradient(135deg, ${color} 0%, #1c1c1c 100%)`;
+    const gradient = spotifyGradient || buildSpotifyGradientFromAccent(color);
+    const foreground = getSpotifyForegroundForGradient(gradient);
+    spotify.style.background = "";
+    spotify.style.setProperty("--spotify-gradient-start", gradient.start);
+    spotify.style.setProperty("--spotify-gradient-end", gradient.end);
+    spotify.style.setProperty("--spotify-foreground", foreground.text);
+    spotify.style.setProperty("--spotify-muted", foreground.muted);
+    spotify.style.setProperty("--spotify-progress-track", foreground.progressTrack);
+    spotify.style.setProperty("--spotify-progress-fill", foreground.progressFill);
   }
 
   if (calendarBox) {
@@ -255,9 +270,10 @@ export async function updateSpotify() {
 
   // Text and progress update immediately. This prevents the Spotify panel from
   // appearing empty while artwork/colour extraction is still in flight.
-  if (nameEl)   nameEl.textContent   = name   || "No track";
-  if (artistEl) artistEl.textContent = artist || "Unknown";
+  if (nameEl)   setSpotifyScrollableText(nameEl, name || "No track");
+  if (artistEl) setSpotifyScrollableText(artistEl, artist || "Unknown");
   if (likedEl)  likedEl.style.display = liked ? "block" : "none";
+  scheduleSpotifyTextScrollRefresh();
 
   if (barEl && duration && progress !== undefined) {
     barEl.style.width = `${Math.max(0, Math.min(100, (progress / duration) * 100))}%`;
@@ -494,9 +510,15 @@ function renderArtworkAndAccent({
       if (seq !== spotifyRenderSeq) return;
 
       let color = state.spotify.currentAccent || "rgb(80, 80, 80)";
+      let spotifyGradient = null;
 
       try {
-        color = getAtmosphereColorFromImage(loadedImg);
+        const palette = getAtmospherePaletteFromImage(loadedImg);
+        color = palette.accent;
+        spotifyGradient = {
+          start: palette.gradientStart,
+          end: palette.gradientEnd,
+        };
       } catch (err) {
         console.warn("Album colour extraction failed:", err);
       }
@@ -507,7 +529,7 @@ function renderArtworkAndAccent({
         if (seq !== spotifyRenderSeq) return;
 
         setAlbumImageNow(albumEl, loadedImg);
-        applyAccent(color, transition);
+        applyAccent(color, transition, spotifyGradient);
 
         lastRenderedArtworkKey = artworkKey;
         lastPreloadedArtworkKey = artworkKey;
@@ -569,6 +591,57 @@ async function renderArtworkOnly({ albumArt, albumEl, artworkKey }) {
 
 // ─── Fast Atmosphere Colour Extraction ──────────────────────────────────────
 
+function setSpotifyScrollableText(el, text) {
+  const cleanText = String(text || "").trim();
+  if (el.title === cleanText && el.querySelector(".spotify-scroll-inner")) return;
+
+  el.title = cleanText;
+  el.innerHTML = `<span class="spotify-scroll-inner">${escapeHtml(cleanText)}</span>`;
+}
+
+function scheduleSpotifyTextScrollRefresh() {
+  requestAnimationFrame(() => {
+    updateSpotifyTextScrollFlags();
+    setTimeout(updateSpotifyTextScrollFlags, 80);
+    setTimeout(updateSpotifyTextScrollFlags, 250);
+    setTimeout(updateSpotifyTextScrollFlags, 750);
+  });
+}
+
+function updateSpotifyTextScrollFlags() {
+  [$(SELECTORS.trackName), $(SELECTORS.trackArtist)].forEach((el) => {
+    if (!el) return;
+
+    const inner = el.querySelector(".spotify-scroll-inner");
+    if (!inner) {
+      el.classList.remove("is-scroll");
+      el.style.removeProperty("--spotify-text-scroll-distance");
+      el.style.removeProperty("--spotify-text-scroll-duration");
+      return;
+    }
+
+    const boxWidth = Math.floor(el.getBoundingClientRect().width || el.clientWidth || 0);
+    const textWidth = Math.ceil(inner.scrollWidth || inner.getBoundingClientRect().width || 0);
+    const distance = Math.max(0, textWidth - boxWidth);
+    const shouldScroll = boxWidth > 0 && distance > 2;
+
+    el.classList.toggle("is-scroll", shouldScroll);
+    el.style.setProperty("--spotify-text-scroll-distance", `${distance}px`);
+
+    const duration = Math.max(6, Math.min(14, 5 + distance / 24));
+    el.style.setProperty("--spotify-text-scroll-duration", `${duration.toFixed(1)}s`);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 const ART_COLOR_SIZE = 48;
 const HUE_BINS = 24;
 
@@ -583,6 +656,81 @@ function circularBinDistance(a, b, total = HUE_BINS) {
 
 function rgbCss({ r, g, b }) {
   return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
+}
+
+function parseCssColorToRgb(color) {
+  if (typeof color !== "string") return null;
+
+  const value = color.trim();
+  const rgb = value.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
+  if (rgb) {
+    return {
+      r: Number(rgb[1]),
+      g: Number(rgb[2]),
+      b: Number(rgb[3]),
+    };
+  }
+
+  const hsl = value.match(/hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)/i);
+  if (hsl) {
+    return hslToRgb(Number(hsl[1]) / 360, Number(hsl[2]) / 100, Number(hsl[3]) / 100);
+  }
+
+  return null;
+}
+
+function mixRgb(a, b, amount) {
+  return {
+    r: a.r + (b.r - a.r) * amount,
+    g: a.g + (b.g - a.g) * amount,
+    b: a.b + (b.b - a.b) * amount,
+  };
+}
+
+function tuneGradientColor(rgb, lightShift = 0) {
+  let [h, s, l] = rgbToHsl(rgb.r, rgb.g, rgb.b);
+
+  if (s < 0.06 || colorfulness(rgb) < 0.07 || isNearGray(rgb, 14)) {
+    const neutral = clamp(perceivedBrightness(rgb) + lightShift * 255, 78, 178);
+    return { r: neutral, g: neutral, b: neutral };
+  }
+
+  s = clamp(s * 1.08, 0.18, 0.62);
+  l = clamp(l + lightShift, 0.26, 0.58);
+  return hslToRgb(h, s, l);
+}
+
+function buildSpotifyGradientFromAccent(color) {
+  const rgb = parseCssColorToRgb(color) || { r: 80, g: 80, b: 80 };
+  const start = tuneGradientColor(rgb, 0.06);
+  const end = tuneGradientColor(mixRgb(rgb, { r: 242, g: 242, b: 242 }, 0.16), -0.06);
+
+  return {
+    start: rgbCss(start),
+    end: rgbCss(end),
+  };
+}
+
+function getSpotifyForegroundForGradient(gradient) {
+  const start = parseCssColorToRgb(gradient?.start) || { r: 80, g: 80, b: 80 };
+  const end = parseCssColorToRgb(gradient?.end) || { r: 42, g: 42, b: 42 };
+  const brightness = (perceivedBrightness(start) + perceivedBrightness(end)) / 2;
+
+  if (brightness >= 142) {
+    return {
+      text: "#111",
+      muted: "rgba(17, 17, 17, 0.68)",
+      progressTrack: "rgba(17, 17, 17, 0.18)",
+      progressFill: "rgba(17, 17, 17, 0.88)",
+    };
+  }
+
+  return {
+    text: "#f2f2f2",
+    muted: "rgba(242, 242, 242, 0.72)",
+    progressTrack: "rgba(255, 255, 255, 0.20)",
+    progressFill: "rgba(255, 255, 255, 0.92)",
+  };
 }
 
 function rgbToHsl(r, g, b) {
@@ -696,7 +844,7 @@ function normaliseAtmosphereAccent(rgb) {
 }
 
 /**
- * Extract a Spotify-like "atmosphere" colour from album art.
+ * Extract a Spotify-like "atmosphere" palette from album art.
  *
  * Instead of picking the most vibrant foreground object, this chooses the
  * dominant hue family by area, then averages that family. This tends to match
@@ -704,9 +852,9 @@ function normaliseAtmosphereAccent(rgb) {
  * fields and smaller beige/red foreground objects.
  *
  * @param {HTMLImageElement} img
- * @returns {string} CSS rgb() colour.
+ * @returns {{accent: string, gradientStart: string, gradientEnd: string}} CSS rgb() colours.
  */
-function getAtmosphereColorFromImage(img) {
+function getAtmospherePaletteFromImage(img) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
@@ -776,21 +924,33 @@ function getAtmosphereColorFromImage(img) {
     }
   }
 
-  if (!usableWeight) return "rgb(110, 110, 110)";
+  const neutralPalette = (rgb) => {
+    const accent = normaliseAtmosphereAccent(rgb);
+    const start = tuneGradientColor(accent, 0.08);
+    const end = tuneGradientColor(accent, -0.08);
+
+    return {
+      accent: rgbCss(accent),
+      gradientStart: rgbCss(start),
+      gradientEnd: rgbCss(end),
+    };
+  };
+
+  if (!usableWeight) return neutralPalette({ r: 110, g: 110, b: 110 });
 
   const totalColourWeight = bins.reduce((sum, value) => sum + value, 0);
 
   // If the whole cover is basically black/white/gray, return a neutral accent.
   if (!pixels.length || totalColourWeight < usableWeight * 0.08) {
     if (neutralWeight) {
-      return rgbCss(normaliseAtmosphereAccent({
+      return neutralPalette({
         r: neutralR / neutralWeight,
         g: neutralG / neutralWeight,
         b: neutralB / neutralWeight,
-      }));
+      });
     }
 
-    return "rgb(110, 110, 110)";
+    return neutralPalette({ r: 110, g: 110, b: 110 });
   }
 
   // Pick dominant hue family, not single most saturated swatch. Adjacent bins are
@@ -813,39 +973,69 @@ function getAtmosphereColorFromImage(img) {
   // If no hue family has meaningful area, fall back to the average of all colour.
   const useAllColourPixels = bestFamilyWeight < totalColourWeight * 0.16;
 
-  let rSum = 0;
-  let gSum = 0;
-  let bSum = 0;
-  let weightSum = 0;
+  const averagePixels = (filter) => {
+    let rSum = 0;
+    let gSum = 0;
+    let bSum = 0;
+    let weightSum = 0;
 
-  for (const p of pixels) {
-    const inFamily = circularBinDistance(p.bin, bestBin) <= 1;
-    if (!useAllColourPixels && !inFamily) continue;
-
-    // Keep the averaging area-driven. Saturation gets only a tiny bonus.
-    const w = p.weight * (1 + p.s * 0.18);
-    rSum += p.r * w;
-    gSum += p.g * w;
-    bSum += p.b * w;
-    weightSum += w;
-  }
-
-  if (!weightSum) {
     for (const p of pixels) {
-      rSum += p.r * p.weight;
-      gSum += p.g * p.weight;
-      bSum += p.b * p.weight;
-      weightSum += p.weight;
+      if (filter && !filter(p)) continue;
+
+      // Keep the averaging area-driven. Saturation gets only a tiny bonus.
+      const w = p.weight * (1 + p.s * 0.18);
+      rSum += p.r * w;
+      gSum += p.g * w;
+      bSum += p.b * w;
+      weightSum += w;
+    }
+
+    if (!weightSum) return null;
+
+    return normaliseAtmosphereAccent({
+      r: rSum / weightSum,
+      g: gSum / weightSum,
+      b: bSum / weightSum,
+    });
+  };
+
+  const primary =
+    averagePixels(p => useAllColourPixels || circularBinDistance(p.bin, bestBin) <= 1) ||
+    averagePixels(null);
+
+  if (!primary) return neutralPalette({ r: 110, g: 110, b: 110 });
+
+  let secondaryBin = null;
+  let secondaryFamilyWeight = 0;
+
+  for (let bin = 0; bin < HUE_BINS; bin++) {
+    if (circularBinDistance(bin, bestBin) <= 2) continue;
+
+    const familyWeight =
+      bins[(bin - 1 + HUE_BINS) % HUE_BINS] * 0.7 +
+      bins[bin] +
+      bins[(bin + 1) % HUE_BINS] * 0.7;
+
+    if (familyWeight > secondaryFamilyWeight) {
+      secondaryFamilyWeight = familyWeight;
+      secondaryBin = bin;
     }
   }
 
-  if (!weightSum) return "rgb(110, 110, 110)";
+  const extractedSecondary =
+    secondaryBin !== null && secondaryFamilyWeight >= totalColourWeight * 0.10
+      ? averagePixels(p => circularBinDistance(p.bin, secondaryBin) <= 1)
+      : null;
 
-  const accent = normaliseAtmosphereAccent({
-    r: rSum / weightSum,
-    g: gSum / weightSum,
-    b: bSum / weightSum,
-  });
+  const companionSecondary = tuneGradientColor(
+    mixRgb(primary, { r: 242, g: 242, b: 242 }, 0.18),
+    -0.04
+  );
+  const secondary = extractedSecondary || companionSecondary;
 
-  return rgbCss(accent);
+  return {
+    accent: rgbCss(primary),
+    gradientStart: rgbCss(tuneGradientColor(primary, 0.05)),
+    gradientEnd: rgbCss(tuneGradientColor(secondary, -0.02)),
+  };
 }

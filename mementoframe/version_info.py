@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 50, # updates on the css for a frosted glass effect 
+        "version": 51, # spotify player improvements, text scroll and extraction of two colors to have a gradient background, and other minor improvements
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
