@@ -204,12 +204,20 @@ function applyWeatherContainerDisplay() {
 
   const alert = getActiveWeatherAlert();
   if (alert) {
-    if (cEl) setWeatherConditionText(cEl, formatWeatherAlertText(alert));
+    if (cEl) {
+      setWeatherConditionText(cEl, formatWeatherAlertText(alert));
+      const severity = String(alert?.severity || "").trim().toLowerCase();
+      cEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
+      if (severity) cEl.classList.add(`alert-${severity}`);
+    }
     if (icon) setWeatherIcon(icon, normalizeIconUrl(alert.icon || currentWeatherIconUrl), null);
     return;
   }
 
-  if (cEl) setWeatherConditionText(cEl, currentWeatherCondition);
+  if (cEl) {
+    setWeatherConditionText(cEl, currentWeatherCondition);
+    cEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
+  }
   if (icon) setWeatherIcon(icon, currentWeatherIconUrl, currentWeatherUvIconUrl);
 }
 
@@ -229,9 +237,7 @@ function getActiveWeatherAlert() {
 function formatWeatherAlertText(alert) {
   const event = String(alert?.event || "").trim();
   const headline = String(alert?.headline || "").trim();
-  const severity = String(alert?.severity || "").trim();
 
-  if (event && severity) return `⚠ ${severity}: ${event}`;
   if (event) return `⚠ ${event}`;
   if (headline) return `⚠ ${headline}`;
   return "⚠ Weather alert";

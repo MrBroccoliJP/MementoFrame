@@ -1467,6 +1467,20 @@ body {
   animation-fill-mode: none !important;
 }
 
+/* Weather alert severity color coding */
+.weather-condition.alert-minor {
+  color: #FFC107; /* Amber for minor alerts */
+}
+.weather-condition.alert-moderate {
+  color: #FF9800; /* Orange for moderate alerts */
+}
+.weather-condition.alert-severe {
+  color: #F44336; /* Red for severe alerts */
+}
+.weather-condition.alert-extreme {
+  color: #B71C1C; /* Dark red for extreme alerts */
+}
+
 /* =========================
    System tray, Wi-Fi, QR, update, and PIN display
    =========================

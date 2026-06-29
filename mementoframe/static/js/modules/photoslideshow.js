@@ -188,7 +188,15 @@ function showPhoto(index) {
       const current = container.querySelector(".photo-frame.active");
 
       if (current) {
-        current.style.transition = "opacity 450ms ease";
+        current.style.transition = "opacity 450ms ease, clip-path 0s";
+        current.style.clipPath = "inset(0 0 0 0 round 20px)";
+
+        const currentZoom = current.querySelector(".photo-zoom-inner");
+        if (currentZoom) {
+          currentZoom.style.transition = "none";
+          currentZoom.style.transform = "translateX(-50%) scale(1.1) translateZ(0)";
+        }
+
         current.classList.remove("active");
 
         setTimeout(() => {

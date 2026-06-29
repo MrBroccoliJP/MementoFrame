@@ -361,6 +361,7 @@ export async function updateSpotify() {
 function cancelArtworkRender({ clearClasses = false } = {}) {
   spotifyRenderSeq++;
   lastRequestedArtworkKey = null;
+  lastRenderedArtworkKey = null;
 
   if (spotifyRenderTimer) {
     clearTimeout(spotifyRenderTimer);
