@@ -30,24 +30,24 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 46, #bug fix on visibility of update flag when there are no updates available.
+        "version": 51, # spotify player improvements, text scroll and extraction of two colors to have a gradient background, and other minor improvements
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 26, #updater overlay small fix
+        "version": 27, #Wi-Fi/AP fallback watchdog improvements, on reconnection attempts
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 27, #Filter alerts for current area only. 
+        "version": 28, #added alert filter for portuguese language (my local)
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
     "network_manager": {
         "label": "Network Manager",
-        "version": 21,
+        "version": 22, #Wi-Fi/AP fallback watchdog improvements
         "file": "network_manager_service.py",
         "description": "NetworkManager Wi-Fi/AP fallback watchdog",
     },

@@ -60,6 +60,8 @@ Flow chart:
                               Reconnect or restore AP
 """
 
+import json
+import os
 import subprocess
 import sys
 import time
@@ -91,10 +93,26 @@ CHECK_INTERVAL = 5
 PROBE_EVERY = 120
 
 # Maximum time to wait for each saved Wi-Fi profile to connect.
-PROBE_TIMEOUT = 15
+PROBE_TIMEOUT = 45
 
-# Maximum AP uptime before forcing a reconnect probe.
+# Reconnect probes are delayed while a user is connected to AP/config portal.
+AP_CLIENT_GRACE = 5 * 60
+
+# Maximum AP uptime before forcing a reconnect probe, only when AP is idle.
 MAX_AP_DURATION = 600
+
+# Restart NetworkManager during AP-to-client transitions. This matches the
+# manual recovery sequence that clears stuck supplicant/scan state on Pi Wi-Fi.
+NETWORKMANAGER_SETTLE = 10
+WIFI_RESCAN_SETTLE = 5
+
+# Reboot once after a long Wi-Fi outage, then avoid reboot loops.
+WIFI_REBOOT_AFTER = 60 * 60
+
+# Shared runtime state used by the config portal and network watchdog.
+RUNTIME_DIR = "runtime"
+CONFIG_PORTAL_ACTIVITY_FILE = os.path.join(RUNTIME_DIR, "config_portal_activity.json")
+WIFI_REBOOT_FLAG_FILE = os.path.join(RUNTIME_DIR, "rebooted_for_wifi_failure.flag")
 
 
 # =============================================================================
@@ -106,6 +124,16 @@ _ap_start_time = 0.0
 
 # Timestamp recorded after the last reconnect probe.
 _last_probe = 0.0
+
+# Timestamp until which AP mode should not be interrupted because a client was
+# recently seen. This covers drivers where station detection is intermittent.
+_ap_client_hold_until = 0.0
+
+# Timestamp recorded when Wi-Fi first became unavailable.
+_wifi_down_since = 0.0
+
+# Guard against the main loop fighting an in-progress reconnect attempt.
+_reconnect_in_progress = False
 
 
 # =============================================================================
@@ -155,6 +183,82 @@ def nmcli(*args):
 
 
 # =============================================================================
+# Runtime coordination helpers
+# =============================================================================
+
+def ensure_runtime_dir():
+    """Ensure the shared runtime directory exists."""
+    try:
+        os.makedirs(RUNTIME_DIR, exist_ok=True)
+    except Exception as e:
+        print(f"  ⚠️ Could not create runtime directory: {e}")
+
+
+def read_json_file(path):
+    """Read a JSON file, returning None when it is missing or invalid."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        print(f"  ⚠️ Could not read {path}: {e}")
+        return None
+
+
+def remove_file(path):
+    """Remove a file if it exists."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"  ⚠️ Could not remove {path}: {e}")
+
+
+def clear_wifi_reboot_flag():
+    """Allow a future one-shot Wi-Fi recovery reboot after Wi-Fi is healthy."""
+    remove_file(WIFI_REBOOT_FLAG_FILE)
+
+
+def create_wifi_reboot_flag():
+    """Record that this outage already used its one-shot recovery reboot."""
+    ensure_runtime_dir()
+    try:
+        with open(WIFI_REBOOT_FLAG_FILE, "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except Exception as e:
+        print(f"  ⚠️ Could not write Wi-Fi reboot flag: {e}")
+
+
+def wifi_reboot_flag_exists():
+    """Return True when this outage already used its one-shot recovery reboot."""
+    return os.path.exists(WIFI_REBOOT_FLAG_FILE)
+
+
+def config_portal_quiet_until():
+    """Return the timestamp until which AP mode should stay uninterrupted."""
+    record = read_json_file(CONFIG_PORTAL_ACTIVITY_FILE)
+    if not record:
+        return 0.0
+
+    try:
+        return float(record.get("quiet_until") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def config_portal_active():
+    """Check whether the dashboard was loaded recently enough to hold AP mode."""
+    return time.time() < config_portal_quiet_until()
+
+
+def seconds_until_config_portal_idle():
+    """Return remaining config portal quiet-window seconds."""
+    return max(0, int(config_portal_quiet_until() - time.time()))
+
+
+# =============================================================================
 # Network state helpers
 # =============================================================================
 
@@ -200,16 +304,58 @@ def clients_connected():
     """
     Check whether any client device is currently associated with the AP.
 
-    Returns:
-        bool:
-            True when at least one station is connected to the AP.
+    Multiple signals are used because ``iw station dump`` can be empty on some
+    drivers even while an SSH/config-portal client is active.
     """
     try:
         out = sh(["sudo", "iw", "dev", AP_INTERFACE, "station", "dump"])
-        return "Station" in out
-
+        if "Station" in out:
+            return True
     except subprocess.CalledProcessError:
-        return False
+        pass
+
+    try:
+        out = sh(["ss", "-H", "-tn", "state", "established"])
+        if "192.168.4." in out:
+            return True
+    except subprocess.CalledProcessError:
+        pass
+
+    try:
+        out = sh(["ip", "neigh", "show", "dev", AP_INTERFACE])
+        for line in out.splitlines():
+            if "192.168.4." in line and "FAILED" not in line:
+                return True
+    except subprocess.CalledProcessError:
+        pass
+
+    return False
+
+
+def ap_should_hold():
+    """
+    Return a reason to keep AP mode stable, or None when probing is allowed.
+
+    AP mode is protected when a client is connected, when a client was recently
+    seen, or when the config dashboard was loaded recently.
+    """
+    global _ap_client_hold_until
+
+    now = time.time()
+
+    if clients_connected():
+        _ap_client_hold_until = max(_ap_client_hold_until, now + AP_CLIENT_GRACE)
+        return f"AP client active — delaying reconnect for {AP_CLIENT_GRACE // 60} minutes."
+
+    if now < _ap_client_hold_until:
+        remaining = int(_ap_client_hold_until - now)
+        return f"AP client was recently active — delaying reconnect for {remaining}s."
+
+    if config_portal_active():
+        remaining = seconds_until_config_portal_idle()
+        return f"Config portal active — delaying reconnect for {remaining}s."
+
+    return None
 
 
 # =============================================================================
@@ -270,6 +416,13 @@ def ensure_ap_profile():
         - Wi-Fi power saving disabled where possible
     """
     if ap_profile_exists():
+        run(
+            [
+                "sudo", "nmcli", "connection", "modify", AP_CON_NAME,
+                "connection.autoconnect", "no",
+            ],
+            label=f"ensure {AP_CON_NAME} autoconnect disabled",
+        )
         return
 
     print(f"🔧 Creating NetworkManager AP profile '{AP_CON_NAME}'…")
@@ -422,6 +575,38 @@ def stop_ap():
     return True
 
 
+
+def reset_networkmanager_for_client_mode():
+    """Reset NetworkManager before trying client Wi-Fi from AP mode."""
+    print("♻️ Resetting NetworkManager before Wi-Fi reconnect…")
+
+    stop_ap()
+
+    run(
+        ["sudo", "nmcli", "device", "disconnect", AP_INTERFACE],
+        label="disconnect wlan0 before NetworkManager reset",
+    )
+
+    result = run(
+        ["sudo", "systemctl", "restart", "NetworkManager"],
+        label="restart NetworkManager",
+    )
+
+    if result.returncode != 0:
+        print("  ⚠️ NetworkManager restart failed; continuing with nmcli reset only.")
+
+    time.sleep(NETWORKMANAGER_SETTLE)
+
+    run(["sudo", "nmcli", "radio", "wifi", "on"], label="wifi radio on")
+    time.sleep(2)
+
+    run(
+        ["sudo", "nmcli", "device", "wifi", "rescan", "ifname", AP_INTERFACE],
+        label="wifi rescan",
+    )
+    time.sleep(WIFI_RESCAN_SETTLE)
+
+
 # =============================================================================
 # Reconnect probing
 # =============================================================================
@@ -451,17 +636,21 @@ def probe_reconnect(force=False):
     """
     Try reconnecting to saved Wi-Fi client profiles.
 
-    Args:
-        force:
-            When True, probe even if a device is currently connected to the AP.
-
-    Returns:
-        bool:
-            True when a saved Wi-Fi profile reconnects successfully.
+    The AP-to-client transition intentionally restarts NetworkManager because
+    Raspberry Pi Wi-Fi can get stuck after AP mode. If every profile fails, AP
+    mode is restored so the frame stays reachable.
     """
-    if ap_active() and not force and clients_connected():
-        print("🛠 Client connected to AP — skipping reconnect probe.")
+    global _reconnect_in_progress
+
+    if _reconnect_in_progress:
+        print("🔁 Reconnect already in progress — skipping duplicate probe.")
         return False
+
+    if ap_active() and not force:
+        hold_reason = ap_should_hold()
+        if hold_reason:
+            print(f"🛠 {hold_reason}")
+            return False
 
     print("🔎 Probing saved Wi-Fi profiles…")
 
@@ -471,29 +660,40 @@ def probe_reconnect(force=False):
         print("  No saved Wi-Fi profiles — staying in AP mode.")
         return False
 
-    stop_ap()
+    _reconnect_in_progress = True
 
-    run(["sudo", "nmcli", "radio", "wifi", "on"], label="wifi radio on")
+    try:
+        reset_networkmanager_for_client_mode()
 
-    for profile in profiles:
-        print(f"  Trying saved profile: {profile}")
+        for profile in profiles:
+            print(f"  Trying saved profile: {profile}")
 
-        nmcli("connection", "up", profile)
+            run(
+                [
+                    "sudo", "nmcli", "connection", "modify", profile,
+                    "802-11-wireless-security.wps-method", "disabled",
+                ],
+                label=f"disable WPS for {profile}",
+            )
 
-        deadline = time.time() + PROBE_TIMEOUT
+            nmcli("connection", "up", profile)
 
-        while time.time() < deadline:
-            if wifi_connected():
-                print(f"  ✅ Reconnected to Wi-Fi: {profile}")
-                return True
+            deadline = time.time() + PROBE_TIMEOUT
 
-            time.sleep(2)
+            while time.time() < deadline:
+                if wifi_connected():
+                    print(f"  ✅ Reconnected to Wi-Fi: {profile}")
+                    clear_wifi_reboot_flag()
+                    return True
 
-    print("  ⏳ All saved profiles failed — restoring AP.")
+                time.sleep(2)
 
-    start_ap()
+        print("  ⏳ All saved profiles failed — restoring AP.")
+        start_ap()
+        return False
 
-    return False
+    finally:
+        _reconnect_in_progress = False
 
 
 # =============================================================================
@@ -504,8 +704,9 @@ def main():
     """
     Initialize NetworkManager configuration and continuously monitor connectivity.
     """
-    global _last_probe
+    global _last_probe, _wifi_down_since
 
+    ensure_runtime_dir()
     check_for_conflicts()
     ensure_ap_profile()
     ensure_client_profiles_patched()
@@ -521,31 +722,54 @@ def main():
         now = time.time()
 
         if wifi_connected():
-            print("📶 Connected to Wi-Fi — monitoring…")
+            if _wifi_down_since:
+                print("📶 Wi-Fi restored — clearing recovery state.")
+            else:
+                print("📶 Connected to Wi-Fi — monitoring…")
+
+            _wifi_down_since = 0.0
+            clear_wifi_reboot_flag()
 
         else:
+            if not _wifi_down_since:
+                _wifi_down_since = now
+
             if not ap_active():
-                print("⚠️ No Wi-Fi — entering AP mode.")
-
-                start_ap()
-
-                _last_probe = now
+                if config_portal_active() or _reconnect_in_progress:
+                    print("🛠 Wi-Fi transition/config portal active — not restoring AP yet.")
+                else:
+                    print("⚠️ No Wi-Fi — entering AP mode.")
+                    start_ap()
+                    _last_probe = now
 
             else:
-                uptime = now - _ap_start_time if _ap_start_time else 0
-                since_probe = now - _last_probe
+                hold_reason = ap_should_hold()
 
-                if uptime > MAX_AP_DURATION:
-                    print(f"⏰ AP up {uptime:.0f}s — forcing reconnect probe.")
-
-                    probe_reconnect(force=True)
-
+                if hold_reason:
+                    print(f"🛠 {hold_reason}")
                     _last_probe = now
 
-                elif since_probe >= PROBE_EVERY:
-                    probe_reconnect(force=False)
+                else:
+                    uptime = now - _ap_start_time if _ap_start_time else 0
+                    since_probe = now - _last_probe
 
-                    _last_probe = now
+                    if uptime > MAX_AP_DURATION:
+                        print(f"⏰ AP up {uptime:.0f}s and idle — forcing reconnect probe.")
+                        probe_reconnect(force=True)
+                        _last_probe = now
+
+                    elif since_probe >= PROBE_EVERY:
+                        probe_reconnect(force=False)
+                        _last_probe = now
+
+                    if (
+                        _wifi_down_since
+                        and now - _wifi_down_since >= WIFI_REBOOT_AFTER
+                        and not wifi_reboot_flag_exists()
+                    ):
+                        print("🔁 Wi-Fi has been down for over 1 hour — rebooting once for recovery.")
+                        create_wifi_reboot_flag()
+                        run(["sudo", "reboot"], label="wifi recovery reboot")
 
         time.sleep(CHECK_INTERVAL)
 
