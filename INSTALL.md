@@ -24,6 +24,7 @@ The recommended setup is the one-command installer. It creates/uses the `memento
 - Flask display service on port `5001`
 - Chromium kiosk mode for the physical display
 - GPIO pins for display power and brightness pulses
+- I²C and the Raspberry Pi RTC overlay for a DS3231 hardware clock, with `hwclock` from `util-linux-extra`
 - `updater.py` for first-time app bootstrap and future GitHub Release updates
 - Separate systemd services for config, display, network, kiosk, and post-reboot update validation
 - WebP image conversion/thumbnails through Pillow with system WebP libraries
@@ -113,9 +114,9 @@ The installed runtime app folder contains the split-service layout:
 2. Creates the `mementoframe` user if it does not already exist.
 3. Adds the user to only the required hardware groups: `video`, `input`, `gpio`, and `netdev`.
 4. Stops any existing MementoFrame split services early, before touching Wi-Fi/NetworkManager, so a previous install cannot interfere.
-5. Installs system dependencies, including Chromium, NetworkManager, X/Openbox, GPIO support, and WebP image support.
+5. Installs system dependencies, including Chromium, NetworkManager, X/Openbox, GPIO and WebP support, and `util-linux-extra` for the `hwclock` RTC utility.
 6. Enables NetworkManager, disables/masks `dhcpcd` if present, unblocks Wi-Fi with `rfkill`, and enables the Wi-Fi radio with `nmcli`.
-7. Configures display boot settings in `/boot/firmware/config.txt`.
+7. Configures display settings and enables the DS3231 RTC in `/boot/firmware/config.txt`.
 8. Configures quiet boot arguments in `/boot/firmware/cmdline.txt` while preserving the single-line format.
 9. Configures X permissions in `/etc/X11/Xwrapper.config` and masks `getty@tty1.service` to prevent login text flashing before Chromium starts.
 10. Downloads the selected GitHub Release, then copies the inner app folder to `/home/mementoframe/mementoframe`.
@@ -144,7 +145,7 @@ The installed runtime app folder contains the split-service layout:
 
 ## Boot Display Configuration
 
-The installer does not replace `/boot/firmware/config.txt`. It creates a timestamped backup first, then preserves the existing Raspberry Pi settings and only ensures the MementoFrame display keys.
+The installer does not replace `/boot/firmware/config.txt`. It creates a timestamped backup first, then preserves the existing Raspberry Pi settings and only ensures the MementoFrame display and DS3231 RTC keys.
 
 Backup examples:
 
@@ -160,10 +161,12 @@ The installer ensures this global setting exists before section blocks such as `
 dtoverlay=vc4-fkms-v3d
 ```
 
-Inside the `[all]` section, it ensures these values for the tested 1024×600 HDMI display and GPIO screen-enable pin:
+Inside the `[all]` section, it enables the I²C controller, selects the DS3231 RTC overlay, and ensures the values for the tested 1024×600 HDMI display and GPIO screen-enable pin:
 
 ```ini
 [all]
+dtparam=i2c_arm=on
+dtoverlay=i2c-rtc,ds3231
 enable_uart=1
 disable_splash=1
 avoid_warnings=1
@@ -175,6 +178,8 @@ hdmi_mode=87
 hdmi_cvt=1024 600 60 6 0 0 0
 config_hdmi_boost=7
 ```
+
+The installer updates an existing `i2c_arm` or `i2c-rtc` directive when necessary and preserves unrelated `dtparam` and `dtoverlay` entries. It also installs `util-linux-extra`, which provides the `hwclock` command on Raspberry Pi OS Bookworm and Trixie. After the reboot, the overlay makes the DS3231 available to Raspberry Pi OS through the kernel RTC driver, normally as `/dev/rtc0`. `util-linux-extra` supplies the userspace RTC utility; no separate RTC kernel module package is required.
 
 It also ensures `/boot/firmware/cmdline.txt` remains a single line. It removes earlier/undesired tokens such as `console=tty1`, `fsck.mode=skip`, `systemd.show_status=...`, `rd.systemd.show_status=...`, and `plymouth.ignore-serial-consoles`, then ensures these values:
 
@@ -474,7 +479,7 @@ sudo apt install -y \
   python3 python3-pip python3-venv git \
   network-manager wireless-tools iw iproute2 rfkill curl ca-certificates \
   chromium unclutter xserver-xorg xinit openbox x11-xserver-utils \
-  libjpeg-dev zlib1g-dev libwebp-dev webp python3-rpi.gpio
+  libjpeg-dev zlib1g-dev libwebp-dev webp util-linux-extra python3-rpi.gpio
 
 sudo adduser --disabled-password --gecos "MementoFrame" mementoframe || true
 sudo usermod -aG video,input,gpio,netdev mementoframe
@@ -490,6 +495,33 @@ sudo chown -R mementoframe:mementoframe /home/mementoframe/mementoframe
 
 cd /home/mementoframe/mementoframe
 sudo -u mementoframe python3 updater.py install
+```
+
+For a fully manual installation, edit the Raspberry Pi boot configuration:
+
+```bash
+sudo nano /boot/firmware/config.txt
+```
+
+Ensure these directives are present under the `[all]` section. If `[all]` does not exist, add the section at the end of the file:
+
+```ini
+[all]
+dtparam=i2c_arm=on
+dtoverlay=i2c-rtc,ds3231
+```
+
+Preserve any other existing settings in the section. Reboot before checking the RTC because boot overlays are only applied during startup:
+
+```bash
+sudo reboot
+```
+
+After reconnecting, confirm that the kernel created an RTC device:
+
+```bash
+ls -l /dev/rtc*
+sudo hwclock --show
 ```
 
 Then create the services and sudoers as described above.
