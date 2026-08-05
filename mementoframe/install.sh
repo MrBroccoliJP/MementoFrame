@@ -151,6 +151,10 @@ all_settings = {
     "hdmi_cvt": "1024 600 60 6 0 0 0",
     "config_hdmi_boost": "7",
 }
+rtc_settings = {
+    "dtparam": "i2c_arm=on",
+    "dtoverlay": "i2c-rtc,ds3231",
+}
 
 section_re = lambda line: line.strip().startswith("[") and line.strip().endswith("]")
 
@@ -195,6 +199,23 @@ for i in range(all_start + 1, len(lines)):
     if section_re(lines[i]):
         all_end = i
         break
+
+for key, value in rtc_settings.items():
+    found = False
+    setting_name = value.split("=", 1)[0].split(",", 1)[0]
+    for i in range(all_start + 1, all_end):
+        raw = lines[i].strip()
+        if raw.startswith("#") or "=" not in raw:
+            continue
+        existing_key, existing_value = (part.strip() for part in raw.split("=", 1))
+        existing_name = existing_value.split("=", 1)[0].split(",", 1)[0]
+        if existing_key == key and existing_name == setting_name:
+            lines[i] = f"{key}={value}"
+            found = True
+            break
+    if not found:
+        lines.insert(all_end, f"{key}={value}")
+        all_end += 1
 
 for key, value in all_settings.items():
     found = False
