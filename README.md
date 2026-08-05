@@ -285,6 +285,23 @@ mementoframe/
 
 ---
 
+## Enclosure Renders
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Front.png" alt="MementoFrame front view" width="260"/><br/><strong>Front</strong></td>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Back.png" alt="MementoFrame back view" width="260"/><br/><strong>Back</strong></td>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Back_without_Cover.png" alt="MementoFrame back view without cover" width="260"/><br/><strong>Back without cover</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Bezel.png" alt="MementoFrame bezel" width="260"/><br/><strong>Bezel</strong></td>
+    <td align="center"><img src="docs/Renders/Memento_Frame_middleFrame.png" alt="MementoFrame middle frame" width="260"/><br/><strong>Middle frame</strong></td>
+    <td></td>
+  </tr>
+</table>
+
+---
+
 ## Requirements
 
 ### Hardware
