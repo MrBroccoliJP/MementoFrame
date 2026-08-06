@@ -17,72 +17,322 @@
 
 ---
 
+## Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Hardware Build](#hardware-build)
+  - [Bill of Materials](#bill-of-materials)
+  - [3D-Printed Parts](#3d-printed-parts)
+  - [GPIO Connections](#gpio-connections)
+  - [Wiring](#wiring)
+  - [Enclosure Renders](#enclosure-renders)
+- [Software Setup](#software-setup)
+  - [Frontend Development Mocks](#frontend-development-mocks)
+- [Technical Reference](#technical-reference)
+- [Credits and License](#credits-and-license)
+
+---
+
 ## Overview
 
 MementoFrame is a self-contained smart photo frame platform built around a Raspberry Pi.
 
-The project combines:
-
-- Full-screen slideshow frontend
-- Local display API service
-- Web-based configuration portal
-- Automatic Wi-Fi ↔ AP fallback switching
-- GPIO display power and brightness controls
-- Spotify playback integration
-- Weather and timezone widgets
-- Server-Sent Events live config/photo reloading
-- GitHub Release based updater
-
 The system boots directly into a Chromium kiosk interface while remaining configurable from another device on the same network or on the fallback AP.
 
+### Project Photos
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/Photos/Overview.jpg" alt="MementoFrame front and rear overview" width="260"/><br/><strong>Front and rear overview</strong></td>
+    <td align="center"><img src="docs/Photos/Photo.jpg" alt="MementoFrame displaying a photo with widgets and Spotify controls" width="260"/><br/><strong>MementoFrame in use</strong></td>
+    <td align="center"><img src="docs/Photos/Photo2.jpg" alt="MementoFrame displaying a portrait photo with widgets and Spotify controls" width="260"/><br/><strong>Portrait photo display</strong></td>
+  </tr>
+</table>
+
 ---
 
-## Runtime Services
+## Features
 
-MementoFrame uses separate services so each part can be logged, restarted, and debugged independently.
+### Photo Management
 
-| systemd service | Runtime file | Port | Purpose |
+- Multi-file photo uploads
+- Automatic EXIF rotation handling
+- Automatic WebP conversion
+- Thumbnail generation
+- Persistent slideshow ordering
+- Dynamic display reloads via SSE
+
+### Network Management
+
+- Fully managed by NetworkManager
+- Automatic fallback AP mode
+- SSID: `MementoFrame`
+- AP gateway: `192.168.4.1`
+- Automatic reconnect probing
+- Runtime-only configuration PIN protection
+
+### Display Features
+
+- Fullscreen Chromium kiosk mode
+- GPIO-controlled display power
+- GPIO brightness pulse control
+- Auto on/off schedules
+- Dual timezone clocks
+- Weather widget
+- Spotify album art and playback state
+
+### Updates
+
+- GitHub Releases-based update checks
+- Manual update from the configuration portal
+- Optional automatic update window
+- Persistent user data preservation
+- Post-reboot health validation
+
+---
+
+## Hardware Build
+
+### Bill of Materials
+
+The following electronic and display components are used for one MementoFrame.
+Printed parts and their fasteners are listed separately in the next section.
+
+| Component | Quantity | Specification / purpose |
+|---|---:|---|
+| Raspberry Pi 3B+ | 1 | Main computer running the MementoFrame software. |
+| EP-0170 display | 1 | Commonly sold as the GeeekPi 7-inch Raspberry Pi LCD; 1024 × 600 IPS panel. |
+| DS3231 RTC module | 1 | Battery-backed real-time clock for retaining the time while disconnected from power. |
+| Mini-560 DC-DC buck converter | 2 | Step-down converters configured for 12 V input and 5 V output: one for the display and one for the Raspberry Pi. |
+| DC power-filter board | 1 | Filters the incoming DC supply before it reaches the converters and electronics. |
+| 2.1 mm panel-mount female DC barrel jack | 1 | Panel-mount power input; select a size matching the power-supply plug. |
+| Solderable Micro-USB plug | 1 | Connects the 5 V power-board output to the Raspberry Pi power input. |
+| FPC HDMI cable | 1 | Low-profile HDMI connection between the Raspberry Pi and display. |
+| Right-angle HDMI-to-FPC adapter | 1 | Display-side adapter. |
+| HDMI-to-FPC adapter | 1 | Raspberry Pi-side adapter. |
+| MTS-102 mini toggle switch | 1 | Manual power/control switch. |
+| SPST DIP or slide switch | 1 (optional) | Initial-setup override that keeps the display enabled before GPIO control is active. |
+| Hook-up wire | As required | Power and signal wiring between the boards, connectors, and switch. |
+
+The two HDMI-to-FPC adapters and FPC cable must use the same pin count and
+contact orientation. Before connecting the Raspberry Pi or display, adjust
+both Mini-560 converters and verify a stable 5 V output with a multimeter.
+
+### 3D-Printed Parts
+
+MementoFrame uses six 3D-printed part designs. One complete assembly requires
+one print of each design. Ready-to-print STL files are in [`hardware/stl`](hardware/stl),
+and the editable Fusion 360 archive is available at
+[`hardware/source/MementoFrame.f3z`](hardware/source/MementoFrame.f3z).
+
+#### Assembly Layout
+
+<p align="center">
+  <img src="docs/Renders/mementoframe_internal_mounting_layout.png" alt="MementoFrame internal mounting layout showing the display holder, electronics holder, and Raspberry Pi brackets" width="760"/>
+  <br/>
+  <strong>Internal mounting layout</strong> — display holder, electronics holder, and left/right Raspberry Pi brackets.
+</p>
+
+The DC power-filter board, DS3231 RTC module, and both Mini-560 DC-DC buck
+converters press-fit into their dedicated positions on the 3D-printed
+electronics holder; they do not require separate mounting screws.
+The Raspberry Pi itself does not require screws; the left and right brackets clamp the board securely in place.
+
+<p align="center">
+  <img src="docs/Renders/mementoframe_back_cover_and_stand.png" alt="MementoFrame rear assembly showing the back cover and stand" width="620"/>
+  <br/>
+  <strong>Rear assembly</strong> — installed back cover and stand.
+</p>
+
+#### Assembly Hardware
+
+In addition to the printed parts, one complete assembly requires:
+
+| Fastener | Quantity | Used for |
+|---|---:|---|
+| M3 × 10 mm screws | 8 | Electronics holder and left/right Raspberry Pi brackets |
+| 5 × 10 mm wood screws or M5 × 10 mm screws | 2 | Attaching the stand |
+
+Use the fastener type appropriate for the stand mounting holes and the material
+the screws engage. Do not overtighten screws against the printed parts.
+
+#### Parts to Print
+
+| Part | STL file | Quantity | Purpose |
 |---|---|---:|---|
-| `mementoframe-config.service` | `config_portal_service.py` | `5000` | Admin/configuration portal. |
-| `mementoframe-display.service` | `display_service.py` | `5001` | Display frontend server and local widget API. |
-| `mementoframe-network.service` | `network_manager_service.py` | — | Wi-Fi/AP fallback watchdog. |
-| `mementoframe-kiosk.service` | Chromium | — | Fullscreen display browser. |
-| `mementoframe-post-reboot.service` | `updater.py post-reboot-check` | — | Clears update pending-restart state after health checks pass. |
+| Display holder | [`display_holder.stl`](hardware/stl/display_holder.stl) | 1 | Main structure for the display, electronics holder, Pi brackets, and rear enclosure. Fits the wooden frame using its original retaining clips. |
+| Electronics holder | [`electronics_holder.stl`](hardware/stl/electronics_holder.stl) | 1 | Press-fit mounting for both DC buck converters, the power-filter board, and the RTC module; also organizes the wiring. |
+| Raspberry Pi brackets | [`raspberry_pi_bracket_L.stl`](hardware/stl/raspberry_pi_bracket_L.stl) and [`raspberry_pi_bracket_R.stl`](hardware/stl/raspberry_pi_bracket_R.stl) | 1 left, 1 right | Secures the Raspberry Pi while preserving connector access and airflow. |
+| Back cover | [`back_cover.stl`](hardware/stl/back_cover.stl) | 1 | Protects the electronics and wiring while providing ventilation and access openings. |
+| Stand | [`stand.stl`](hardware/stl/stand.stl) | 1 | Supports the frame at a suitable viewing angle and attaches with two screws. |
 
----
+### GPIO Connections
 
-## Versioning
-
-Versions are exposed through `/versions` and defined in `version_info.py`.
-
-MementoFrame uses a composite version:
-
-```text
-release.frontend.config.display.network.updater
-```
-
-Example:
-
-```text
-v1.25.22.21.21.13
-```
-
-Meaning:
-
-| Segment | Meaning |
+| GPIO | Purpose |
 |---:|---|
-| `1` | Release counter |
-| `25` | Frontend version |
-| `22` | Config portal version |
-| `21` | Display service version |
-| `21` | Network manager version |
-| `13` | Updater version |
+| GPIO 20 | Brightness UP pulse |
+| GPIO 21 | Brightness DOWN pulse |
+| GPIO 26 | Screen power enable |
 
-The updater compares the full composite version from GitHub release tags.
+### Wiring
+
+The diagram below shows the power distribution, display controls, RTC wiring,
+and HDMI connection. The completed wiring photo can be used as a reference for
+component placement and cable routing.
+
+<p align="center">
+  <img src="docs/Wiring/WiringDiagram.png" alt="MementoFrame wiring diagram for the Raspberry Pi, display, RTC, buck converters, optional display-enable switch, power filter, toggle switch, and barrel jack" width="900"/>
+  <br/>
+  <strong>Wiring diagram</strong>
+</p>
+
+<p align="center">
+  <img src="docs/Wiring/wiring-photo.jpg" alt="Completed MementoFrame internal wiring and electronics installation" width="760"/>
+  <br/>
+  <strong>Completed wiring and component placement</strong>
+</p>
+
+#### Connection Summary
+
+| Connection | Details |
+|---|---|
+| Power input | The 12 V supply enters through the barrel jack and MTS-102 switch, then passes through the DC power-filter board. |
+| 5 V power | The filtered 12 V input feeds both Mini-560 converters. One converter powers the Raspberry Pi and the other powers the display. |
+| RTC | Connect the DS3231 to Raspberry Pi 3.3 V, ground, I²C SDA, and I²C SCL. |
+| Display controls | Connect display power and brightness controls to GPIO 26, GPIO 20, and GPIO 21 as labelled in the diagram. |
+| Optional display-enable override | Install the optional DIP/slide switch in the display-enable circuit as shown. It keeps the display powered during initial assembly and software installation. |
+| Video | The FPC HDMI cable links the Raspberry Pi HDMI output to the display HDMI input through the two HDMI-to-FPC adapters. |
+
+#### Optional First-Boot Display Override
+
+The display-enable GPIO starts inactive before the MementoFrame service is
+installed and running, which would otherwise leave the screen switched off.
+The optional DIP/slide switch provides a manual override that keeps the display
+enabled while assembling the frame, installing the operating system, and
+setting up the software.
+
+Close the override switch for initial setup. Once GPIO display control is
+installed and confirmed to work, open the switch to return control to the
+Raspberry Pi. The switch can remain installed for future troubleshooting.
+
+> **Important:** Disconnect power while assembling the wiring. Set and verify
+> both buck-converter outputs at 5 V before connecting the Raspberry Pi or
+> display, and confirm polarity with a multimeter. The display control wires
+> are soldered directly to exposed PCB points, and trace locations can differ
+> between display revisions. Trace them from the USB-C connector and verify the
+> circuit before soldering. Never scrape, probe, or solder an energized PCB.
+
+### Enclosure Renders
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Front.png" alt="MementoFrame front view" width="260"/><br/><strong>Front</strong></td>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Back.png" alt="MementoFrame back view" width="260"/><br/><strong>Back</strong></td>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Back_without_Cover.png" alt="MementoFrame back view without cover" width="260"/><br/><strong>Back without cover</strong></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Bezel.png" alt="MementoFrame bezel" width="260"/><br/><strong>Bezel</strong></td>
+    <td align="center"><img src="docs/Renders/Memento_Frame_middleFrame.png" alt="MementoFrame middle frame" width="260"/><br/><strong>Middle frame</strong></td>
+    <td></td>
+  </tr>
+</table>
 
 ---
 
-## Architecture
+## Software Setup
+
+### Software Requirements
+
+- Raspberry Pi OS Lite
+- Python 3.11+
+- NetworkManager
+- Chromium
+
+### Installation
+
+Full setup instructions, configuration details, and troubleshooting guidance are available in [INSTALL.md](INSTALL.md).
+
+Quick install:
+
+```bash
+curl -fL https://github.com/MrBroccoliJP/MementoFrame/releases/latest/download/install.sh -o install.sh
+sudo bash install.sh
+```
+
+### First Connection and Fallback AP
+
+When no known Wi-Fi network is available, MementoFrame automatically enables a local configuration hotspot.
+
+| Setting | Value |
+|---|---|
+| SSID | `MementoFrame` |
+| Gateway | `192.168.4.1` |
+| Dashboard | `http://192.168.4.1:5000` |
+
+#### AP Flow
+
+```text
+No Wi-Fi detected
+        │
+        ▼
+Enable NetworkManager AP profile
+        │
+        ▼
+Generate temporary config PIN
+        │
+        ▼
+User connects to MementoFrame AP
+        │
+        ▼
+Enter PIN on dashboard
+        │
+        ▼
+Configure Wi-Fi credentials
+        │
+        ▼
+Reconnect to client network
+```
+
+### Frontend Development Mocks
+
+The [`dev`](dev) folder contains local mock applications for developing the
+frontend and testing features on a desktop without a Raspberry Pi, GPIO
+hardware, or live external services. The mocks mirror the production routes
+and share state so the display and configuration portal can be tested together.
+
+The mock environment supports:
+
+- Display UI and configuration portal development
+- Wi-Fi client and fallback AP simulation
+- Configuration PIN flows
+- Mock or real Spotify and weather data
+- Forced-time testing for clocks and schedules
+- Photo upload, deletion, and SSE reload behavior
+- Screen state and software-update UI states
+
+Run both mock services from the repository root:
+
+```bash
+python dev/run_mocks.py
+```
+
+| Interface | URL |
+|---|---|
+| Mock configuration portal | `http://localhost:5000` |
+| Mock display UI | `http://localhost:5001` |
+| Mock controls | `http://localhost:5001/mock` |
+
+Mock update operations never install files, restart the computer, or reboot it.
+Mock-only runtime state is stored under `dev/runtime/`. See
+[`dev/dev_instructions.md`](dev/dev_instructions.md) for dependency setup,
+available controls, test scenarios, and individual mock endpoints.
+
+---
+
+## Technical Reference
+
+### Architecture
 
 ```text
                           ┌────────────────────┐
@@ -121,121 +371,61 @@ The updater compares the full composite version from GitHub release tags.
                Wi-Fi connected / fallback AP mode
 ```
 
----
+### Runtime Services
 
-## Features
+MementoFrame uses separate services so each part can be logged, restarted, and debugged independently.
 
-### Photo Management
+| systemd service | Runtime file | Port | Purpose |
+|---|---|---:|---|
+| `mementoframe-config.service` | `config_portal_service.py` | `5000` | Admin/configuration portal. |
+| `mementoframe-display.service` | `display_service.py` | `5001` | Display frontend server and local widget API. |
+| `mementoframe-network.service` | `network_manager_service.py` | — | Wi-Fi/AP fallback watchdog. |
+| `mementoframe-kiosk.service` | Chromium | — | Fullscreen display browser. |
+| `mementoframe-post-reboot.service` | `updater.py post-reboot-check` | — | Clears update pending-restart state after health checks pass. |
 
-- Multi-file photo uploads
-- Automatic EXIF rotation handling
-- Automatic WebP conversion
-- Thumbnail generation
-- Persistent slideshow ordering
-- Dynamic display reloads via SSE
-
-### Network Management
-
-- Fully managed by NetworkManager
-- Automatic fallback AP mode
-- SSID: `MementoFrame`
-- AP gateway: `192.168.4.1`
-- Automatic reconnect probing
-- Runtime-only configuration PIN protection
-
-### Display Features
-
-- Fullscreen Chromium kiosk mode
-- GPIO-controlled display power
-- GPIO brightness pulse control
-- Auto on/off schedules
-- Dual timezone clocks
-- Weather widget
-- Spotify album art and playback state
-
-### Updates
-
-- GitHub Release based update checks
-- Manual update from the configuration portal
-- Optional automatic update window
-- Persistent user data preservation
-- Post-reboot health validation
-
----
-
-## Access Point Mode
-
-When no known Wi-Fi network is available, MementoFrame automatically enables a local configuration hotspot.
-
-| Setting | Value |
-|---|---|
-| SSID | `MementoFrame` |
-| Gateway | `192.168.4.1` |
-| Dashboard | `http://192.168.4.1:5000` |
-
-### AP Flow
+### Project Structure
 
 ```text
-No Wi-Fi detected
-        │
-        ▼
-Enable NetworkManager AP profile
-        │
-        ▼
-Generate temporary config PIN
-        │
-        ▼
-User connects to MementoFrame AP
-        │
-        ▼
-Enter PIN on dashboard
-        │
-        ▼
-Configure Wi-Fi credentials
-        │
-        ▼
-Reconnect to client network
+MementoFrame/
+├── dev/
+│   ├── dev_instructions.md
+│   ├── mock_config_portal_service.py
+│   ├── mock_display_service.py
+│   ├── mock_shared.py
+│   ├── mock_updater.py
+│   └── run_mocks.py
+├── docs/
+│   ├── Photos/
+│   ├── Renders/
+│   ├── Wiring/
+│   └── logo.png
+├── hardware/
+│   ├── source/
+│   │   └── MementoFrame.f3z
+│   └── stl/
+├── mementoframe/
+│   ├── config_portal_service.py
+│   ├── display_service.py
+│   ├── network_manager_service.py
+│   ├── updater.py
+│   ├── version_info.py
+│   ├── requirements.txt
+│   ├── config.json
+│   ├── runtime/
+│   ├── resources/
+│   │   ├── assets/
+│   │   └── userdata/
+│   │       ├── Photos/
+│   │       └── cache/
+│   ├── static/
+│   └── templates/
+├── INSTALL.md
+└── README.md
 ```
 
----
+### Main Endpoints
 
-## GPIO Usage
-
-| GPIO | Purpose |
-|---:|---|
-| GPIO 20 | Brightness UP pulse |
-| GPIO 21 | Brightness DOWN pulse |
-| GPIO 26 | Screen power enable |
-
----
-
-## Project Structure
-
-```text
-mementoframe/
-├── config_portal_service.py
-├── display_service.py
-├── network_manager_service.py
-├── updater.py
-├── version_info.py
-├── requirements.txt
-├── config.json
-├── runtime/
-├── resources/
-│   ├── assets/
-│   └── userdata/
-│       ├── Photos/
-│       └── cache/
-├── static/
-├── templates/
-└── docs/
-```
-
----
-
-## Main Endpoints
-
-### Config portal — port `5000`
+#### Config portal — port `5000`
 
 | Endpoint | Description |
 |---|---|
@@ -254,7 +444,7 @@ mementoframe/
 | `/versions` | Return version metadata |
 | `/health` | Config portal health check |
 
-### Display service — port `5001`
+#### Display service — port `5001`
 
 | Endpoint | Description |
 |---|---|
@@ -269,9 +459,7 @@ mementoframe/
 | `/versions` | Return version metadata |
 | `/health` | Display service health check |
 
----
-
-## Runtime Data
+### Runtime Data
 
 | Path | Purpose |
 |---|---|
@@ -283,63 +471,36 @@ mementoframe/
 | `config.json` | User configuration |
 | `.env` | Local secrets and optional update token |
 
----
+### Versioning
 
-## Enclosure Renders
+Versions are exposed through `/versions` and defined in `version_info.py`.
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/Renders/Memento_Frame_Front.png" alt="MementoFrame front view" width="260"/><br/><strong>Front</strong></td>
-    <td align="center"><img src="docs/Renders/Memento_Frame_Back.png" alt="MementoFrame back view" width="260"/><br/><strong>Back</strong></td>
-    <td align="center"><img src="docs/Renders/Memento_Frame_Back_without_Cover.png" alt="MementoFrame back view without cover" width="260"/><br/><strong>Back without cover</strong></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/Renders/Memento_Frame_Bezel.png" alt="MementoFrame bezel" width="260"/><br/><strong>Bezel</strong></td>
-    <td align="center"><img src="docs/Renders/Memento_Frame_middleFrame.png" alt="MementoFrame middle frame" width="260"/><br/><strong>Middle frame</strong></td>
-    <td></td>
-  </tr>
-</table>
-
----
-
-## Requirements
-
-### Hardware
-
-- Raspberry Pi 3B+
-- HDMI display
-- GPIO-connected brightness/display circuitry
-- DS3231 RTC optional
-
-### Software
-
-- Raspberry Pi OS Lite
-- Python 3.11+
-- NetworkManager
-- Chromium
-
----
-
-## Installation
-
-Full setup instructions are available in:
+MementoFrame uses a composite version:
 
 ```text
-INSTALL.md
+release.frontend.config.display.network.updater
 ```
 
-Quick install:
+Example:
 
-```bash
-cd ~
-git clone https://github.com/MrBroccoliJP/MementoFrame.git
-cd MementoFrame
-sudo bash install.sh
+```text
+v1.25.22.21.21.13
 ```
 
----
+Meaning:
 
-## Useful Logs
+| Segment | Meaning |
+|---:|---|
+| `1` | Release counter |
+| `25` | Frontend version |
+| `22` | Config portal version |
+| `21` | Display service version |
+| `21` | Network manager version |
+| `13` | Updater version |
+
+The updater compares the full composite version from GitHub release tags.
+
+### Useful Logs
 
 ```bash
 journalctl -u mementoframe-config.service -f
@@ -350,28 +511,50 @@ journalctl -u mementoframe-kiosk.service -f
 
 ---
 
-## License
+## Credits and License
+
+### License
 
 Creative Commons Attribution-NonCommercial 4.0 International
 
 [http://creativecommons.org/licenses/by-nc/4.0/](http://creativecommons.org/licenses/by-nc/4.0/)
 
----
-
-## Author
+### Author
 
 João Fernandes — 2026
 
----
+### Acknowledgements
 
-# Demo Image Attributions
+Special thanks to:
+
+<table>
+  <tr>
+    <td align="center" width="220">
+      <a href="https://meteocons.com/">
+        <img src="https://cdn.meteocons.com/3.0.0-next.10/svg/fill/clear-day.svg" alt="Meteocons" width="90"/>
+        <br/><strong>Meteocons</strong>
+      </a>
+    </td>
+    <td>Weather icons used by the MementoFrame display interface.</td>
+  </tr>
+  <tr>
+    <td align="center" width="220">
+      <a href="https://www.weatherapi.com/">
+        <img src="https://cdn.weatherapi.com/v4/images/weatherapi_logo.png" alt="WeatherAPI.com" width="180"/>
+      </a>
+    </td>
+    <td>Weather information displayed by MementoFrame.</td>
+  </tr>
+</table>
+
+### Demo Image Attributions
 
 These images are included only as demo/development placeholders for MementoFrame.
 
 Images sourced from Unsplash under the Unsplash License:
 https://unsplash.com/license
 
-## Included Images
+#### Included Images
 
 - `erik-jan-leusink-IbPxGLgJiMI-unsplash.jpg` — Photo by Erik-Jan Leusink — https://unsplash.com/@erikjanl
 - `kate-stone-matheson-uy5t-CJuIK4-unsplash.jpg` — Photo by Kate Stone Matheson — https://unsplash.com/@kstonematheson

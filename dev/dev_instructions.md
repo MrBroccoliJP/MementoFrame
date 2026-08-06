@@ -1,456 +1,231 @@
 # MementoFrame Mock Apps
 
-Local development environment for MementoFrame without requiring Raspberry Pi hardware.
+The `dev` folder provides a desktop development environment for the
+MementoFrame frontend and configuration portal. It mirrors the production
+routes closely enough to develop UI changes and test application states without
+a Raspberry Pi, GPIO hardware, systemd, NetworkManager, or a connected display.
 
-The mock environment mirrors the real application structure and APIs closely so frontend development and testing can happen entirely on a desktop machine.
+## Requirements
 
----
+- Python 3.11 or later
+- The MementoFrame repository
+- A browser
+- Internet access only when testing real Spotify, WeatherAPI, or GitHub calls
 
-# Features
+The mock services use these Python packages:
 
-The mock environment supports:
+- Flask
+- Flask-CORS
+- Pillow
+- python-dotenv
+- Requests
+- Spotipy
+- Werkzeug
 
-* Frontend/UI development
-* AP/client mode simulation
-* Configuration PIN flow testing
-* Spotify widget testing
-* Real Spotify integration
-* Weather widget testing
-* SSE reload testing
-* Local photo upload/delete
-* Device state simulation
-* Frontend design iteration
+Create a virtual environment from the repository root.
 
----
+### Windows PowerShell
 
-# Repository Structure
-
-```txt
-root/
-├── mementoframe/
-│   ├── app.py
-│   ├── api_service.py
-│   ├── ap_mode_manager.py
-│   ├── resources/
-│   ├── runtime/
-│   ├── static/
-│   ├── templates/
-│   └── ...
-│
-├── dev/
-│   ├── mock_app.py
-│   ├── mock_api_service.py
-│   ├── mock_shared.py
-│   ├── run_mocks.py
-│   └── runtime/
-│
-└── .gitignore
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install Flask flask-cors Pillow python-dotenv requests spotipy Werkzeug
 ```
 
----
-
-# Mock Services
-
-## `mock_app.py`
-
-Runs on:
-
-```txt
-http://localhost:5000
-```
-
-Replacement for:
-
-```txt
-mementoframe/app.py
-```
-
-Provides:
-
-* Admin dashboard
-* Photo uploads
-* Photo deletion
-* Config portal PIN flow
-* Brightness settings
-* Auto power settings
-* Weather settings
-* Spotify controls
-* Mock device controls
-
----
-
-## `mock_api_service.py`
-
-Runs on:
-
-```txt
-http://localhost:5001
-```
-
-Replacement for:
-
-```txt
-mementoframe/api_service.py
-```
-
-Provides:
-
-* Spotify API
-* Weather API
-* Device status API
-* PIN JSON endpoints
-* SSE reload stream
-* AP/client mode state
-* Mock management UI
-
----
-
-## `mock_shared.py`
-
-Shared state manager used by both mock services.
-
-Handles:
-
-* Shared runtime state
-* Shared Spotify state
-* Shared weather state
-* Shared AP/client state
-* Shared PIN state
-
-Runtime files are stored in:
-
-```txt
-dev/runtime/
-```
-
----
-
-# Installation
-
-Install dependencies:
+### Linux or macOS
 
 ```bash
-pip install flask flask-cors pillow python-dotenv werkzeug spotipy
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install Flask flask-cors Pillow python-dotenv requests spotipy Werkzeug
 ```
 
----
+The mock environment does not import `RPi.GPIO`, so that package is not
+required for desktop development.
 
-# Running the Mock Environment
+## Running the Mocks
 
-From the repository root:
+Start both services from the repository root:
 
 ```bash
+python dev/run_mocks.py
+```
+
+On Windows, this is also valid:
+
+```powershell
 py dev/run_mocks.py
 ```
 
-Expected output:
+The launcher starts both processes and prints their URLs:
 
-```txt
-MementoFrame mock environment running
-Admin dashboard : http://localhost:5000
-Frontend API    : http://localhost:5001
-Mock controls   : http://localhost:5001/mock
-```
+| Interface | URL | Purpose |
+|---|---|---|
+| Configuration portal | `http://localhost:5000` | Develop and test the admin/configuration UI. |
+| Display UI | `http://localhost:5001` | Render the kiosk frontend against mock APIs. |
+| Mock controls | `http://localhost:5001/mock` | Change simulated device, weather, Spotify, time, PIN, and update state. |
+| Forced-time JSON | `http://localhost:5001/mock/time.json` | Inspect the active browser-time override. |
 
----
+Press `Ctrl+C` in the terminal to stop both services.
 
-# URLs
+If port 5000 or 5001 is already in use, stop the conflicting process before
+starting the mocks.
 
-## Admin Dashboard
+## Mock Components
 
-```txt
-http://localhost:5000
-```
+| File | Role |
+|---|---|
+| `dev/run_mocks.py` | Starts and stops both mock web services. |
+| `dev/mock_config_portal_service.py` | Endpoint-compatible configuration portal on port 5000. |
+| `dev/mock_display_service.py` | Display frontend, widget APIs, and mock control panel on port 5001. |
+| `dev/mock_shared.py` | Shared state, payload builders, photo helpers, external-service helpers, and runtime paths. |
+| `dev/mock_updater.py` | Safe command-line interface for testing updater states. |
+| `dev/runtime/` | Mock-only state, PIN, update state, and Spotify cache. Created automatically. |
 
-Main local development dashboard.
+## What Can Be Tested
 
----
+The control panel at `http://localhost:5001/mock` supports:
 
-## Frontend API
+- Client Wi-Fi, fallback AP, and unknown network modes [simulated only, no network control on the host]
+- Simulated IP addresses, SSIDs, and known networks
+- Screen on/off state [simulated, logs available on the frontend console]
+- Configuration PIN creation and expiration
+- Fixed or ticking browser time
+- Mock Spotify playback, tracks, connection state, and progress
+- Mock weather, forecast, astronomy, and alert data
+- No-weather and current-weather-only layouts
+- Photo upload, deletion, ordering, and reload behavior
+- Server-Sent Events frontend reloads
+- Available-update, installing, and automatic-update UI states
 
-```txt
-http://localhost:5001
-```
+Most frontend work can use the built-in mock Spotify and weather data without
+API credentials.
 
-Used by the frontend/display UI.
+## Mock State and Project Data
 
----
+Mock-only runtime state is written to:
 
-## Mock Controls
-
-```txt
-http://localhost:5001/mock
-```
-
-Allows changing:
-
-* AP/client mode
-* Weather state
-* Spotify state
-* PIN state
-* Screen state
-* Device status
-
----
-
-# Spotify Modes
-
-The mock environment supports both mock and real Spotify playback.
-
----
-
-## Mock Spotify Mode
-
-Uses built-in fake playback data.
-
-Good for:
-
-* frontend testing
-* screenshots
-* UI development
-* development without Spotify OAuth
-
-Configuration:
-
-```python
-state["spotify"]["source"] = "mock"
-```
-
----
-
-## Real Spotify Mode
-
-Uses your real Spotify playback data locally.
-
-Spotify credentials and cache are intended to remain local only and should never be committed.
-
-Create a local `.env` file:
-
-```env
-SPOTIFY_CLIENT_ID=your_client_id
-SPOTIFY_CLIENT_SECRET=your_client_secret
-SPOTIFY_REDIRECT_URI=http://127.0.0.1:8888/callback
-```
-
-Spotify cache location:
-
-```txt
-dev/runtime/.cache_spotify
-```
-
-Enable real Spotify mode:
-
-```python
-state["spotify"]["source"] = "real"
-```
-
----
-
-# Configuration PIN Flow
-
-The mock environment mirrors the real configuration PIN system.
-
-Protected routes require unlocking with a temporary PIN.
-
-PIN endpoint:
-
-```txt
-/config_portal_pin.json
-```
-
-Compatibility aliases:
-
-```txt
-/config_pin.json
-/frame_pin.json
-/ap_pin.json
-```
-
-PINs:
-
-* expire automatically
-* are stored only in `dev/runtime`
-* are never committed to git
-
----
-
-# SSE Reload Stream
-
-The mock API provides:
-
-```txt
-/config/stream
-```
-
-The frontend reloads automatically when:
-
-* `photos.json` changes
-* `config.json` changes
-
----
-
-# Runtime Files
-
-Generated files are stored in:
-
-```txt
+```text
 dev/runtime/
+├── mock_state.json
+├── update_state.json
+├── config_portal_pin.json
+└── .cache_spotify
 ```
 
-Examples:
+The mock applications intentionally render the real files under
+`mementoframe/templates`, `mementoframe/static`, and
+`mementoframe/resources/assets`. Changes to those frontend files are visible
+after refreshing the browser.
 
-```txt
-mock_state.json
-config_portal_pin.json
-.cache_spotify
+The configuration portal also uses the project's real local development data:
+
+- `mementoframe/config.json`
+- `mementoframe/.env`, when present
+- `mementoframe/resources/userdata/Photos/`
+- `mementoframe/resources/userdata/cache/`
+
+As a result, configuration edits, credential changes, and photo operations made
+through the mock portal can modify those local files. Use development data and
+do not enter production secrets into a shared working tree.
+
+## Testing Time-Dependent UI
+
+Open the mock controls and configure the Forced time section. The display
+service injects `/mock/time-override.js` into the frame page before the
+frontend runs.
+
+You can set:
+
+- A fixed ISO datetime
+- Whether simulated time continues ticking
+- Whether the override is enabled
+
+This is useful for testing clock layouts, date changes, schedules, nighttime
+styles, and other time-dependent behavior without changing the computer clock.
+
+## Testing Spotify and Weather
+
+Both integrations support `mock` and `real` data sources.
+
+Mock mode is the default and requires no credentials. Use the control panel to
+change tracks, playback state, weather conditions, day/night state, forecasts,
+and alerts.
+
+Real integration testing may use values stored in `mementoframe/.env`:
+
+```dotenv
+SPOTIFY_CLIENT_ID=
+SPOTIFY_CLIENT_SECRET=
+SPOTIFY_REDIRECT_URI=
+WEATHER_API_KEY=
 ```
 
-These files should not be committed.
+The weather API key can also be saved through the mock configuration portal.
+Real integrations require network access and are no longer fully isolated
+tests.
 
----
+## Testing Updates Safely
 
-# Recommended `.gitignore`
+The mock updater simulates update states but never installs project files or
+reboots the computer.
 
-```gitignore
-# Python
-__pycache__/
-*.pyc
-
-# Environment
-.env
-.env.*
-
-# Runtime
-mementoframe/runtime/*
-dev/runtime/*
-!mementoframe/runtime/.gitkeep
-!dev/runtime/.gitkeep
-
-# Spotify
-.cache_spotify
-
-# Photos
-mementoframe/resources/userdata/Photos/full/*
-mementoframe/resources/userdata/Photos/thumbs/*
-!mementoframe/resources/userdata/Photos/full/.gitkeep
-!mementoframe/resources/userdata/Photos/thumbs/.gitkeep
-```
-
----
-
-# Demo Photos
-
-Demo photos included in the repository are intended only for:
-
-* development
-* testing
-* screenshots
-* frontend previews
-
-Photo attributions are listed in:
-
-```txt
-mementoframe/resources/demo/ATTRIBUTIONS.md
-```
-
----
-
-# Notes
-
-The mock environment intentionally:
-
-* does NOT use GPIO
-* does NOT modify Wi‑Fi state
-* does NOT use `nmcli`
-* does NOT require Raspberry Pi hardware
-
-The mock environment exists purely for:
-
-* frontend iteration
-* local testing
-* contributor onboarding
-* UI development
-* API simulation
-
----
-
-# Troubleshooting
-
-## Templates not loading
-
-Verify repository structure:
-
-```txt
-root/
-├── mementoframe/
-└── dev/
-```
-
----
-
-## Static/CSS not loading
-
-Run the mocks from the repository root:
+Use the mock control panel for UI testing, or run:
 
 ```bash
-py dev/run_mocks.py
+python dev/mock_updater.py status
+python dev/mock_updater.py pending-on
+python dev/mock_updater.py pending-off
+python dev/mock_updater.py check
+python dev/mock_updater.py install
+python dev/mock_updater.py autoupdate
+python dev/mock_updater.py diagnose
 ```
 
----
-
-## Spotify not working
-
-Install Spotipy:
+A simulated installation remains in progress for 90 seconds by default. Change
+the duration for a test session with:
 
 ```bash
-pip install spotipy
+MEMENTOFRAME_MOCK_INSTALL_SECONDS=10 python dev/run_mocks.py
 ```
 
-Verify `.env` contains:
+In PowerShell:
 
-```txt
-SPOTIFY_CLIENT_ID
-SPOTIFY_CLIENT_SECRET
+```powershell
+$env:MEMENTOFRAME_MOCK_INSTALL_SECONDS = "10"
+python dev/run_mocks.py
 ```
 
----
+## Troubleshooting
 
-## PIN flow stuck
+### A dependency is missing
 
-Delete:
+Activate the virtual environment and reinstall the mock dependencies:
 
-```txt
-dev/runtime/config_portal_pin.json
+```bash
+python -m pip install Flask flask-cors Pillow python-dotenv requests spotipy Werkzeug
 ```
 
-Then restart the mock environment.
+### The UI does not reflect frontend changes
 
----
+Refresh the display page. For state or photo changes, use the portal's reload
+action or restart the mock launcher.
 
-# Mock update styling flag
+### Mock state needs to be reset
 
-The mock environment includes a safe UI-testing flag for update styling.
+Stop the services, then remove only the generated files inside `dev/runtime`.
+They will be recreated with defaults the next time the mocks start.
 
-In the mock management UI:
+### A service exits immediately
 
-```txt
-http://localhost:5001/mock
+Run it directly to see its complete error:
+
+```bash
+python dev/mock_config_portal_service.py
+python dev/mock_display_service.py
 ```
 
-Enable:
-
-```txt
-Software updates → Mock pending update
-```
-
-When enabled, the mock update status endpoints return `available: true` and `mock_pending_update: true` so the frontend update badge/rounded div is shown. This does not install updates, set a real pending restart, or reboot.
-
-Relevant endpoints:
-
-```txt
-GET  /update_status.json       # display/frontend read-only status
-GET  /update/status            # dashboard read-only status
-POST /update/check             # checks GitHub releases if repo is configured
-POST /update/install           # mock no-op; always blocked
-POST /mock/update/pending      # toggles the mock pending update flag
-```
+Run individual services from the repository root so the real
+`mementoframe` templates and assets can be resolved correctly.
