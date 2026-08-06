@@ -198,7 +198,7 @@ be adjusted accordingly.
 | Measurement | Reference frame |
 |---|---:|
 | Nominal photo size | 130 × 180 mm (13 × 18 cm / 5 × 7 inches) |
-| Visible front opening | Approximately 120 × 170 mm (not important due to the display bezel) |
+| Visible front opening | Approximately 120 × 170 mm (not important due to the display bezel*) |
 | Outside wooden-frame dimensions | 218 × 169 mm |
 | Approximate front wooden bezel | 24.25 mm |
 | Rear opening for inserting the photo/display | 130 × 181 mm |
@@ -207,6 +207,8 @@ be adjusted accordingly.
 | Overall frame depth | 18 mm |
 | Available internal depth | 9.5 mm |
 | Glass thickness | 1.6 mm |
+
+*3D changes to the display mounting plate would need to be done to accomodate a different outer frame.
 
 The original glass is reused. The display sits against the glass, with the
 printed assembly installed behind it. The original back is discarted.
@@ -353,10 +355,19 @@ Raspberry Pi. The switch can remain installed for future troubleshooting.
 
 ### Software Requirements
 
-- Raspberry Pi OS Lite
+- Raspberry Pi OS Lite 13 (Trixie), 32-bit or 64-bit
 - Python 3.11+
 - NetworkManager
 - Chromium
+
+#### 32-bit and 64-bit Support
+
+MementoFrame supports both the 32-bit and 64-bit editions of Raspberry Pi OS Lite Trixie.
+
+- **64-bit** supports the full KMS graphics driver.
+- **32-bit** uses the FKMS compatibility driver for the current display setup.
+
+Full KMS support is still being tested. Two frames using slightly different revisions of the same display controller PCB produced different results, so FKMS may be the safer option if the display is blank or unstable. See [Prepare the SD Card](INSTALL.md#prepare-the-sd-card) for OS selection and setup instructions.
 
 ### Installation
 

@@ -1,46 +1,72 @@
-# MementoFrame — Installation Guide
+# MementoFrame Installation Guide
 
-Official setup guide for Raspberry Pi OS Lite.
+Set up MementoFrame on Raspberry Pi OS Lite using the automatic installer, then finish the setup from the frame's web dashboard.
 
-The recommended setup is the automated `install.sh` installer. A manual path is also documented for troubleshooting and advanced installations. After either method, use the web configuration dashboard to add the WeatherAPI and optional Spotify credentials, connect Spotify users, configure the display, and upload photos.
+## Quick Start
 
-## Installation overview
+| Step | What to do |
+|---:|---|
+| **1** | [Prepare the microSD card](#prepare-the-sd-card) and enable SSH in Raspberry Pi Imager. |
+| **2** | Start the Pi, connect through SSH, and run the [automatic installer](#automatic-installation-recommended). |
+| **3** | Let the Raspberry Pi reboot, then open the [configuration dashboard](#post-install-configuration). |
+| **4** | Configure WeatherAPI, optional Spotify integration, Wi-Fi, display settings, and photos. |
 
-1. Choose the [automatic installation](#automatic-installation-recommended) or [manual installation](#manual-installation-advanced).
-2. Reboot the Raspberry Pi and [verify the installation](#verify-install).
-3. Open the [configuration dashboard](#post-install-configuration).
-4. Configure WeatherAPI first, then Spotify if wanted, followed by the remaining display and frame settings.
+> **Recommended path:** use the automatic installer. The [manual installation](#manual-installation-advanced) and [technical reference](#automatic-installation-options-and-technical-reference) are available later in this guide.
 
 ---
 
-## Tested Hardware
+## Prepare the SD Card
 
-| Component | Version |
+Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to install Raspberry Pi OS and prepare the Pi for a headless setup—without connecting a keyboard, mouse, or separate monitor.
+
+1. Insert the microSD card into your computer and open Raspberry Pi Imager.
+2. Under **Device**, select **Raspberry Pi 3** for the tested Raspberry Pi 3B+.
+3. Under **OS**, select **Raspberry Pi OS (other)**, then choose **Raspberry Pi OS Lite (64-bit)** or **Raspberry Pi OS Lite (32-bit)**.
+4. Select the microSD card under **Storage**.
+5. Open **Customisation**, complete the settings below, and write the card.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/Instructions/RPIImager.png" alt="Selecting Raspberry Pi 3 in Raspberry Pi Imager" width="300"/><br/><strong>1. Select the device</strong></td>
+    <td align="center"><img src="docs/Instructions/RPIImager2.png" alt="Selecting Raspberry Pi OS other in Raspberry Pi Imager" width="300"/><br/><strong>2. Open other OS options</strong></td>
+    <td align="center"><img src="docs/Instructions/RPIImager3.png" alt="Selecting Raspberry Pi OS Lite in Raspberry Pi Imager" width="300"/><br/><strong>3. Select Raspberry Pi OS Lite</strong></td>
+  </tr>
+</table>
+
+### Imager Customisation
+
+Raspberry Pi Imager can configure the following before the Pi's first boot:
+
+| Setting | Recommendation |
 |---|---|
-| Raspberry Pi | 3B+ |
-| OS | Raspberry Pi OS Lite 13 (trixie) 32-bit |
-| Python | System Python from Raspberry Pi OS, tested with Python 3.13 on Trixie |
-| Display | GeekPi 7" HDMI, 1024×600 |
+| **Hostname** | Use `mementoframe` to make the Pi available as `mementoframe.local`. A different hostname also works, but use `<your-hostname>.local` when connecting. |
+| **Username and password** | Create the account that you will use to sign in and run the installer. |
+| **Wi-Fi** | Enter the network name, password, and country if the frame should join Wi-Fi on its first boot. You can also leave this unset and configure Wi-Fi later through MementoFrame AP mode. |
+| **Locale and timezone** | Select the values appropriate for the frame's location. |
+| **SSH** | **Enable SSH.** Use password authentication or add an SSH public key. |
 
----
+SSH is required for a peripheral-free installation. After writing the card, insert it into the Pi, power it on, wait for it to join the network, and connect from another computer:
 
-## What MementoFrame Uses
+```bash
+ssh <username>@mementoframe.local
+```
 
-- NetworkManager and `nmcli` for Wi-Fi/client/AP mode
-- Flask config portal on port `5000`
-- Flask display service on port `5001`
-- Chromium kiosk mode for the physical display
-- GPIO pins for display power and brightness pulses
-- I²C and the Raspberry Pi RTC overlay for a DS3231 hardware clock, with `hwclock` from `util-linux-extra`
-- `updater.py` for first-time app bootstrap and future GitHub Release updates
-- Separate systemd services for config, display, network, kiosk, and post-reboot update validation
-- WebP image conversion/thumbnails through Pillow with system WebP libraries
+Replace `<username>` with the account created in Raspberry Pi Imager. If you selected another hostname, replace `mementoframe.local` as well. Once connected, run the automatic installation commands in the next section.
+
+### 32-bit and 64-bit Trixie
+
+MementoFrame supports Raspberry Pi OS Lite Trixie in both **32-bit** and **64-bit** versions.
+
+- **64-bit Trixie** can use the full KMS graphics driver.
+- **32-bit Trixie** uses the FKMS compatibility driver for this display setup.
+
+Full KMS display behavior is still being tested. Two frames with slightly different revisions of the same display controller PCB produced different results, so FKMS may remain the safer option if the display is blank or unstable.
 
 ---
 
 ## Automatic Installation (Recommended)
 
-From a fresh Raspberry Pi OS install, download the installer from the latest GitHub Release and run it:
+On a fresh Raspberry Pi OS Lite installation, open a terminal and run:
 
 ```bash
 cd ~
@@ -48,234 +74,58 @@ curl -fL https://github.com/MrBroccoliJP/MementoFrame/releases/latest/download/i
 sudo bash install.sh
 ```
 
-The installer must be run with `sudo` because it installs apt packages, creates users, writes systemd services, edits boot display config, and configures limited sudo permissions for Wi-Fi/update/reboot actions.
+This downloads the latest stable MementoFrame release, prepares the Raspberry Pi, and installs the required software. The Pi reboots automatically when the installation finishes.
 
-By default, `install.sh` downloads and installs the latest stable GitHub Release. It does **not** install from the moving `main` branch. At the end of a normal install it reboots automatically so boot, HDMI, X11, and service settings take effect. For development/testing, skip the final reboot with `SKIP_REBOOT=1`.
+> **Next:** after the frame restarts, continue with [Post-Install Configuration](#post-install-configuration).
 
-Install a specific release tag:
-
-```bash
-sudo INSTALL_TAG=v1.25.22.21.21.13 bash install.sh
-```
-
-Install the newest non-draft pre-release/release instead of only the latest stable release:
-
-```bash
-sudo INSTALL_CHANNEL=pre-release bash install.sh
-```
-
-Run the installer without rebooting at the end, useful while testing installer changes:
-
-```bash
-sudo SKIP_REBOOT=1 bash install.sh
-```
-
-Install from a fork or different repository:
-
-```bash
-sudo INSTALL_REPO=owner/repository bash install.sh
-```
-
-Developer-only local checkout override:
-
-```bash
-sudo SRC_DIR="$(pwd)" bash install.sh
-```
-
-`SRC_DIR` must point to the repository root, the directory containing the inner `mementoframe/` folder.
-
-The runtime app is installed to:
-
-```text
-/home/mementoframe/mementoframe
-```
-
-The Pi runtime does not run from the installer location or from a full Git checkout.
-
----
-
-## Manual Installation (Advanced)
-
-Use this path when the automatic installer cannot complete or when you need to perform and diagnose each stage yourself. The automatic and manual methods are alternatives; do not run both for a normal installation.
-
-Install the operating-system dependencies and create the dedicated runtime user:
-
-```bash
-sudo apt update
-sudo apt install -y \
-  python3 python3-pip python3-venv git \
-  network-manager wireless-tools iw iproute2 rfkill curl ca-certificates \
-  chromium unclutter xserver-xorg xinit openbox x11-xserver-utils \
-  libjpeg-dev zlib1g-dev libwebp-dev webp util-linux-extra python3-rpi.gpio
-
-sudo adduser --disabled-password --gecos "MementoFrame" mementoframe || true
-sudo usermod -aG video,input,gpio,netdev mementoframe
-```
-
-Copy the repository's inner `mementoframe/` directory to the runtime location, then initialize it:
-
-```bash
-sudo mkdir -p /home/mementoframe/mementoframe
-sudo cp -a /path/to/release-or-checkout/mementoframe/. /home/mementoframe/mementoframe/
-sudo chown -R mementoframe:mementoframe /home/mementoframe/mementoframe
-
-cd /home/mementoframe/mementoframe
-sudo -u mementoframe python3 updater.py install
-```
-
-Replace `/path/to/release-or-checkout` with the extracted release or checkout root. The source must contain the inner `mementoframe/` application folder.
-
-Complete the same system integration performed by `install.sh`:
-
-1. Apply the settings in [Boot Display Configuration](#boot-display-configuration), preserving unrelated Raspberry Pi settings.
-2. Configure NetworkManager and disable conflicting `dhcpcd` management if it is present.
-3. Create the five units listed under [Services](#services).
-4. Add the limited permissions described in [Update/Reboot/Wi-Fi Permissions](#updaterebootwi-fi-permissions).
-5. Enable the services and reboot.
-
-For the RTC, ensure these directives are present under `[all]` in `/boot/firmware/config.txt`:
-
-```ini
-[all]
-dtparam=i2c_arm=on
-dtoverlay=i2c-rtc,ds3231
-```
-
-After rebooting, confirm that Raspberry Pi OS created the RTC device:
-
-```bash
-ls -l /dev/rtc*
-sudo hwclock --show
-```
-
-If the automatic installer failed only because packages were missing, install the dependencies above and rerun `sudo bash install.sh` instead of continuing with the fully manual path.
-
----
-
-## Runtime Files
-
-The installed runtime app folder contains the split-service layout:
-
-| File | Purpose |
-|---|---|
-| `config_portal_service.py` | Admin/configuration portal on port `5000`. |
-| `display_service.py` | Local display/frontend API on port `5001`. |
-| `network_manager_service.py` | NetworkManager Wi-Fi/AP fallback watchdog. |
-| `updater.py` | Installer/update/post-reboot helper. |
-| `version_info.py` | Composite release/component version metadata. |
-| `requirements.txt` | Python dependencies. |
-| `config.json` | User configuration. |
-| `.env` | Local secrets and optional GitHub token. Created by `updater.py install` if missing. |
-| `resources/userdata/` | Persistent photos, thumbnails, cache, and generated user files. |
-| `runtime/` | Runtime state such as update state and temporary PIN data. |
-
----
-
-## What the Installer Does
-
-`install.sh` performs these steps:
-
-1. Requires root/sudo.
-2. Creates the `mementoframe` user if it does not already exist.
-3. Adds the user to only the required hardware groups: `video`, `input`, `gpio`, and `netdev`.
-4. Stops any existing MementoFrame split services early, before touching Wi-Fi/NetworkManager, so a previous install cannot interfere.
-5. Installs system dependencies, including Chromium, NetworkManager, X/Openbox, GPIO and WebP support, and `util-linux-extra` for the `hwclock` RTC utility.
-6. Enables NetworkManager, disables/masks `dhcpcd` if present, unblocks Wi-Fi with `rfkill`, and enables the Wi-Fi radio with `nmcli`.
-7. Configures display settings and enables the DS3231 RTC in `/boot/firmware/config.txt`.
-8. Configures quiet boot arguments in `/boot/firmware/cmdline.txt` while preserving the single-line format.
-9. Configures X permissions in `/etc/X11/Xwrapper.config` and masks `getty@tty1.service` to prevent login text flashing before Chromium starts.
-10. Downloads the selected GitHub Release, then copies the inner app folder to `/home/mementoframe/mementoframe`.
-11. Runs `python3 updater.py install` as the `mementoframe` user.
-12. Forces update settings in `config.json` so auto-update is enabled and the repository/channel match the installer selection.
-13. Creates `/usr/local/bin/mementoframe-kiosk.sh` with DPMS/screen blanking disabled and Raspberry Pi Chromium flags.
-14. Creates the split systemd services.
-15. Creates `/etc/sudoers.d/mementoframe-updater` with only the limited permissions required by Wi-Fi setup, updater restarts, and reboot.
-16. Enables and starts the services.
-17. Reboots automatically unless `SKIP_REBOOT=1` is set.
-
----
-
-## Directories
-
-| Path | Purpose |
-|---|---|
-| `/home/mementoframe/mementoframe` | Runtime app root. |
-| `/tmp/mementoframe-install-src` | Temporary extracted GitHub Release source used during install. |
-| `/home/mementoframe/mementoframe/resources/userdata` | Persistent user data. Preserved by updates. |
-| `/home/mementoframe/mementoframe/runtime` | Runtime update/config state. Preserved by updates. |
-| `/home/mementoframe/mementoframe/.env` | Local secrets and optional GitHub token. Preserved by updates. |
-| `/home/mementoframe/mementoframe_backups` | Update backups. |
-
----
-
-## Boot Display Configuration
-
-The installer does not replace `/boot/firmware/config.txt`. It creates a timestamped backup first, then preserves the existing Raspberry Pi settings and only ensures the MementoFrame display and DS3231 RTC keys.
-
-Backup examples:
-
-```text
-/boot/firmware/config.txt.mementoframe.bak.YYYYMMDD-HHMMSS
-/boot/firmware/cmdline.txt.mementoframe.bak.YYYYMMDD-HHMMSS
-/etc/X11/Xwrapper.config.mementoframe.bak.YYYYMMDD-HHMMSS
-```
-
-The installer ensures this global setting exists before section blocks such as `[cm4]`, `[cm5]`, or `[all]`:
-
-```ini
-dtoverlay=vc4-fkms-v3d
-```
-
-Inside the `[all]` section, it enables the I²C controller, selects the DS3231 RTC overlay, and ensures the values for the tested 1024×600 HDMI display and GPIO screen-enable pin:
-
-```ini
-[all]
-dtparam=i2c_arm=on
-dtoverlay=i2c-rtc,ds3231
-enable_uart=1
-disable_splash=1
-avoid_warnings=1
-gpu_mem=185
-gpio=26=op,dh
-hdmi_force_hotplug=1
-hdmi_group=2
-hdmi_mode=87
-hdmi_cvt=1024 600 60 6 0 0 0
-config_hdmi_boost=7
-```
-
-The installer updates an existing `i2c_arm` or `i2c-rtc` directive when necessary and preserves unrelated `dtparam` and `dtoverlay` entries. It also installs `util-linux-extra`, which provides the `hwclock` command on Raspberry Pi OS Bookworm and Trixie. After the reboot, the overlay makes the DS3231 available to Raspberry Pi OS through the kernel RTC driver, normally as `/dev/rtc0`. `util-linux-extra` supplies the userspace RTC utility; no separate RTC kernel module package is required.
-
-It also ensures `/boot/firmware/cmdline.txt` remains a single line. It removes earlier/undesired tokens such as `console=tty1`, `fsck.mode=skip`, `systemd.show_status=...`, `rd.systemd.show_status=...`, and `plymouth.ignore-serial-consoles`, then ensures these values:
-
-```text
-console=tty3 quiet splash loglevel=1 logo.nologo vt.global_cursor_default=0 consoleblank=0
-```
-
-`fsck.repair=yes` is preserved when already present. The installer does not add `fsck.mode=skip`, because skipping filesystem checks is less safe for Raspberry Pi devices that may lose power.
-
-And it writes `/etc/X11/Xwrapper.config`:
-
-```ini
-allowed_users=anybody
-needs_root_rights=yes
-```
-
-It also disables and masks the tty1 login prompt:
-
-```bash
-systemctl disable --now getty@tty1.service
-systemctl mask getty@tty1.service
-```
+Need a different release, repository, or development checkout? See [Automatic Installation Options and Technical Reference](#automatic-installation-options-and-technical-reference). If the installer cannot complete, use the [manual installation](#manual-installation-advanced).
 
 ---
 
 ## Post-Install Configuration
 
-After the Pi reboots, open the MementoFrame configuration dashboard:
+After the Pi reboots, open the MementoFrame configuration dashboard using the address that matches the frame's connection:
 
-- While connected to the MementoFrame setup hotspot: `http://192.168.4.1:5000`
-- After the frame joins your network: `http://mementoframe.local:5000` or `http://<frame-ip>:5000` [only if you added the wifi credentials on the official Raspberry Pi Imager configuration]
+| Connection | Dashboard address |
+|---|---|
+| Connected to the frame's `MementoFrame` setup hotspot | `http://192.168.4.1:5000` |
+| Frame already connected to your Wi-Fi | `http://mementoframe.local:5000` or `http://<frame-ip>:5000` |
+
+The network address is available immediately only when Wi-Fi credentials were added through Raspberry Pi Imager or the frame has connected previously. Otherwise, begin with the setup hotspot.
+
+### Finding and Opening the Dashboard
+
+The configuration QR code is normally shown in the system area of the frame's display. It always points to the dashboard at the frame's current IP address and port `5000`. Scan it with a phone connected to the same network as the frame.
+
+The Wi-Fi indicator beside the QR code shows which connection is ready:
+
+| Indicator | Meaning | What to do |
+|---|---|---|
+| **Green** | The frame is connected to a Wi-Fi network and has internet access. | Connect your phone or computer to that same network, then scan the updated QR code. |
+| **Blue** | The frame is in **AP (Access Point) mode**. The frame has created its own local Wi-Fi network because it is not connected to another network. | Connect your phone or computer to the open Wi-Fi network named `MementoFrame`, then scan the QR code or open `http://192.168.4.1:5000`. The dashboard PIN protects the configuration page even though the setup network is open. |
+
+#### Access During Night Mode
+
+The dashboard QR code is always shown while the display is on, except when the scheduled night mode has powered the display off. If the screen is off:
+
+1. Power the display off and on to wake it temporarily. It should remain visible for approximately one minute, allowing the network state and QR code to update.
+2. Wait for the Wi-Fi indicator to become **green** for a normal Wi-Fi connection or **blue** for AP mode.
+3. Scan the QR code only after the indicator and QR address have updated.
+
+#### Dashboard Security PIN
+
+Opening the configuration dashboard from a new browser or device requires a six-digit PIN. The PIN-entry page causes the frame's display to wake so the code can be read, including during night mode. If the screen does not wake or the PIN does not appear, refresh the PIN-entry page and check the display again. Note: The display takes a few seconds to power on.
+
+The PIN-entry page and the matching code on the frame look like this:
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/Instructions/MementoFrameConfiguration-PIN.png" alt="MementoFrame dashboard PIN request" width="380"/><br/><strong>Browser PIN request</strong></td>
+    <td align="center"><img src="docs/Instructions/MementoframeDisplayPinExample.png" alt="PIN displayed beside the Wi-Fi indicator on MementoFrame" width="260"/><br/><strong>PIN shown on the frame</strong></td>
+  </tr>
+</table>
+
+Enter the displayed PIN and select **Unlock**. The PIN is temporary and expires after 10 minutes. It disappears from the frame after a successful unlock. Each browser or device has its own locked session; when another browser needs access after the previous PIN was used or expired, MementoFrame generates a new PIN. This prevents a code observed earlier from providing permanent dashboard access.
 
 Configure the integrations in this order: **WeatherAPI key**, **Spotify app credentials**, and then the **Spotify user connection**. Spotify is optional; all other dashboard settings can be configured independently.
 
@@ -404,6 +254,8 @@ The following settings exist only in the MementoFrame dashboard; they do not req
 
 Choose a network, enter its password, and select **Connect**. The controls at the top of the page can reload the display, restart the frame, or turn the screen on.
 
+> **After selecting Connect:** the dashboard will stop responding or refreshing when the frame leaves AP mode and receives a new IP address. This is expected. Connect your phone or computer to the selected Wi-Fi network, wait for the frame's Wi-Fi indicator to turn **green**, and then scan the updated QR code on the display to reopen the dashboard at its new address. If the indicator remains **blue**, the connection was not completed and the frame is still in AP mode; reconnect your device to the `MementoFrame` Wi-Fi network and use `http://192.168.4.1:5000`.
+
 ![Wi-Fi and frame controls](docs/Instructions/MementoFrameConfiguration-Wi-Fi.png)
 
 #### Clocks
@@ -454,6 +306,213 @@ MEMENTOFRAME_UPDATE_REPO=MrBroccoliJP/MementoFrame
 ```
 
 Private GitHub repository updates require `GITHUB_TOKEN`. Never commit `.env` or share the Spotify client secret or WeatherAPI key.
+
+---
+
+## Automatic Installation Options and Technical Reference
+
+This section documents optional installer controls and the system changes made by the recommended installation. Most users do not need these details.
+
+### Tested Hardware
+
+| Component | Tested configuration |
+|---|---|
+| Raspberry Pi | Raspberry Pi 3B+ |
+| Operating system | Raspberry Pi OS Lite 13 (Trixie), 32-bit and 64-bit |
+| Python | Raspberry Pi OS system Python, tested with Python 3.13 |
+| Display | GeekPi 7-inch HDMI display, 1024×600 |
+
+### Software and Services Used
+
+- NetworkManager and `nmcli` for Wi-Fi and AP mode
+- Flask services for the configuration dashboard and display API
+- Chromium in kiosk mode
+- GPIO controls for display power and brightness
+- I²C and the Raspberry Pi RTC overlay for the DS3231 clock
+- `updater.py` for installation and GitHub Release updates
+- Separate systemd services for the configuration, display, network, kiosk, updater, and post-reboot checks
+- Pillow and system WebP libraries for photos and thumbnails
+
+### Installer Options
+
+Install a specific release tag:
+
+```bash
+sudo INSTALL_TAG=v1.25.22.21.21.13 bash install.sh
+```
+
+Install the newest non-draft pre-release or release instead of only the latest stable release:
+
+```bash
+sudo INSTALL_CHANNEL=pre-release bash install.sh
+```
+
+Skip the final reboot while developing or testing installer changes:
+
+```bash
+sudo SKIP_REBOOT=1 bash install.sh
+```
+
+Install from a fork or another repository:
+
+```bash
+sudo INSTALL_REPO=owner/repository bash install.sh
+```
+
+Use a local checkout instead of downloading a release:
+
+```bash
+sudo SRC_DIR="$(pwd)" bash install.sh
+```
+
+`SRC_DIR` must point to the repository root containing the inner `mementoframe/` application folder. This override is intended for development.
+
+### What the Installer Does
+
+`install.sh`:
+
+1. Requires root/sudo and creates the `mementoframe` user when needed.
+2. Adds the user to the required `video`, `input`, `gpio`, and `netdev` hardware groups.
+3. Stops an earlier MementoFrame installation before changing network settings.
+4. Installs Chromium, NetworkManager, X/Openbox, GPIO, WebP, RTC, and Python dependencies.
+5. Enables NetworkManager, handles conflicting `dhcpcd`, unblocks Wi-Fi, and enables its radio.
+6. Configures HDMI, quiet boot, X permissions, GPIO screen enable, and the DS3231 RTC.
+7. Downloads the selected GitHub Release to `/home/mementoframe/mementoframe` and runs `updater.py install`.
+8. Enables automatic updates using the selected repository and release channel.
+9. Creates the kiosk launcher, split systemd services, and limited sudo permissions.
+10. Enables the services and reboots unless `SKIP_REBOOT=1` is set.
+
+### Runtime Files
+
+| File | Purpose |
+|---|---|
+| `config_portal_service.py` | Configuration dashboard on port `5000`. |
+| `display_service.py` | Local display/frontend API on port `5001`. |
+| `network_manager_service.py` | NetworkManager Wi-Fi/AP fallback watchdog. |
+| `updater.py` | Installation, update, and post-reboot helper. |
+| `version_info.py` | Release and component version metadata. |
+| `requirements.txt` | Python dependencies. |
+| `config.json` | User configuration. |
+| `.env` | Local secrets and optional GitHub token. |
+| `resources/userdata/` | Persistent photos, thumbnails, cache, and generated files. |
+| `runtime/` | Runtime state, including update state and temporary PIN data. |
+
+### Directories
+
+| Path | Purpose |
+|---|---|
+| `/home/mementoframe/mementoframe` | Runtime application root. |
+| `/tmp/mementoframe-install-src` | Temporary extracted release source. |
+| `/home/mementoframe/mementoframe/resources/userdata` | Persistent user data preserved during updates. |
+| `/home/mementoframe/mementoframe/runtime` | Runtime state preserved during updates. |
+| `/home/mementoframe/mementoframe/.env` | Local secrets preserved during updates. |
+| `/home/mementoframe/mementoframe_backups` | Update backups. |
+
+### Boot Display Configuration
+
+The installer creates timestamped backups before editing the existing configuration:
+
+```text
+/boot/firmware/config.txt.mementoframe.bak.YYYYMMDD-HHMMSS
+/boot/firmware/cmdline.txt.mementoframe.bak.YYYYMMDD-HHMMSS
+/etc/X11/Xwrapper.config.mementoframe.bak.YYYYMMDD-HHMMSS
+```
+
+It preserves unrelated Raspberry Pi settings and ensures `dtoverlay=vc4-fkms-v3d` exists globally. Under `[all]`, it configures the DS3231 RTC, tested 1024×600 HDMI display, and GPIO screen-enable pin:
+
+```ini
+[all]
+dtparam=i2c_arm=on
+dtoverlay=i2c-rtc,ds3231
+enable_uart=1
+disable_splash=1
+avoid_warnings=1
+gpu_mem=185
+gpio=26=op,dh
+hdmi_force_hotplug=1
+hdmi_group=2
+hdmi_mode=87
+hdmi_cvt=1024 600 60 6 0 0 0
+config_hdmi_boost=7
+```
+
+The DS3231 normally becomes `/dev/rtc0` after reboot. `util-linux-extra` supplies the `hwclock` userspace utility.
+
+The installer keeps `/boot/firmware/cmdline.txt` on one line and ensures these quiet-boot values:
+
+```text
+console=tty3 quiet splash loglevel=1 logo.nologo vt.global_cursor_default=0 consoleblank=0
+```
+
+It preserves `fsck.repair=yes`, does not add the less-safe `fsck.mode=skip`, writes the following X wrapper configuration, and masks the tty1 login prompt:
+
+```ini
+allowed_users=anybody
+needs_root_rights=yes
+```
+
+```bash
+systemctl disable --now getty@tty1.service
+systemctl mask getty@tty1.service
+```
+
+---
+
+## Manual Installation (Advanced)
+
+Use this path when the automatic installer cannot complete or when you need to perform and diagnose each stage yourself. The automatic and manual methods are alternatives; do not run both for a normal installation.
+
+Install the operating-system dependencies and create the dedicated runtime user:
+
+```bash
+sudo apt update
+sudo apt install -y \
+  python3 python3-pip python3-venv git \
+  network-manager wireless-tools iw iproute2 rfkill curl ca-certificates \
+  chromium unclutter xserver-xorg xinit openbox x11-xserver-utils \
+  libjpeg-dev zlib1g-dev libwebp-dev webp util-linux-extra python3-rpi.gpio
+
+sudo adduser --disabled-password --gecos "MementoFrame" mementoframe || true
+sudo usermod -aG video,input,gpio,netdev mementoframe
+```
+
+Copy the repository's inner `mementoframe/` directory to the runtime location, then initialize it:
+
+```bash
+sudo mkdir -p /home/mementoframe/mementoframe
+sudo cp -a /path/to/release-or-checkout/mementoframe/. /home/mementoframe/mementoframe/
+sudo chown -R mementoframe:mementoframe /home/mementoframe/mementoframe
+
+cd /home/mementoframe/mementoframe
+sudo -u mementoframe python3 updater.py install
+```
+
+Replace `/path/to/release-or-checkout` with the extracted release or checkout root. The source must contain the inner `mementoframe/` application folder.
+
+Complete the same system integration performed by `install.sh`:
+
+1. Apply the settings in [Boot Display Configuration](#boot-display-configuration), preserving unrelated Raspberry Pi settings.
+2. Configure NetworkManager and disable conflicting `dhcpcd` management if it is present.
+3. Create the five units listed under [Services](#services).
+4. Add the limited permissions described in [Update/Reboot/Wi-Fi Permissions](#updaterebootwi-fi-permissions).
+5. Enable the services and reboot.
+
+For the RTC, ensure these directives are present under `[all]` in `/boot/firmware/config.txt`:
+
+```ini
+[all]
+dtparam=i2c_arm=on
+dtoverlay=i2c-rtc,ds3231
+```
+
+After rebooting, confirm that Raspberry Pi OS created the RTC device:
+
+```bash
+ls -l /dev/rtc*
+sudo hwclock --show
+```
+
+If the automatic installer failed only because packages were missing, install the dependencies above and rerun `sudo bash install.sh` instead of continuing with the fully manual path.
 
 ---
 
