@@ -157,11 +157,12 @@ art and applies it across the interface for a coordinated theme.
 
 ### Bill of Materials
 
-The following electronic and display components are used for one MementoFrame.
+The following frame, electronic, and display components are used for one MementoFrame.
 Printed parts and their fasteners are listed separately in the next section.
 
 | Component | Quantity | Specification / purpose |
 |---|---:|---|
+| Wooden photo frame | 1 | Store-bought frame for a 130 × 180 mm (13 × 18 cm, approximately 5 × 7 inch) photo. The supplied 3D files are designed around the dimensions documented below. |
 | Raspberry Pi 3B+ | 1 | Main computer running the MementoFrame software. |
 | EP-0170 display | 1 | Commonly sold as the GeeekPi 7-inch Raspberry Pi LCD; 1024 × 600 IPS panel. |
 | DS3231 RTC module | 1 | Battery-backed real-time clock for retaining the time while disconnected from power. |
@@ -187,6 +188,35 @@ one print of each design. Ready-to-print STL files are in [`hardware/stl`](hardw
 and the editable Fusion 360 archive is available at
 [`hardware/source/MementoFrame.f3z`](hardware/source/MementoFrame.f3z).
 
+#### Wooden Frame Compatibility
+
+The supplied 3D files were designed for a store-bought wooden frame intended
+for a 130 × 180 mm (13 × 18 cm, approximately 5 × 7 inch) photo. A different frame can be used to suit individual
+needs or preferences, but the fit must be checked and the 3D models may need to
+be adjusted accordingly.
+
+| Measurement | Reference frame |
+|---|---:|
+| Nominal photo size | 130 × 180 mm (13 × 18 cm / 5 × 7 inches) |
+| Visible front opening | Approximately 120 × 170 mm (not important due to the display bezel) |
+| Outside wooden-frame dimensions | 218 × 169 mm |
+| Approximate front wooden bezel | 24.25 mm |
+| Rear opening for inserting the photo/display | 130 × 181 mm |
+| Approximate rear bezel | 20 mm |
+| Minimum rear bezel required for back-cover mounting points | 10 mm |
+| Overall frame depth | 18 mm |
+| Available internal depth | 9.5 mm |
+| Glass thickness | 1.6 mm |
+
+The original glass is reused. The display sits against the glass, with the
+printed assembly installed behind it. The original back is discarted.
+
+> **Wall-mounting limitation:** The current design is intended for use with
+> the printed stand. It cannot sit flush against a wall because the DC barrel
+> jack protrudes from the rear. Wall mounting requires changes to the 3D files
+> to relocate or recess the power connector and provide suitable mounting
+> points.
+
 #### Assembly Layout
 
 <p align="center">
@@ -194,6 +224,23 @@ and the editable Fusion 360 archive is available at
   <br/>
   <strong>Internal mounting layout</strong> — display holder, electronics holder, and left/right Raspberry Pi brackets.
 </p>
+
+The display is secured by integrated clips on the 3D-printed display holder.
+The holder uses different side offsets to compensate for the display's uneven
+physical bezel and center the visible LCD area within the wooden frame opening.
+Display orientation is therefore important: align the thicker and thinner
+bezel edges with the corresponding sides of the holder. Before engaging all
+clips or closing the frame's metal tabs, inspect the frame from the front and
+confirm that the active LCD area—not the outside edge of the display board—is
+centered in the visible opening.
+
+The display holder is then retained inside the wooden frame by the frame's
+original metal tabs—the same tabs normally used to hold the glass, photo, and
+backing board. The display holder therefore needs no adhesive or additional
+fasteners of its own.
+
+The back cover sits over the completed electronics assembly and is secured
+directly to the rear wooden bezel with four 3 × 10 mm wood screws.
 
 The DC power-filter board, DS3231 RTC module, and both Mini-560 DC-DC buck
 converters press-fit into their dedicated positions on the 3D-printed
@@ -213,6 +260,7 @@ In addition to the printed parts, one complete assembly requires:
 | Fastener | Quantity | Used for |
 |---|---:|---|
 | M3 × 10 mm screws | 8 | Electronics holder and left/right Raspberry Pi brackets |
+| 3 × 10 mm wood screws | 4 | Securing the back cover to the wooden frame |
 | 5 × 10 mm wood screws or M5 × 10 mm screws | 2 | Attaching the stand |
 
 Use the fastener type appropriate for the stand mounting holes and the material
@@ -222,10 +270,10 @@ the screws engage. Do not overtighten screws against the printed parts.
 
 | Part | STL file | Quantity | Purpose |
 |---|---|---:|---|
-| Display holder | [`display_holder.stl`](hardware/stl/display_holder.stl) | 1 | Main structure for the display, electronics holder, Pi brackets, and rear enclosure. Fits the wooden frame using its original retaining clips. |
+| Display holder | [`display_holder.stl`](hardware/stl/display_holder.stl) | 1 | Holds the display with integrated clips. Its side offsets compensate for the uneven display bezel and center the visible LCD. The complete holder is retained by the wooden frame's original metal tabs. |
 | Electronics holder | [`electronics_holder.stl`](hardware/stl/electronics_holder.stl) | 1 | Press-fit mounting for both DC buck converters, the power-filter board, and the RTC module; also organizes the wiring. |
 | Raspberry Pi brackets | [`raspberry_pi_bracket_L.stl`](hardware/stl/raspberry_pi_bracket_L.stl) and [`raspberry_pi_bracket_R.stl`](hardware/stl/raspberry_pi_bracket_R.stl) | 1 left, 1 right | Secures the Raspberry Pi while preserving connector access and airflow. |
-| Back cover | [`back_cover.stl`](hardware/stl/back_cover.stl) | 1 | Protects the electronics and wiring while providing ventilation and access openings. |
+| Back cover | [`back_cover.stl`](hardware/stl/back_cover.stl) | 1 | Protects the electronics and wiring while providing ventilation and access openings. Secures to the wooden frame with four 3 × 10 mm wood screws. |
 | Stand | [`stand.stl`](hardware/stl/stand.stl) | 1 | Supports the frame at a suitable viewing angle and attaches with two screws. |
 
 ### GPIO Connections
@@ -293,7 +341,7 @@ Raspberry Pi. The switch can remain installed for future troubleshooting.
     <td align="center"><img src="docs/Renders/Memento_Frame_Back_without_Cover.png" alt="MementoFrame back view without cover" width="260"/><br/><strong>Back without cover</strong></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/Renders/Memento_Frame_Bezel.png" alt="MementoFrame bezel" width="260"/><br/><strong>Bezel</strong></td>
+    <td align="center"><img src="docs/Renders/Memento_Frame_Bezel.png" alt="MementoFrame display holder" width="260"/><br/><strong>Display holder</strong></td>
     <td align="center"><img src="docs/Renders/Memento_Frame_middleFrame.png" alt="MementoFrame middle frame" width="260"/><br/><strong>Middle frame</strong></td>
     <td></td>
   </tr>
@@ -612,6 +660,14 @@ Special thanks to:
       </a>
     </td>
     <td>Weather information displayed by MementoFrame.</td>
+  </tr>
+  <tr>
+    <td align="center" width="220">
+      <a href="https://www.spotify.com/">
+        <img src="https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Full_Logo_RGB_Green.png" alt="Spotify" width="180"/>
+      </a>
+    </td>
+    <td>Playback information, album artwork, and music integration used by the MementoFrame display interface.</td>
   </tr>
 </table>
 
