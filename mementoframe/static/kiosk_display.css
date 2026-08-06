@@ -350,6 +350,7 @@ body {
   flex-direction: row;
 }
 .second_row {
+  height: 90px;
   min-height: 90px;
   max-height: 90px;
   max-width: 100%;
@@ -358,6 +359,14 @@ body {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
+  transition: height 0.45s ease,
+    min-height 0.45s ease,
+    max-height 0.45s ease;
+}
+.second_row.weather-row-collapsed {
+  height: 0;
+  min-height: 0;
+  max-height: 0;
 }
 .hidden {
   opacity: 0 !important;

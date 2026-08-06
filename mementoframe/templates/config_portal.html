@@ -280,6 +280,9 @@
     <details class="section">
       <summary>☁️ Weather Configuration</summary>
       <form action="{{ url_for('save_weather_api') }}" method="POST">
+        {% if weather_msg %}
+        <div class="message">{{ weather_msg }}</div>
+        {% endif %}
         <label>WeatherAPI.com Key</label>
         <input type="password" name="weather_api_key" placeholder="Enter your API key"
           value="{{ config.weather_api_key or '' }}">
@@ -290,6 +293,9 @@
         <p class="current-setting">Currently set to: <strong>{{ config.weather_region }}</strong></p>
         {% endif %}
         <button type="submit">Save Weather Settings</button>
+      </form>
+      <form action="{{ url_for('weather_refresh') }}" method="POST">
+        <button type="submit">Refresh Weather Now</button>
       </form>
     </details>
 

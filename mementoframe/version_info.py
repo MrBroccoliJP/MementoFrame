@@ -35,13 +35,13 @@ COMPONENTS = {
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 27, #Wi-Fi/AP fallback watchdog improvements, on reconnection attempts
+        "version": 28, #weather refresh button
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 28, #added alert filter for portuguese language (my local)
+        "version": 29, #weather refresh button 
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
