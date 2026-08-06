@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 51, # spotify player improvements, text scroll and extraction of two colors to have a gradient background, and other minor improvements
+        "version": 52, # spotify player improvements, extract album colour after resume playback
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
