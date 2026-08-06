@@ -40,6 +40,67 @@ MementoFrame is a self-contained smart photo frame platform built around a Raspb
 
 The system boots directly into a Chromium kiosk interface while remaining configurable from another device on the same network or on the fallback AP.
 
+### Display Interface
+
+<p align="center">
+  <img src="docs/FrontendExample_Default_big.png" alt="MementoFrame default full-frame photo layout with clocks, current weather, weekly calendar, system controls, and configuration QR code" width="900"/>
+  <br/>
+  <strong>Default full-frame view</strong> — photo slideshow, clocks, current weather, weekly calendar, system status, and configuration QR code.
+</p>
+
+#### Expanded Widget Layouts
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/FrontendExample_Default.png" alt="MementoFrame default widget layout with clocks, date, current weather, weekly calendar, and system controls" width="200"/><br/><strong>Default widgets</strong></td>
+    <td align="center"><img src="docs/FrontendExample_Five-hour_forecast.png" alt="MementoFrame expanded five-hour weather forecast layout" width="200"/><br/><strong>Five-hour forecast</strong></td>
+    <td align="center"><img src="docs/FrontendExample_Five-Day_Forecast.png" alt="MementoFrame expanded five-day weather forecast layout" width="200"/><br/><strong>Five-day forecast*</strong></td>
+    <td align="center"><img src="docs/FrontendExample_Large_monthly_calendar.png" alt="MementoFrame large monthly calendar layout" width="200"/><br/><strong>Large monthly calendar</strong></td>
+  </tr>
+</table>
+
+*The mock environment provides five daily forecast entries for layout testing.
+The current production configuration displays three days because that is the
+forecast range available from its WeatherAPI.com plan.
+
+#### Full Interface Examples
+
+<p align="center">
+  <img src="docs/Frontend_Example.png" alt="Example MementoFrame display interface showing a photo, two clocks, date, weather, Spotify playback, network status, update status, and configuration QR code" width="900"/>
+  <br/>
+  <strong>Spotify-focused view</strong> — clocks, current weather, large Spotify playback, system status, and configuration QR code.
+</p>
+
+<p align="center">
+  <img src="docs/Frontend_Example2.png" alt="Example MementoFrame display interface showing a photo, clocks, date, weather warning, weekly forecast, hourly forecast, Spotify playback, network status, update status, and configuration QR code" width="900"/>
+  <br/>
+  <strong>Forecast and Spotify view</strong> — weather alert, weekly and hourly forecasts, compact Spotify playback, system status, and configuration QR code.
+</p>
+
+Displayed widgets and their layout depend on the saved configuration and the
+data currently available from connected services.
+
+#### Automatic Layout Modes
+
+MementoFrame chooses layouts automatically according to Spotify playback,
+forecast availability, and its current display cycle:
+
+| State | Modes shown |
+|---|---|
+| Normal display | Weekly calendar by default; compact five-hour forecast once during each five-minute cycle when forecast data is available. |
+| Spotify playing | Large Spotify player by default; once during each five-minute cycle it changes to compact Spotify with the weekly calendar and compact five-hour forecast. |
+| Expanded mode | Starts after a 30-minute interval and remains active for up to 10 minutes. It rotates between the large five-hour forecast, large five-day forecast, and large monthly calendar; Spotify playback temporarily interrupts it. |
+| Forecast unavailable | Forecast modes are skipped and the corresponding weekly or monthly calendar remains visible instead. |
+
+The photo slideshow, clocks, date, current-weather card, network status, update
+status, and configuration QR code continue to appear wherever the selected
+layout has space for them. The interface also swaps sides once per hour to vary
+the presentation and reduce prolonged use of the same screen area.
+
+Interface accent colors cycle automatically through a randomized palette. When
+Spotify is playing, the player derives the accent color from the current album
+art and applies it across the interface for a coordinated theme.
+
 ### Project Photos
 
 <table>
@@ -398,6 +459,13 @@ MementoFrame/
 │   ├── Photos/
 │   ├── Renders/
 │   ├── Wiring/
+│   ├── Frontend_Example.png
+│   ├── Frontend_Example2.png
+│   ├── FrontendExample_Five-hour_forecast.png
+│   ├── FrontendExample_Five-Day_Forecast.png
+│   ├── FrontendExample_Large_monthly_calendar.png
+│   ├── FrontendExample_Default.png
+│   ├── FrontendExample_Default_big.png
 │   └── logo.png
 ├── hardware/
 │   ├── source/
