@@ -7,8 +7,6 @@ import { state } from "../state.js";
 import { PATHS, INTERVALS, SELECTORS } from "../constants.js";
 import { $, fetchJson } from "../utils.js";
 
-let lastWeatherAt = null;
-const STALE = 2 * 60 * 60 * 1000;
 const WEATHER_ALERT_CYCLE_MS = 5 * 60 * 1000;
 const WEATHER_ALERT_VISIBLE_MS = 60 * 1000;
 
@@ -59,19 +57,14 @@ export async function updateWeather() {
     currentWeatherAlerts = [];
     if (tEl)  tEl.textContent = "--°C";
     applyWeatherContainerDisplay();
-    if (!lastWeatherAt || Date.now() - lastWeatherAt > STALE) {
-      if (box) box.style.display = "none";
-      clearForecasts();
-    }
-    return;
+    // The local display service remains reachable while internet access is
+    // down and owns the decision to serve cached data or mark it unavailable.
   }
 
   const data = await fetchJson(PATHS.WEATHER);
-  if (!data || data.error) {
-    if (!lastWeatherAt || Date.now() - lastWeatherAt > STALE) {
-      if (box) box.style.display = "none";
-      clearForecasts();
-    }
+  if (!data) return;
+  if (data.available === false) {
+    hideWeatherImmediately();
     return;
   }
 
@@ -82,7 +75,6 @@ export async function updateWeather() {
 
   if (tEl) tEl.textContent = `${data.temperature}°C`;
 
-  lastWeatherAt = Date.now();
   if (box) box.style.display = "flex";
   applyWeatherContainerDisplay();
   scheduleWeatherConditionScrollRefresh();
@@ -98,6 +90,20 @@ export async function updateWeather() {
   } else {
     clearForecasts(false);
   }
+}
+
+/**
+ * Hide weather when the backend reports that no usable current or cached data
+ * remains. Weather freshness is deliberately owned by the backend.
+ */
+export function hideWeatherImmediately() {
+  const box = $(SELECTORS.weatherBox);
+  currentWeatherCondition = "";
+  currentWeatherIconUrl = PATHS.WEATHER_OFFLINE_ICON;
+  currentWeatherUvIconUrl = null;
+  currentWeatherAlerts = [];
+  if (box) box.style.display = "none";
+  clearForecasts();
 }
 
 function hasValidForecast(forecast) {

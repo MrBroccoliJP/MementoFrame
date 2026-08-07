@@ -967,7 +967,7 @@ def real_weather_payload() -> dict[str, Any]:
     key = cfg.get("weather_api_key") or os.getenv("WEATHER_API_KEY")
     location = cfg.get("weather_region") or "Porto"
     if not key:
-        return {"error": "Weather API key not configured", "source": "real"}
+        return {"available": False, "stale": False, "error": "Weather API key not configured", "source": "real"}
     try:
         import requests
         res = requests.get(
@@ -988,6 +988,9 @@ def real_weather_payload() -> dict[str, Any]:
         is_day = bool(int(current.get("is_day", 1)))
         uv = current.get("uv")
         payload = {
+            "available": True,
+            "stale": False,
+            "fetchedAt": int(time.time() * 1000),
             "temperature": round(float(current["temp_c"]), 1),
             "condition": current_condition.get("text", ""),
             "conditionCode": code,
@@ -1006,7 +1009,7 @@ def real_weather_payload() -> dict[str, Any]:
             payload["forecast"] = forecast
         return payload
     except Exception as exc:
-        return {"error": f"Weather request failed: {exc}", "source": "real"}
+        return {"available": False, "stale": False, "error": f"Weather request failed: {exc}", "source": "real"}
 
 
 def weather_payload() -> dict[str, Any]:
@@ -1015,7 +1018,12 @@ def weather_payload() -> dict[str, Any]:
     if weather.get("source") == "real":
         return real_weather_payload()
     if not weather.get("enabled", True):
-        return {"error": "Mock weather disabled", "source": "mock"}
+        return {
+            "available": False,
+            "stale": False,
+            "error": "Mock weather disabled",
+            "source": "mock",
+        }
 
     code = int(weather.get("conditionCode") or 1000)
     is_day = bool(weather.get("isDay", True))
@@ -1023,6 +1031,9 @@ def weather_payload() -> dict[str, Any]:
     moon_phase = weather.get("moonPhase") or "Waxing Crescent"
 
     payload = {
+        "available": True,
+        "stale": False,
+        "fetchedAt": int(time.time() * 1000),
         "temperature": round(float(weather.get("temperature", 0)), 1),
         "condition": weather.get("condition", "Clear"),
         "conditionCode": code,

@@ -46,6 +46,7 @@ from mock_shared import (
 
 app = Flask(__name__, template_folder=str(TEMPLATES_DIR), static_folder=str(STATIC_DIR), static_url_path="/static")
 CORS(app)
+weather_refresh_revision = 0
 
 
 def bool_form(name: str) -> bool:
@@ -132,7 +133,22 @@ def spotify_status():
 @app.route("/weather.json")
 def weather_status():
     payload = weather_payload()
-    return (jsonify(payload), 503) if payload.get("error") else jsonify(payload)
+    return jsonify(payload)
+
+
+@app.route("/weather/refresh", methods=["POST"])
+def weather_refresh():
+    global weather_refresh_revision
+    payload = weather_payload()
+    if not payload.get("available"):
+        weather_refresh_revision += 1
+        return jsonify({"status": "error", "message": payload["error"]}), 503
+    weather_refresh_revision += 1
+    return jsonify({
+        "status": "ok",
+        "message": "Mock weather information refreshed.",
+        "weather": payload,
+    })
 
 
 @app.route("/config_portal_pin.json")
@@ -213,20 +229,28 @@ def update_install():
 
 @app.route("/config/stream")
 def config_stream():
-    watched = [CONFIG_FILE, PHOTO_JSON]
+    watched = {CONFIG_FILE: "config", PHOTO_JSON: "reload"}
     def event_stream():
+        last_weather_revision = weather_refresh_revision
         mtimes = {str(f): f.stat().st_mtime if f.exists() else 0 for f in watched}
         yield "data: ready\n\n"
         while True:
             time.sleep(1)
-            changed = False
-            for f in watched:
+            events = []
+            for f, event_name in watched.items():
                 key = str(f)
                 mtime = f.stat().st_mtime if f.exists() else 0
                 if mtime != mtimes.get(key):
                     mtimes[key] = mtime
-                    changed = True
-            yield "data: reload\n\n" if changed else ": heartbeat\n\n"
+                    events.append(event_name)
+            if weather_refresh_revision != last_weather_revision:
+                last_weather_revision = weather_refresh_revision
+                events.append("weather")
+            if events:
+                for event_name in dict.fromkeys(events):
+                    yield f"data: {event_name}\n\n"
+            else:
+                yield ": heartbeat\n\n"
     return Response(event_stream(), mimetype="text/event-stream")
 
 
