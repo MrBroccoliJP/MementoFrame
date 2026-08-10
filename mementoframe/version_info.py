@@ -35,7 +35,7 @@ COMPONENTS = {
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 27, #Wi-Fi/AP fallback watchdog improvements, on reconnection attempts
+        "version": 28, #Added show_dialog=true to spotify authentication URL to force login prompt
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },

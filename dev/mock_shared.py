@@ -420,6 +420,7 @@ def get_spotify_oauth():
         client_secret=client_secret,
         redirect_uri=redirect_uri,
         scope="user-read-playback-state user-read-currently-playing user-library-read",
+        show_dialog=True,
         cache_path=str(SPOTIFY_CACHE),
         open_browser=False,
     )

@@ -687,6 +687,7 @@ def get_spotify_oauth():
         client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
         redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
         scope="user-read-playback-state user-read-currently-playing user-library-read",
+        show_dialog=True,
         cache_path=SPOTIFY_CACHE
     )
 
