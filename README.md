@@ -562,7 +562,8 @@ MementoFrame/
 | `/save_clock_settings` | Save clock configuration |
 | `/save_display_settings` | Save brightness settings |
 | `/save_auto_power` | Save power schedule |
-| `/save_weather_api` | Save WeatherAPI configuration |
+| `/save_weather_api` | Save Open-Meteo, WeatherAPI, or Google Weather configuration |
+| `/weather/geocode` | Parse a configured city/region/country into coordinates |
 | `/update/status` | Return updater state |
 | `/update/check` | Check for updates |
 | `/update/install` | Start update |

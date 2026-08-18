@@ -23,8 +23,25 @@
       select.disabled = !checkbox.checked;
     }
 
+    function toggleWeatherProvider() {
+      const provider = document.querySelector('input[name="weather_provider"]:checked')?.value || 'openmeteo';
+      document.getElementById('weatherapi_settings')?.toggleAttribute('hidden', provider !== 'weatherapi');
+      document.getElementById('google_key_settings')?.toggleAttribute('hidden', provider !== 'google');
+      document.getElementById('coordinate_weather_settings')?.toggleAttribute('hidden', !['google', 'openmeteo'].includes(provider));
+      updateWeatherSaveState();
+    }
+
+    function updateWeatherSaveState() {
+      const provider = document.querySelector('input[name="weather_provider"]:checked')?.value || 'openmeteo';
+      const saveButton = document.getElementById('save_weather_settings');
+      const latitude = document.getElementById('weather_latitude')?.value;
+      const longitude = document.getElementById('weather_longitude')?.value;
+      if (saveButton) saveButton.disabled = provider !== 'weatherapi' && (!latitude || !longitude);
+    }
+
     window.addEventListener("DOMContentLoaded", () => {
       toggleClock2Region();
+      toggleWeatherProvider();
       const now = new Date();
       document.getElementById("manual_date")?.setAttribute("value", now.toISOString().split("T")[0]);
       document.getElementById("manual_time")?.setAttribute("value", now.toTimeString().slice(0, 5));
@@ -279,17 +296,56 @@
     <!-- Weather -->
     <details class="section">
       <summary>☁️ Weather Configuration</summary>
-      <form action="{{ url_for('save_weather_api') }}" method="POST">
-        <label>WeatherAPI.com Key</label>
-        <input type="password" name="weather_api_key" placeholder="Enter your API key"
-          value="{{ config.weather_api_key or '' }}">
-        <label>Region / City</label>
-        <input type="text" name="weather_region" placeholder="e.g. Lisbon, London, Shanghai"
-          value="{{ config.weather_region or '' }}">
-        {% if config.weather_region %}
-        <p class="current-setting">Currently set to: <strong>{{ config.weather_region }}</strong></p>
-        {% endif %}
-        <button type="submit">Save Weather Settings</button>
+      <form id="weather_settings_form" action="{{ url_for('save_weather_api') }}" method="POST">
+        <fieldset class="provider-switch">
+          <legend>Weather provider</legend>
+          <label><input type="radio" name="weather_provider" value="openmeteo"
+            {% if (config.weather_provider or 'openmeteo') == 'openmeteo' %}checked{% endif %}
+            onchange="toggleWeatherProvider()"> Open-Meteo</label>
+          <label><input type="radio" name="weather_provider" value="weatherapi"
+            {% if config.weather_provider == 'weatherapi' %}checked{% endif %}
+            onchange="toggleWeatherProvider()"> WeatherAPI.com</label>
+          <label><input type="radio" name="weather_provider" value="google"
+            {% if config.weather_provider == 'google' %}checked{% endif %}
+            onchange="toggleWeatherProvider()"> Google Weather</label>
+        </fieldset>
+
+        <div id="weatherapi_settings">
+          <label>WeatherAPI.com Key</label>
+          <input type="password" name="weather_api_key" placeholder="Enter your WeatherAPI key"
+            value="{{ config.weather_api_key or '' }}">
+          <label>Location</label>
+          <input type="text" name="weather_region" placeholder="e.g. Lisbon, Portugal"
+            value="{{ config.weather_region or '' }}">
+        </div>
+
+        <div id="google_key_settings" hidden>
+          <label>Google Weather API Key</label>
+          <input type="password" name="google_weather_api_key" placeholder="Enter your Google API key"
+            value="{{ config.google_weather_api_key or '' }}">
+        </div>
+
+        <div id="coordinate_weather_settings" hidden>
+          <label>City</label>
+          <input id="weather_city" type="text" name="weather_city" placeholder="e.g. Aveiro" value="{{ config.weather_city or '' }}">
+          <label>Region / State</label>
+          <input id="weather_state" type="text" name="weather_state" placeholder="e.g. Aveiro" value="{{ config.weather_region or '' }}">
+          <label>Country</label>
+          <input id="weather_country" type="text" name="weather_country" placeholder="e.g. Portugal" value="{{ config.weather_country or '' }}">
+          <input id="weather_latitude" type="hidden" name="weather_latitude" value="{{ config.weather_latitude if config.weather_latitude is not none else '' }}">
+          <input id="weather_longitude" type="hidden" name="weather_longitude" value="{{ config.weather_longitude if config.weather_longitude is not none else '' }}">
+          <input id="weather_location_name" type="hidden" name="weather_location_name" value="{{ config.weather_location_name or '' }}">
+          <button id="parse_weather_coordinates" type="button">Parse Coordinates</button>
+          <p id="weather_coordinate_status" class="current-setting" aria-live="polite">
+            {% if config.weather_latitude is not none and config.weather_longitude is not none %}
+            Resolved coordinates: <strong>{{ config.weather_latitude }}, {{ config.weather_longitude }}</strong>
+            {% else %}
+            Coordinates have not been parsed yet.
+            {% endif %}
+          </p>
+          <p class="setting-hint">Google Weather and Open-Meteo use these coordinates. Location lookup by OpenStreetMap contributors (ODbL). Coordinates are saved and reused; no periodic geocoding is performed.</p>
+        </div>
+        <button id="save_weather_settings" type="submit">Save Weather Settings</button>
       </form>
     </details>
 
@@ -504,6 +560,12 @@
       const uploadInput = document.getElementById("photo_upload_input");
       const uploadButton = document.getElementById("photo_upload_button");
       const uploadStatus = document.getElementById("photo_upload_status");
+      const weatherForm = document.getElementById("weather_settings_form");
+      const parseCoordinatesButton = document.getElementById("parse_weather_coordinates");
+      const coordinateStatus = document.getElementById("weather_coordinate_status");
+      const latitudeInput = document.getElementById("weather_latitude");
+      const longitudeInput = document.getElementById("weather_longitude");
+      const locationNameInput = document.getElementById("weather_location_name");
 
       function setPortalStatus(message, kind = "ok") {
         if (!saveStatus) return;
@@ -546,7 +608,8 @@
           });
 
           if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.message || errorData.error || `HTTP ${response.status}`);
           }
 
           setPortalStatus(button?.dataset.doneText || "Saved.", "ok");
@@ -556,8 +619,64 @@
           return false;
         } finally {
           setButtonBusy(button, false);
+          if (form === weatherForm) updateWeatherSaveState();
         }
       }
+
+      function invalidateWeatherCoordinates() {
+        if (latitudeInput) latitudeInput.value = "";
+        if (longitudeInput) longitudeInput.value = "";
+        if (locationNameInput) locationNameInput.value = "";
+        if (coordinateStatus) coordinateStatus.textContent = "Coordinates have not been parsed for this location yet.";
+        updateWeatherSaveState();
+      }
+
+      async function parseWeatherCoordinates() {
+        if (!weatherForm || !parseCoordinatesButton) return;
+
+        invalidateWeatherCoordinates();
+        setButtonBusy(parseCoordinatesButton, true, "Parsing coordinatesâ€¦");
+        if (coordinateStatus) coordinateStatus.textContent = "Looking up the location with OpenStreetMapâ€¦";
+
+        const lookupData = new FormData();
+        lookupData.set("weather_city", document.getElementById("weather_city")?.value || "");
+        lookupData.set("weather_state", document.getElementById("weather_state")?.value || "");
+        lookupData.set("weather_country", document.getElementById("weather_country")?.value || "");
+
+        try {
+          const response = await fetch("/weather/geocode", {
+            method: "POST",
+            body: lookupData,
+            headers: { "X-Requested-With": "fetch" },
+            cache: "no-store"
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.status === "error") {
+            throw new Error(data.message || data.error || `HTTP ${response.status}`);
+          }
+
+          latitudeInput.value = String(data.latitude);
+          longitudeInput.value = String(data.longitude);
+          locationNameInput.value = data.display_name || "";
+          if (coordinateStatus) {
+            coordinateStatus.textContent = `Resolved coordinates: ${data.latitude}, ${data.longitude}`;
+          }
+          setPortalStatus("Coordinates parsed. Weather settings can now be saved.", "ok");
+        } catch (error) {
+          invalidateWeatherCoordinates();
+          if (coordinateStatus) coordinateStatus.textContent = `Coordinate lookup failed: ${error.message || error}`;
+          setPortalStatus(`Coordinate lookup failed: ${error.message || error}`, "error");
+        } finally {
+          setButtonBusy(parseCoordinatesButton, false);
+          updateWeatherSaveState();
+        }
+      }
+
+      ["weather_city", "weather_state", "weather_country"].forEach((id) => {
+        document.getElementById(id)?.addEventListener("input", invalidateWeatherCoordinates);
+      });
+      parseCoordinatesButton?.addEventListener("click", parseWeatherCoordinates);
+      updateWeatherSaveState();
 
       function setUploadUi(label, disabled, message) {
         if (uploadButton) {

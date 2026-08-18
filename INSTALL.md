@@ -127,7 +127,7 @@ The PIN-entry page and the matching code on the frame look like this:
 
 Enter the displayed PIN and select **Unlock**. The PIN is temporary and expires after 10 minutes. It disappears from the frame after a successful unlock. Each browser or device has its own locked session; when another browser needs access after the previous PIN was used or expired, MementoFrame generates a new PIN. This prevents a code observed earlier from providing permanent dashboard access.
 
-Configure the integrations in this order: **WeatherAPI key**, **Spotify app credentials**, and then the **Spotify user connection**. Spotify is optional; all other dashboard settings can be configured independently.
+Configure weather first, then **Spotify app credentials** and the **Spotify user connection** if wanted. New installs default to keyless Open-Meteo; WeatherAPI and Google Weather remain optional alternatives.
 
 This guide uses two kinds of configuration pages:
 
@@ -138,7 +138,19 @@ This guide uses two kinds of configuration pages:
 
 The external dashboards do not configure the frame directly. You first create or configure a value on the external website, then copy that value into the MementoFrame dashboard.
 
-### 1. WeatherAPI
+### 1. Weather
+
+Under **Weather Configuration**, choose exactly one provider:
+
+| Provider | Setup |
+|---|---|
+| **Open-Meteo (default)** | Enter city, region, and country; parse coordinates; save. No API key is required. |
+| **WeatherAPI.com** | Enter a WeatherAPI key and location. |
+| **Google Weather** | Enter a Google Weather API key; enter the location; parse coordinates; save. |
+
+For Open-Meteo or Google Weather, select **Parse Coordinates** before saving. MementoFrame performs one user-triggered OpenStreetMap lookup and stores the coordinates for subsequent forecasts.
+
+#### Optional WeatherAPI setup
 
 The weather setup begins on the external WeatherAPI website and finishes on the frame:
 

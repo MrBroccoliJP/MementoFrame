@@ -210,6 +210,50 @@ input[type="checkbox"] {
   accent-color: var(--accent-color);
 }
 
+input[type="radio"] {
+  width: auto;
+  min-height: 0;
+  margin-right: 0.45rem;
+  accent-color: var(--accent-color);
+}
+
+.provider-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--field-border);
+  border-radius: 14px;
+}
+
+.provider-switch legend {
+  padding: 0 0.4rem;
+  color: var(--muted-text);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.provider-switch label {
+  color: var(--accent-text);
+}
+
+#weatherapi_settings,
+#google_key_settings,
+#coordinate_weather_settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+#weatherapi_settings[hidden],
+#google_key_settings[hidden],
+#coordinate_weather_settings[hidden] {
+  display: none;
+}
+
 input[type="range"] {
   padding-left: 0;
   padding-right: 0;

@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 5 
+RELEASE_COUNTER = 6
 
 VERSION_ORDER = [
     "frontend",
@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 52, # spotify player improvements, extract album colour after resume playback
+        "version": 53, # Open-Meteo provider controls and coordinate workflow
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 28, #Added show_dialog=true to spotify authentication URL to force login prompt
+        "version": 29, # Open-Meteo configuration, geocoding, and provider persistence
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 28, #added alert filter for portuguese language (my local)
+        "version": 29, # Open-Meteo current and forecast adapter
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

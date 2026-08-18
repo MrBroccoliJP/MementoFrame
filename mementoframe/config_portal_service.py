@@ -25,7 +25,8 @@ Endpoints:
     POST     /save_clock_settings      - Save dashboard clock settings.
     POST     /save_display_settings    - Save brightness/display settings.
     POST     /save_auto_power          - Save automatic screen power schedule.
-    POST     /save_weather_api         - Save WeatherAPI key and region.
+    POST     /save_weather_api         - Save weather provider, credentials, and location.
+    POST     /weather/geocode          - Resolve a weather location to coordinates.
     GET      /versions                 - Return installed component versions.
     GET      /spotify/connect          - Begin Spotify OAuth authorization.
     POST     /spotify/manual           - Complete Spotify OAuth using pasted callback URL.
@@ -52,6 +53,7 @@ from dotenv import load_dotenv
 from PIL import Image, ImageOps
 import RPi.GPIO as GPIO
 import spotipy
+import requests
 from spotipy.oauth2 import SpotifyOAuth
 from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 
@@ -717,6 +719,13 @@ def load_config():
         "clock2": {"label": "Shanghai", "timezone": "Asia/Shanghai", "enabled": True},
         "weather_api_key": "",
         "weather_region": "",
+        "weather_provider": "openmeteo",
+        "google_weather_api_key": "",
+        "weather_city": "",
+        "weather_country": "",
+        "weather_latitude": None,
+        "weather_longitude": None,
+        "weather_location_name": "",
         "brightness": 80,
         "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
         "updates": {
@@ -733,6 +742,10 @@ def load_config():
     try:
         with open(CONFIG_FILE, "r") as f:
             cfg = json.load(f)
+        # Existing pre-provider installations with a WeatherAPI key stay on
+        # WeatherAPI; only genuinely new/unconfigured installs default to Open-Meteo.
+        if "weather_provider" not in cfg:
+            cfg["weather_provider"] = "weatherapi" if cfg.get("weather_api_key") else "openmeteo"
         for key, val in default.items():
             cfg.setdefault(key, val)
             if isinstance(val, dict) and isinstance(cfg.get(key), dict):
@@ -1052,12 +1065,93 @@ def save_auto_power():
 
 @app.route("/save_weather_api", methods=["POST"])
 def save_weather_api():
-    """Save WeatherAPI credentials and region settings."""
+    """Save the selected weather provider after validating its configuration."""
     config = load_config()
-    config["weather_api_key"] = request.form.get("weather_api_key", "")
-    config["weather_region"] = request.form.get("weather_region", "")
+    provider = request.form.get("weather_provider", "openmeteo").strip().lower()
+    if provider not in {"weatherapi", "google", "openmeteo"}:
+        return jsonify({"status": "error", "message": "Unknown weather provider."}), 400
+
+    config["weather_provider"] = provider
+    config["weather_api_key"] = request.form.get("weather_api_key", "").strip()
+    config["google_weather_api_key"] = request.form.get("google_weather_api_key", "").strip()
+
+    if provider == "weatherapi":
+        config["weather_region"] = request.form.get("weather_region", "").strip()
+    else:
+        region = request.form.get("weather_state", "").strip()
+        city = request.form.get("weather_city", "").strip()
+        country = request.form.get("weather_country", "").strip()
+        if not city or not country:
+            return jsonify({"status": "error", "message": "City and country are required for coordinate-based weather providers."}), 400
+
+        try:
+            latitude = float(request.form.get("weather_latitude", ""))
+            longitude = float(request.form.get("weather_longitude", ""))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Parse the location coordinates before saving these weather settings."}), 400
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            return jsonify({"status": "error", "message": "The parsed weather coordinates are invalid."}), 400
+
+        config.update({
+            "weather_region": region,
+            "weather_city": city,
+            "weather_country": country,
+            "weather_latitude": latitude,
+            "weather_longitude": longitude,
+            "weather_location_name": request.form.get("weather_location_name", "").strip()
+                or ", ".join(filter(None, [city, region, country])),
+        })
+
     save_config(config)
+    if request.headers.get("X-Requested-With") == "fetch":
+        return jsonify({"status": "ok", "message": "Weather settings saved."})
     return redirect(url_for("dashboard"))
+
+
+@app.route("/weather/geocode", methods=["POST"])
+def geocode_weather_location():
+    """Resolve one user-entered weather location through OpenStreetMap Nominatim."""
+    region = request.form.get("weather_state", "").strip()
+    city = request.form.get("weather_city", "").strip()
+    country = request.form.get("weather_country", "").strip()
+    if not city or not country:
+        return jsonify({"status": "error", "message": "Enter a city and country before parsing coordinates."}), 400
+
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "city": city,
+                "state": region,
+                "country": country,
+                "format": "jsonv2",
+                "limit": 1,
+                "addressdetails": 1,
+            },
+            headers={"User-Agent": "MementoFrame/1.0 (https://github.com/MrBroccoliJP/MementoFrame)"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        matches = response.json()
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"status": "error", "message": f"Could not look up that location: {e}"}), 502
+
+    if not matches:
+        return jsonify({"status": "error", "message": "OpenStreetMap could not find that city, region, and country."}), 404
+
+    match = matches[0]
+    try:
+        latitude = float(match["lat"])
+        longitude = float(match["lon"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"status": "error", "message": "OpenStreetMap returned invalid coordinates."}), 502
+
+    return jsonify({
+        "status": "ok",
+        "latitude": latitude,
+        "longitude": longitude,
+        "display_name": match.get("display_name", ", ".join(filter(None, [city, region, country]))),
+    })
 
 
 
