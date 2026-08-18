@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 5 
+RELEASE_COUNTER = 6
 
 VERSION_ORDER = [
     "frontend",
@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 52, # spotify player improvements, extract album colour after resume playback
+        "version": 56, # Internet/local connection status badge
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 28, #weather refresh button
+        "version": 30, # Internet reachability status for the configuration dashboard
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 29, #weather refresh button 
+        "version": 29, # Provider adapters, freshness state, and manual weather refresh
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

@@ -10,6 +10,7 @@ import shutil
 import threading
 import time
 import uuid
+import requests
 from pathlib import Path
 import requests
 
@@ -430,22 +431,97 @@ def save_auto_power():
 @app.route("/save_weather_api", methods=["POST"])
 def save_weather_api():
     config = load_config()
+    provider = request.form.get("weather_provider", "openmeteo").strip().lower()
+    if provider not in {"weatherapi", "google", "openmeteo"}:
+        return jsonify({"status": "error", "message": "Unknown weather provider."}), 400
+
+    config["weather_provider"] = provider
     config["weather_api_key"] = request.form.get("weather_api_key", "").strip()
-    config["weather_region"] = request.form.get("weather_region", "").strip()
+    config["google_weather_api_key"] = request.form.get("google_weather_api_key", "").strip()
+    if provider == "weatherapi":
+        config["weather_region"] = request.form.get("weather_region", "").strip()
+    else:
+        city = request.form.get("weather_city", "").strip()
+        region = request.form.get("weather_state", "").strip()
+        country = request.form.get("weather_country", "").strip()
+        try:
+            latitude = float(request.form.get("weather_latitude", ""))
+            longitude = float(request.form.get("weather_longitude", ""))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Parse the location coordinates before saving these weather settings."}), 400
+        if not city or not country or not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            return jsonify({"status": "error", "message": "The coordinate-based weather location is incomplete or invalid."}), 400
+        config.update({
+            "weather_region": region,
+            "weather_city": city,
+            "weather_country": country,
+            "weather_latitude": latitude,
+            "weather_longitude": longitude,
+            "weather_location_name": request.form.get("weather_location_name", "").strip()
+                or ", ".join(filter(None, [city, region, country])),
+        })
     save_config(config)
-    return weather_refresh()
+    try:
+        response = requests.post("http://127.0.0.1:5001/weather/refresh", timeout=10)
+        payload = response.json()
+        refresh_message = payload.get("message", "Mock weather information refreshed.")
+        if not response.ok:
+            refresh_message = f"Automatic refresh failed: {refresh_message}"
+    except (requests.RequestException, ValueError) as exc:
+        refresh_message = f"Automatic refresh failed: {exc}"
+    return json_or_redirect({"status": "ok", "message": f"Weather settings saved. {refresh_message}"})
+
+
+@app.route("/weather/geocode", methods=["POST"])
+def geocode_weather_location():
+    city = request.form.get("weather_city", "").strip()
+    region = request.form.get("weather_state", "").strip()
+    country = request.form.get("weather_country", "").strip()
+    if not city or not country:
+        return jsonify({"status": "error", "message": "Enter a city and country before parsing coordinates."}), 400
+
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"city": city, "state": region, "country": country, "format": "jsonv2", "limit": 1, "addressdetails": 1},
+            headers={"User-Agent": "MementoFrame/1.0 (https://github.com/MrBroccoliJP/MementoFrame)"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        matches = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        return jsonify({"status": "error", "message": f"Could not look up that location: {exc}"}), 502
+    if not matches:
+        return jsonify({"status": "error", "message": "OpenStreetMap could not find that city, region, and country."}), 404
+
+    try:
+        latitude = float(matches[0]["lat"])
+        longitude = float(matches[0]["lon"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"status": "error", "message": "OpenStreetMap returned invalid coordinates."}), 502
+    return jsonify({
+        "status": "ok",
+        "latitude": latitude,
+        "longitude": longitude,
+        "display_name": matches[0].get("display_name", ", ".join(filter(None, [city, region, country]))),
+    })
 
 
 @app.route("/weather/refresh", methods=["POST"])
 def weather_refresh():
+    refreshed = False
     try:
         response = requests.post("http://127.0.0.1:5001/weather/refresh", timeout=10)
         payload = response.json()
         message = payload.get("message", "Mock weather information refreshed.")
         if not response.ok:
             message = f"Weather refresh failed: {message}"
+        refreshed = response.ok
     except (requests.RequestException, ValueError) as exc:
         message = f"Weather refresh failed: {exc}"
+    if wants_json_response():
+        status = 200 if refreshed else 503
+        return jsonify({"status": "ok" if refreshed else "error", "message": message}), status
     return redirect(url_for("dashboard", weather_msg=message))
 
 

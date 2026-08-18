@@ -73,6 +73,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "clock2": {"label": "Shanghai", "timezone": "Asia/Shanghai", "enabled": True},
     "weather_api_key": "",
     "weather_region": "Porto",
+    "weather_provider": "openmeteo",
+    "google_weather_api_key": "",
+    "weather_city": "",
+    "weather_country": "",
+    "weather_latitude": None,
+    "weather_longitude": None,
+    "weather_location_name": "",
     "brightness": 80,
     "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
     "updates": {
@@ -223,7 +230,11 @@ def save_state(state: dict[str, Any]) -> None:
 def load_config() -> dict[str, Any]:
     if not CONFIG_FILE.exists():
         save_config(deepcopy(DEFAULT_CONFIG))
-    return deep_merge(DEFAULT_CONFIG, read_json(CONFIG_FILE, {}))
+    stored = read_json(CONFIG_FILE, {})
+    merged = deep_merge(DEFAULT_CONFIG, stored)
+    if "weather_provider" not in stored:
+        merged["weather_provider"] = "weatherapi" if stored.get("weather_api_key") else "openmeteo"
+    return merged
 
 
 def save_config(cfg: dict[str, Any]) -> None:
@@ -420,6 +431,7 @@ def get_spotify_oauth():
         client_secret=client_secret,
         redirect_uri=redirect_uri,
         scope="user-read-playback-state user-read-currently-playing user-library-read",
+        show_dialog=True,
         cache_path=str(SPOTIFY_CACHE),
         open_browser=False,
     )
@@ -961,9 +973,15 @@ def _forecast_from_weatherapi(data: dict[str, Any]) -> dict[str, list[dict[str, 
     return {"hourly": hourly, "daily": daily}
 
 
-def real_weather_payload() -> dict[str, Any]:
+def real_weather_payload(provider: str | None = None) -> dict[str, Any]:
     load_env_files()
     cfg = load_config()
+    provider = provider or cfg.get("weather_provider", "openmeteo")
+    if provider == "openmeteo":
+        return _real_open_meteo_payload(cfg)
+    if provider == "google":
+        return _real_google_weather_payload(cfg)
+
     key = cfg.get("weather_api_key") or os.getenv("WEATHER_API_KEY")
     location = cfg.get("weather_region") or "Porto"
     if not key:
@@ -1012,10 +1030,231 @@ def real_weather_payload() -> dict[str, Any]:
         return {"available": False, "stale": False, "error": f"Weather request failed: {exc}", "source": "real"}
 
 
+GOOGLE_CONDITION_CODES = {
+    "CLEAR": 1000, "MOSTLY_CLEAR": 1003, "PARTLY_CLOUDY": 1003,
+    "MOSTLY_CLOUDY": 1006, "CLOUDY": 1009, "WINDY": 1030,
+    "WIND_AND_RAIN": 1240, "LIGHT_RAIN_SHOWERS": 1150,
+    "CHANCE_OF_SHOWERS": 1063, "SCATTERED_SHOWERS": 1153,
+    "RAIN_SHOWERS": 1183, "HEAVY_RAIN_SHOWERS": 1195,
+    "LIGHT_TO_MODERATE_RAIN": 1183, "MODERATE_TO_HEAVY_RAIN": 1189,
+    "RAIN": 1189, "LIGHT_SNOW_SHOWERS": 1210, "CHANCE_OF_SNOW_SHOWERS": 1066,
+    "SCATTERED_SNOW_SHOWERS": 1213, "SNOW_SHOWERS": 1219,
+    "HEAVY_SNOW_SHOWERS": 1225, "LIGHT_TO_MODERATE_SNOW": 1213,
+    "MODERATE_TO_HEAVY_SNOW": 1219, "SNOW": 1219, "RAIN_AND_SNOW": 1204,
+    "HAIL": 1237, "HAIL_SHOWERS": 1261, "THUNDERSTORM": 1273,
+    "THUNDERSHOWER": 1276, "LIGHT_THUNDERSTORM_RAIN": 1273,
+    "SCATTERED_THUNDERSTORMS": 1273, "HEAVY_THUNDERSTORM": 1276,
+}
+
+OPEN_METEO_CODES = {
+    0: ("Clear sky", 1000), 1: ("Mainly clear", 1003), 2: ("Partly cloudy", 1003),
+    3: ("Overcast", 1009), 45: ("Fog", 1030), 48: ("Rime fog", 1030),
+    51: ("Light drizzle", 1150), 53: ("Moderate drizzle", 1153), 55: ("Dense drizzle", 1153),
+    56: ("Light freezing drizzle", 1168), 57: ("Dense freezing drizzle", 1171),
+    61: ("Slight rain", 1183), 63: ("Moderate rain", 1189), 65: ("Heavy rain", 1195),
+    66: ("Light freezing rain", 1198), 67: ("Heavy freezing rain", 1201),
+    71: ("Slight snowfall", 1210), 73: ("Moderate snowfall", 1216), 75: ("Heavy snowfall", 1225),
+    77: ("Snow grains", 1213), 80: ("Slight rain showers", 1240),
+    81: ("Moderate rain showers", 1243), 82: ("Violent rain showers", 1246),
+    85: ("Slight snow showers", 1255), 86: ("Heavy snow showers", 1258),
+    95: ("Thunderstorm", 1273), 96: ("Thunderstorm with hail", 1276),
+    99: ("Heavy thunderstorm with hail", 1276),
+}
+
+
+def _open_meteo_condition(value: Any) -> tuple[str, int]:
+    try:
+        code = int(value)
+    except (TypeError, ValueError):
+        code = -1
+    return OPEN_METEO_CODES.get(code, ("Unknown conditions", 1006))
+
+
+def _real_open_meteo_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    latitude, longitude = cfg.get("weather_latitude"), cfg.get("weather_longitude")
+    if latitude is None or longitude is None:
+        return {"available": False, "stale": False, "error": "Open-Meteo coordinates not parsed", "source": "real", "provider": "openmeteo"}
+    import requests
+    try:
+        response = requests.get("https://api.open-meteo.com/v1/forecast", params={
+            "latitude": latitude, "longitude": longitude,
+            "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day,uv_index",
+            "hourly": "temperature_2m,weather_code,is_day,uv_index",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max",
+            "timezone": "auto", "forecast_days": 5,
+        }, timeout=8)
+        response.raise_for_status()
+        data = response.json()
+        current = data.get("current", {}) or {}
+        condition, code = _open_meteo_condition(current.get("weather_code"))
+        is_day, uv = bool(current.get("is_day", 1)), current.get("uv_index")
+        payload = {
+            "available": True, "stale": False, "fetchedAt": int(time.time() * 1000),
+            "temperature": round(float(current.get("temperature_2m", 0)), 1),
+            "condition": condition, "conditionCode": code, "isDay": is_day, "uv": uv,
+            "moonPhase": "", "icon": resolve_meteoicon(code, is_day, uv, None),
+            "humidity": int(current.get("relative_humidity_2m", 0)),
+            "windSpeed": float(current.get("wind_speed_10m", 0)),
+            "city": cfg.get("weather_city") or "Open-Meteo location",
+            "alerts": [], "source": "real", "provider": "openmeteo",
+        }
+        hourly_data = data.get("hourly", {}) or {}
+        times = hourly_data.get("time", []) or []
+        indexes = [i for i, value in enumerate(times) if str(value) > str(current.get("time", ""))][:5]
+        hourly = []
+        for i in indexes:
+            text, item_code = _open_meteo_condition(hourly_data.get("weather_code", [])[i])
+            item_day = bool(hourly_data.get("is_day", [1] * len(times))[i])
+            item_uv = hourly_data.get("uv_index", [None] * len(times))[i]
+            hourly.append({
+                "time": str(times[i]).split("T")[-1][:5],
+                "icon": resolve_meteoicon(item_code, item_day, item_uv, None),
+                "temp": f"{round(float(hourly_data.get('temperature_2m', [0])[i]))}°C",
+                "condition": text, "conditionCode": item_code, "isDay": item_day,
+                "uv": item_uv, "moonPhase": "",
+            })
+        daily_data = data.get("daily", {}) or {}
+        daily = []
+        for i, value in enumerate((daily_data.get("time", []) or [])[:5]):
+            text, item_code = _open_meteo_condition(daily_data.get("weather_code", [])[i])
+            item_uv = daily_data.get("uv_index_max", [None] * len(daily_data.get("time", [])))[i]
+            daily.append({
+                "label": "Today" if i == 0 else date.fromisoformat(str(value)).strftime("%a"),
+                "icon": resolve_meteoicon(item_code, True, item_uv, None),
+                "high": f"{round(float(daily_data.get('temperature_2m_max', [0])[i]))}°C",
+                "low": f"{round(float(daily_data.get('temperature_2m_min', [0])[i]))}°C",
+                "condition": text, "conditionCode": item_code, "isDay": True,
+                "uv": item_uv, "moonPhase": "",
+            })
+        payload["forecast"] = {"hourly": hourly, "daily": daily}
+        return payload
+    except Exception as exc:
+        return {"available": False, "stale": True, "error": f"Open-Meteo request failed: {exc}", "source": "real", "provider": "openmeteo"}
+
+
+def _google_text(value: Any) -> str:
+    return str(value.get("text", "")) if isinstance(value, dict) else str(value or "")
+
+
+def _google_condition(condition: dict[str, Any] | None) -> tuple[str, int]:
+    condition = condition or {}
+    kind = str(condition.get("type") or "TYPE_UNSPECIFIED")
+    return (_google_text(condition.get("description")) or kind.replace("_", " ").title(),
+            GOOGLE_CONDITION_CODES.get(kind, 1006))
+
+
+def _google_degrees(value: dict[str, Any] | None) -> float:
+    return float((value or {}).get("degrees", 0))
+
+
+def _alerts_from_google(data: dict[str, Any]) -> list[dict[str, Any]]:
+    alerts = []
+    for raw in data.get("weatherAlerts", []) or []:
+        instructions = list(raw.get("instruction", []) or [])
+        instructions.extend(x.get("directive", "") for x in raw.get("safetyRecommendations", []) or [] if x.get("directive"))
+        alert = {
+            "headline": _google_text(raw.get("alertTitle")),
+            "event": str(raw.get("eventType", "")).replace("_", " ").title(),
+            "severity": str(raw.get("severity", "Unknown")).replace("SEVERITY_UNKNOWN", "Unknown").title(),
+            "certainty": str(raw.get("certainty", "")).replace("_", " ").title(),
+            "areas": raw.get("areaName", ""), "effective": raw.get("startTime", ""),
+            "expires": raw.get("expirationTime", ""), "desc": raw.get("description", ""),
+            "instruction": " ".join(filter(None, instructions)),
+        }
+        alert["icon"] = resolve_alert_icon(alert)
+        alerts.append(alert)
+    return alerts
+
+
+def _real_google_weather_payload(cfg: dict[str, Any]) -> dict[str, Any]:
+    key = cfg.get("google_weather_api_key")
+    latitude, longitude = cfg.get("weather_latitude"), cfg.get("weather_longitude")
+    if not key:
+        return {"available": False, "stale": False, "error": "Google Weather API key not configured", "source": "real", "provider": "google"}
+    if latitude is None or longitude is None:
+        return {"available": False, "stale": False, "error": "Google Weather coordinates not parsed", "source": "real", "provider": "google"}
+
+    import requests
+    base = {"key": key, "location.latitude": latitude, "location.longitude": longitude}
+
+    def lookup(path: str, metric: bool = True, **extra: Any) -> dict[str, Any]:
+        params = dict(base)
+        if metric:
+            params["unitsSystem"] = "METRIC"
+        params.update(extra)
+        response = requests.get(f"https://weather.googleapis.com/v1/{path}:lookup", params=params, timeout=8)
+        response.raise_for_status()
+        return response.json()
+
+    try:
+        current = lookup("currentConditions")
+        hours = lookup("forecast/hours", hours=6, pageSize=6).get("forecastHours", []) or []
+        days = lookup("forecast/days", days=5, pageSize=5).get("forecastDays", []) or []
+        try:
+            alert_data = lookup("publicAlerts", metric=False, pageSize=20)
+        except Exception:
+            alert_data = {}
+
+        moon = ((days[0].get("moonEvents") or {}).get("moonPhase", "") if days else "")
+        condition, code = _google_condition(current.get("weatherCondition"))
+        is_day, uv = bool(current.get("isDaytime", True)), current.get("uvIndex")
+        payload = {
+            "available": True, "stale": False, "fetchedAt": int(time.time() * 1000),
+            "temperature": round(_google_degrees(current.get("temperature")), 1),
+            "condition": condition, "conditionCode": code, "isDay": is_day, "uv": uv,
+            "moonPhase": moon.replace("_", " ").title(),
+            "icon": resolve_meteoicon(code, is_day, uv, moon),
+            "humidity": current.get("relativeHumidity", 0),
+            "windSpeed": ((current.get("wind") or {}).get("speed") or {}).get("value", 0),
+            "city": cfg.get("weather_city") or cfg.get("weather_location_name") or "Google location",
+            "alerts": _alerts_from_google(alert_data), "source": "real", "provider": "google",
+        }
+        hourly = []
+        for item in hours[1:6]:
+            display = item.get("displayDateTime", {}) or {}
+            text, item_code = _google_condition(item.get("weatherCondition"))
+            item_day, item_uv = bool(item.get("isDaytime", True)), item.get("uvIndex")
+            hourly.append({
+                "time": f"{int(display.get('hours', 0)):02d}:{int(display.get('minutes', 0)):02d}",
+                "icon": resolve_meteoicon(item_code, item_day, item_uv, moon),
+                "temp": f"{round(_google_degrees(item.get('temperature')))}°C", "condition": text,
+                "conditionCode": item_code, "isDay": item_day, "uv": item_uv,
+                "moonPhase": moon.replace("_", " ").title(),
+            })
+        daily = []
+        for index, item in enumerate(days):
+            part = item.get("daytimeForecast") or item.get("nighttimeForecast") or {}
+            text, item_code = _google_condition(part.get("weatherCondition"))
+            item_uv = part.get("uvIndex")
+            item_moon = (item.get("moonEvents") or {}).get("moonPhase") or moon
+            date_info = item.get("displayDate", {}) or {}
+            item_date = date(int(date_info["year"]), int(date_info["month"]), int(date_info["day"]))
+            daily.append({
+                "label": "Today" if index == 0 else item_date.strftime("%a"),
+                "icon": resolve_meteoicon(item_code, True, item_uv, item_moon),
+                "high": f"{round(_google_degrees(item.get('maxTemperature')))}°C",
+                "low": f"{round(_google_degrees(item.get('minTemperature')))}°C",
+                "condition": text, "conditionCode": item_code, "isDay": True, "uv": item_uv,
+                "moonPhase": item_moon.replace("_", " ").title(),
+            })
+        payload["forecast"] = {"hourly": hourly, "daily": daily}
+        return payload
+    except Exception as exc:
+        return {"available": False, "stale": True, "error": f"Google Weather request failed: {exc}", "source": "real", "provider": "google"}
+
+
 def weather_payload() -> dict[str, Any]:
     state = load_state()
     weather = state.get("weather", {})
-    if weather.get("source") == "real":
+    source = weather.get("source", "mock")
+    if source == "weatherapi":
+        return real_weather_payload("weatherapi")
+    if source == "google":
+        return real_weather_payload("google")
+    if source == "openmeteo":
+        return real_weather_payload("openmeteo")
+    # Preserve existing mock state files that used the old generic "real" value.
+    if source == "real":
         return real_weather_payload()
     if not weather.get("enabled", True):
         return {
