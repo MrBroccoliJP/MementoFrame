@@ -45,6 +45,13 @@
       const now = new Date();
       document.getElementById("manual_date")?.setAttribute("value", now.toISOString().split("T")[0]);
       document.getElementById("manual_time")?.setAttribute("value", now.toTimeString().slice(0, 5));
+
+      document.querySelectorAll('.settings-nav a').forEach((link) => {
+        link.addEventListener('click', () => {
+          const section = document.querySelector(link.hash);
+          if (section instanceof HTMLDetailsElement) section.open = true;
+        });
+      });
     });
 
     function toggleSelectAll(masterCheckbox) {
@@ -171,12 +178,50 @@
   </script>
 </head>
 
-<body class="frame-theme">
+<body class="frame-theme config-dashboard">
   <div class="container">
-    <h2>MementoFrame Configuration</h2>
+    <header class="dashboard-hero">
+      <div class="dashboard-brand">
+        <span class="dashboard-brand__mark" aria-hidden="true">M</span>
+        <div>
+          <p class="dashboard-eyebrow">MementoFrame</p>
+          <h1>Frame control center</h1>
+          <p class="dashboard-subtitle">Manage your display, content, connections, and integrations.</p>
+        </div>
+      </div>
+      <div class="dashboard-meta" aria-label="Frame status">
+        {% if internet_connected %}
+        <span class="status-pill status-pill--online"><i></i>Internet connected</span>
+        {% else %}
+        <span class="status-pill status-pill--local"><i></i>Local only</span>
+        {% endif %}
+        <span class="status-pill status-pill--muted">{{ ip }}</span>
+      </div>
+    </header>
     <div id="portal_save_status" class="portal-save-status" aria-live="polite"></div>
 
-    <div class="portal-actions" aria-label="Frame quick controls">
+    <div class="dashboard-shell">
+      <aside class="settings-sidebar">
+        <p class="settings-sidebar__label">Settings</p>
+        <nav class="settings-nav" aria-label="Configuration sections">
+          <a href="#wifi-settings"><span aria-hidden="true">Wi</span>Wi-Fi</a>
+          <a href="#clock-settings"><span aria-hidden="true">Cl</span>Clocks</a>
+          <a href="#display-settings"><span aria-hidden="true">Di</span>Display</a>
+          <a href="#weather-settings"><span aria-hidden="true">We</span>Weather</a>
+          <a href="#photo-settings"><span aria-hidden="true">Ph</span>Photos</a>
+          <a href="#spotify-settings"><span aria-hidden="true">Sp</span>Spotify</a>
+          <a href="#update-settings"><span aria-hidden="true">Up</span>Updates</a>
+        </nav>
+        <p class="sidebar-note">Settings save without reloading this page.</p>
+      </aside>
+
+      <main class="settings-content">
+        <section class="quick-controls" aria-labelledby="quick-controls-title">
+          <div>
+            <p class="section-kicker">Quick controls</p>
+            <h2 id="quick-controls-title">Frame actions</h2>
+          </div>
+          <div class="portal-actions" aria-label="Frame quick controls">
       <button type="button" class="portal-action-btn" onclick="runPortalAction('/display/reload', 'Reloading display…')">
         <span class="portal-action-btn__icon">↻</span>
         <span>Reload Display</span>
@@ -189,11 +234,12 @@
         <span class="portal-action-btn__icon">☀</span>
         <span>Screen On</span>
       </button>
-    </div>
+          </div>
+        </section>
 
     <!-- Wi-Fi -->
-    <details open class="section">
-      <summary>📶 Wi-Fi Setup</summary>
+    <details id="wifi-settings" open class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">Wi</span><span><strong>Wi-Fi</strong><small>Connect the frame to a wireless network</small></span></summary>
       <form method="POST">
         <label>Network</label>
         <select name="ssid">
@@ -208,8 +254,8 @@
     </details>
 
     <!-- Clock -->
-    <details class="section">
-      <summary>🕒 Clock Configuration</summary>
+    <details id="clock-settings" class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">Cl</span><span><strong>Clocks</strong><small>Choose time zones and display labels</small></span></summary>
       <form action="{{ url_for('save_clock_settings') }}" method="POST">
 
         {% set tz_options = [ ("UTC (Coordinated Universal Time)", "UTC"), ("Europe/Lisbon (Portugal)",
@@ -263,8 +309,8 @@
     </details>
 
     <!-- Display -->
-    <details class="section">
-      <summary>💡 Display Settings</summary>
+    <details id="display-settings" class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">Di</span><span><strong>Display</strong><small>Control brightness and the power schedule</small></span></summary>
       <form action="/save_display_settings" method="POST">
         <label for="brightness">Brightness: <span id="brightness_value">{{ config.brightness }}</span>%</label>
         <input type="range" id="brightness" name="brightness" min="10" max="100" value="{{ config.brightness }}"
@@ -294,8 +340,8 @@
     </details>
 
     <!-- Weather -->
-    <details class="section">
-      <summary>☁️ Weather Configuration</summary>
+    <details id="weather-settings" class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">We</span><span><strong>Weather</strong><small>Select a provider and configure your location</small></span></summary>
       <form id="weather_settings_form" action="{{ url_for('save_weather_api') }}" method="POST">
         {% if weather_msg %}
         <div class="message">{{ weather_msg }}</div>
@@ -338,7 +384,7 @@
           <input id="weather_latitude" type="hidden" name="weather_latitude" value="{{ config.weather_latitude if config.weather_latitude is not none else '' }}">
           <input id="weather_longitude" type="hidden" name="weather_longitude" value="{{ config.weather_longitude if config.weather_longitude is not none else '' }}">
           <input id="weather_location_name" type="hidden" name="weather_location_name" value="{{ config.weather_location_name or '' }}">
-          <button id="parse_weather_coordinates" type="button">Parse Coordinates</button>
+          <button id="parse_weather_coordinates" class="secondary-action" type="button">Parse Coordinates</button>
           <p id="weather_coordinate_status" class="current-setting" aria-live="polite">
             {% if config.weather_latitude is not none and config.weather_longitude is not none %}
             Resolved coordinates: <strong>{{ config.weather_latitude }}, {{ config.weather_longitude }}</strong>
@@ -351,13 +397,13 @@
         <button id="save_weather_settings" type="submit">Save Weather Settings</button>
       </form>
       <form action="{{ url_for('weather_refresh') }}" method="POST">
-        <button type="submit">Refresh Weather Now</button>
+        <button class="secondary-action" type="submit">Refresh Weather Now</button>
       </form>
     </details>
 
     <!-- Photos -->
-    <details class="section">
-      <summary>🖼 Photo Manager</summary>
+    <details id="photo-settings" class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">Ph</span><span><strong>Photos</strong><small>Upload and manage slideshow images</small></span></summary>
       <form id="photo_upload_form" action="{{ url_for('upload_photo') }}" method="POST" enctype="multipart/form-data">
         <input id="photo_upload_input" type="file" name="photos" accept="image/*" multiple required>
         <button id="photo_upload_button" type="submit">Upload Selected Photos</button>
@@ -383,8 +429,8 @@
     </details>
 
     <!-- Spotify -->
-    <details class="section">
-      <summary>🎵 Spotify Integration</summary>
+    <details id="spotify-settings" class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">Sp</span><span><strong>Spotify</strong><small>Connect an account for now-playing information</small></span></summary>
 
       {% if spotify_msg %}
       <div class="message">{{ spotify_msg }}</div>
@@ -463,8 +509,8 @@
 
 
     <!-- Software Updates -->
-    <details class="section">
-      <summary>⬆️ Software Updates</summary>
+    <details id="update-settings" class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">Up</span><span><strong>Software updates</strong><small>Check versions and configure automatic updates</small></span></summary>
 
       {% set updates = config.updates or {} %}
       {% set us = update_state or {} %}
@@ -554,9 +600,10 @@
     </details>
 
 
-    <footer class="footer">
-      Mode: {{ mode.upper() }} | IP: <span>{{ ip }}</span>
-    </footer>
+      </main>
+    </div>
+
+    <footer class="footer">MementoFrame &middot; {{ mode.upper() }} &middot; <span>{{ ip }}</span></footer>
   </div>
 
   <script>

@@ -30,12 +30,12 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 53, # Open-Meteo provider controls and coordinate workflow
+        "version": 56, # Internet/local connection status badge
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 29, # Open-Meteo configuration, geocoding, and weather refresh controls
+        "version": 30, # Internet reachability status for the configuration dashboard
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },

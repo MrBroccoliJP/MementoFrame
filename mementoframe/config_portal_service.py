@@ -657,6 +657,16 @@ def get_local_ip():
     except Exception:
         return "192.168.4.1"
 
+def has_internet_connection():
+    """Return whether the frame can reach the public internet without relying on DNS."""
+    for address in (("1.1.1.1", 443), ("8.8.8.8", 53)):
+        try:
+            with socket.create_connection(address, timeout=1.25):
+                return True
+        except OSError:
+            continue
+    return False
+
 def get_mode():
     """Infer whether the frame is in AP mode or Wi-Fi mode."""
     try:
@@ -897,6 +907,7 @@ def dashboard():
 
     mode = get_mode()
     ip = get_local_ip()
+    internet_connected = has_internet_connection()
     photos = load_photos()
     networks = scan_networks()
     spotify_user = get_spotify_user()
@@ -918,6 +929,7 @@ def dashboard():
         "config_portal.html",
         mode=mode,
         ip=ip,
+        internet_connected=internet_connected,
         networks=networks,
         photos=photos,
         spotify_user=spotify_user,
