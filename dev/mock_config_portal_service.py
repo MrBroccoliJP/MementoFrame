@@ -12,6 +12,7 @@ import time
 import uuid
 import requests
 from pathlib import Path
+import requests
 
 from flask import Flask, jsonify, redirect, render_template, render_template_string, request, send_from_directory, session, url_for
 from flask_cors import CORS
@@ -203,7 +204,7 @@ def dashboard():
         save_state(state)
         return redirect(url_for("dashboard", msg=state["last_wifi_message"]))
     spotify_user = real_spotify_user() if state.get("spotify", {}).get("source") == "real" else ({"display_name": "Mock User", "id": "mockuser"} if state.get("spotify", {}).get("connected") else None)
-    ctx = dict(mode=state.get("mode", "client"), ip=state.get("ip"), networks=networks, photos=photos, spotify_user=spotify_user, spotify_msg=request.args.get("msg"), spotify_env=read_env_values(), spotify_configured=bool(read_env_values().get("SPOTIFY_CLIENT_ID") and read_env_values().get("SPOTIFY_CLIENT_SECRET")), update_state=load_update_state(), config=config, state=state)
+    ctx = dict(mode=state.get("mode", "client"), ip=state.get("ip"), networks=networks, photos=photos, spotify_user=spotify_user, spotify_msg=request.args.get("msg"), weather_msg=request.args.get("weather_msg"), spotify_env=read_env_values(), spotify_configured=bool(read_env_values().get("SPOTIFY_CLIENT_ID") and read_env_values().get("SPOTIFY_CLIENT_SECRET")), update_state=load_update_state(), config=config, state=state)
     if (TEMPLATES_DIR / "config_portal.html").exists():
         return render_template("config_portal.html", **ctx)
     return dashboard_fallback_html(**ctx)
@@ -460,7 +461,15 @@ def save_weather_api():
                 or ", ".join(filter(None, [city, region, country])),
         })
     save_config(config)
-    return json_or_redirect({"status": "ok", "message": "Weather settings saved."})
+    try:
+        response = requests.post("http://127.0.0.1:5001/weather/refresh", timeout=10)
+        payload = response.json()
+        refresh_message = payload.get("message", "Mock weather information refreshed.")
+        if not response.ok:
+            refresh_message = f"Automatic refresh failed: {refresh_message}"
+    except (requests.RequestException, ValueError) as exc:
+        refresh_message = f"Automatic refresh failed: {exc}"
+    return json_or_redirect({"status": "ok", "message": f"Weather settings saved. {refresh_message}"})
 
 
 @app.route("/weather/geocode", methods=["POST"])
@@ -496,6 +505,24 @@ def geocode_weather_location():
         "longitude": longitude,
         "display_name": matches[0].get("display_name", ", ".join(filter(None, [city, region, country]))),
     })
+
+
+@app.route("/weather/refresh", methods=["POST"])
+def weather_refresh():
+    refreshed = False
+    try:
+        response = requests.post("http://127.0.0.1:5001/weather/refresh", timeout=10)
+        payload = response.json()
+        message = payload.get("message", "Mock weather information refreshed.")
+        if not response.ok:
+            message = f"Weather refresh failed: {message}"
+        refreshed = response.ok
+    except (requests.RequestException, ValueError) as exc:
+        message = f"Weather refresh failed: {exc}"
+    if wants_json_response():
+        status = 200 if refreshed else 503
+        return jsonify({"status": "ok" if refreshed else "error", "message": message}), status
+    return redirect(url_for("dashboard", weather_msg=message))
 
 
 @app.route("/health")

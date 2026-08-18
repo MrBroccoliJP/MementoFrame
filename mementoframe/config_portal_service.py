@@ -27,6 +27,7 @@ Endpoints:
     POST     /save_auto_power          - Save automatic screen power schedule.
     POST     /save_weather_api         - Save weather provider, credentials, and location.
     POST     /weather/geocode          - Resolve a weather location to coordinates.
+    POST     /weather/refresh          - Ask the display service for fresh weather data.
     GET      /versions                 - Return installed component versions.
     GET      /spotify/connect          - Begin Spotify OAuth authorization.
     POST     /spotify/manual           - Complete Spotify OAuth using pasted callback URL.
@@ -47,6 +48,7 @@ Flow chart:
 """
 from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
 import subprocess, os, json, socket, threading, time, uuid, shlex, secrets, sys
+import requests
 from pathlib import Path
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
@@ -868,6 +870,23 @@ def set_screen_on():
     GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.output(SCREEN_PIN, GPIO.HIGH)
 
+
+def refresh_weather_data():
+    """Force the local display service to reload settings and fetch weather."""
+    try:
+        response = requests.post("http://127.0.0.1:5001/weather/refresh", timeout=10)
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+
+        if response.ok:
+            return True, payload.get("message", "Weather information refreshed.")
+
+        return False, payload.get("message", f"Weather refresh failed ({response.status_code}).")
+    except requests.RequestException as e:
+        return False, f"Could not contact the display service: {e}"
+
 # =============================================================================
 # Flask routes: dashboard, assets, photos, settings, versions, and Spotify
 # =============================================================================
@@ -882,6 +901,7 @@ def dashboard():
     networks = scan_networks()
     spotify_user = get_spotify_user()
     spotify_msg = request.args.get("msg")
+    weather_msg = request.args.get("weather_msg")
     spotify_env = read_env_values()
     spotify_configured = bool(
         spotify_env.get("SPOTIFY_CLIENT_ID") and spotify_env.get("SPOTIFY_CLIENT_SECRET")
@@ -902,6 +922,7 @@ def dashboard():
         photos=photos,
         spotify_user=spotify_user,
         spotify_msg=spotify_msg,
+        weather_msg=weather_msg,
         spotify_env=spotify_env,
         spotify_configured=spotify_configured,
         update_state=load_update_state(),
@@ -1103,9 +1124,24 @@ def save_weather_api():
         })
 
     save_config(config)
+
+    refreshed, message = refresh_weather_data()
+    full_message = "Weather settings saved. " + (message if refreshed else f"Automatic refresh failed: {message}")
     if request.headers.get("X-Requested-With") == "fetch":
-        return jsonify({"status": "ok", "message": "Weather settings saved."})
-    return redirect(url_for("dashboard"))
+        return jsonify({"status": "ok", "message": full_message, "refreshed": refreshed})
+    return redirect(url_for("dashboard", weather_msg=full_message))
+
+
+@app.route("/weather/refresh", methods=["POST"])
+def weather_refresh():
+    """Refresh weather on demand from the configuration dashboard."""
+    refreshed, message = refresh_weather_data()
+    if request.headers.get("X-Requested-With") == "fetch":
+        status = 200 if refreshed else 503
+        return jsonify({"status": "ok" if refreshed else "error", "message": message}), status
+    if refreshed:
+        return redirect(url_for("dashboard", weather_msg=message))
+    return redirect(url_for("dashboard", weather_msg=f"Weather refresh failed: {message}"))
 
 
 @app.route("/weather/geocode", methods=["POST"])

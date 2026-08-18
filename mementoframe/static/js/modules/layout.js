@@ -185,6 +185,15 @@ export function evaluateLayout(force = false) {
     const isBigMode = state.panels.bigModeActive;
     const hasForecast = !!state.weather.forecastAvailable;
 
+    // In single-clock mode the date moves into the first row, leaving the
+    // second row exclusively for current weather. Reclaim that row when
+    // weather is unavailable and restore it as soon as data returns.
+    const secondRow = $(SELECTORS.secondRow);
+    secondRow?.classList.toggle(
+      'weather-row-collapsed',
+      !state.clocks.enableSecond && !state.weather.available
+    );
+
     let updates = {
         spotifyView: 'hidden',
         calendarView: 'hidden',

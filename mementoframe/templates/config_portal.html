@@ -297,6 +297,9 @@
     <details class="section">
       <summary>☁️ Weather Configuration</summary>
       <form id="weather_settings_form" action="{{ url_for('save_weather_api') }}" method="POST">
+        {% if weather_msg %}
+        <div class="message">{{ weather_msg }}</div>
+        {% endif %}
         <fieldset class="provider-switch">
           <legend>Weather provider</legend>
           <label><input type="radio" name="weather_provider" value="openmeteo"
@@ -346,6 +349,9 @@
           <p class="setting-hint">Google Weather and Open-Meteo use these coordinates. Location lookup by OpenStreetMap contributors (ODbL). Coordinates are saved and reused; no periodic geocoding is performed.</p>
         </div>
         <button id="save_weather_settings" type="submit">Save Weather Settings</button>
+      </form>
+      <form action="{{ url_for('weather_refresh') }}" method="POST">
+        <button type="submit">Refresh Weather Now</button>
       </form>
     </details>
 
@@ -606,13 +612,16 @@
             headers: { "X-Requested-With": "fetch" },
             cache: "no-store"
           });
+          const responseType = response.headers.get("content-type") || "";
+          const responseData = responseType.includes("application/json")
+            ? await response.json().catch(() => ({}))
+            : {};
 
           if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.message || errorData.error || `HTTP ${response.status}`);
+            throw new Error(responseData.message || responseData.error || `HTTP ${response.status}`);
           }
 
-          setPortalStatus(button?.dataset.doneText || "Saved.", "ok");
+          setPortalStatus(responseData.message || button?.dataset.doneText || "Saved.", "ok");
           return true;
         } catch (error) {
           setPortalStatus(`Save failed: ${error}`, "error");

@@ -985,7 +985,7 @@ def real_weather_payload(provider: str | None = None) -> dict[str, Any]:
     key = cfg.get("weather_api_key") or os.getenv("WEATHER_API_KEY")
     location = cfg.get("weather_region") or "Porto"
     if not key:
-        return {"error": "Weather API key not configured", "source": "real"}
+        return {"available": False, "stale": False, "error": "Weather API key not configured", "source": "real"}
     try:
         import requests
         res = requests.get(
@@ -1006,6 +1006,9 @@ def real_weather_payload(provider: str | None = None) -> dict[str, Any]:
         is_day = bool(int(current.get("is_day", 1)))
         uv = current.get("uv")
         payload = {
+            "available": True,
+            "stale": False,
+            "fetchedAt": int(time.time() * 1000),
             "temperature": round(float(current["temp_c"]), 1),
             "condition": current_condition.get("text", ""),
             "conditionCode": code,
@@ -1024,7 +1027,7 @@ def real_weather_payload(provider: str | None = None) -> dict[str, Any]:
             payload["forecast"] = forecast
         return payload
     except Exception as exc:
-        return {"error": f"Weather request failed: {exc}", "source": "real"}
+        return {"available": False, "stale": False, "error": f"Weather request failed: {exc}", "source": "real"}
 
 
 GOOGLE_CONDITION_CODES = {
@@ -1070,7 +1073,7 @@ def _open_meteo_condition(value: Any) -> tuple[str, int]:
 def _real_open_meteo_payload(cfg: dict[str, Any]) -> dict[str, Any]:
     latitude, longitude = cfg.get("weather_latitude"), cfg.get("weather_longitude")
     if latitude is None or longitude is None:
-        return {"error": "Open-Meteo coordinates not parsed", "source": "real", "provider": "openmeteo"}
+        return {"available": False, "stale": False, "error": "Open-Meteo coordinates not parsed", "source": "real", "provider": "openmeteo"}
     import requests
     try:
         response = requests.get("https://api.open-meteo.com/v1/forecast", params={
@@ -1086,6 +1089,7 @@ def _real_open_meteo_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         condition, code = _open_meteo_condition(current.get("weather_code"))
         is_day, uv = bool(current.get("is_day", 1)), current.get("uv_index")
         payload = {
+            "available": True, "stale": False, "fetchedAt": int(time.time() * 1000),
             "temperature": round(float(current.get("temperature_2m", 0)), 1),
             "condition": condition, "conditionCode": code, "isDay": is_day, "uv": uv,
             "moonPhase": "", "icon": resolve_meteoicon(code, is_day, uv, None),
@@ -1125,7 +1129,7 @@ def _real_open_meteo_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         payload["forecast"] = {"hourly": hourly, "daily": daily}
         return payload
     except Exception as exc:
-        return {"error": f"Open-Meteo request failed: {exc}", "source": "real", "provider": "openmeteo"}
+        return {"available": False, "stale": True, "error": f"Open-Meteo request failed: {exc}", "source": "real", "provider": "openmeteo"}
 
 
 def _google_text(value: Any) -> str:
@@ -1166,9 +1170,9 @@ def _real_google_weather_payload(cfg: dict[str, Any]) -> dict[str, Any]:
     key = cfg.get("google_weather_api_key")
     latitude, longitude = cfg.get("weather_latitude"), cfg.get("weather_longitude")
     if not key:
-        return {"error": "Google Weather API key not configured", "source": "real", "provider": "google"}
+        return {"available": False, "stale": False, "error": "Google Weather API key not configured", "source": "real", "provider": "google"}
     if latitude is None or longitude is None:
-        return {"error": "Google Weather coordinates not parsed", "source": "real", "provider": "google"}
+        return {"available": False, "stale": False, "error": "Google Weather coordinates not parsed", "source": "real", "provider": "google"}
 
     import requests
     base = {"key": key, "location.latitude": latitude, "location.longitude": longitude}
@@ -1195,6 +1199,7 @@ def _real_google_weather_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         condition, code = _google_condition(current.get("weatherCondition"))
         is_day, uv = bool(current.get("isDaytime", True)), current.get("uvIndex")
         payload = {
+            "available": True, "stale": False, "fetchedAt": int(time.time() * 1000),
             "temperature": round(_google_degrees(current.get("temperature")), 1),
             "condition": condition, "conditionCode": code, "isDay": is_day, "uv": uv,
             "moonPhase": moon.replace("_", " ").title(),
@@ -1235,7 +1240,7 @@ def _real_google_weather_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         payload["forecast"] = {"hourly": hourly, "daily": daily}
         return payload
     except Exception as exc:
-        return {"error": f"Google Weather request failed: {exc}", "source": "real", "provider": "google"}
+        return {"available": False, "stale": True, "error": f"Google Weather request failed: {exc}", "source": "real", "provider": "google"}
 
 
 def weather_payload() -> dict[str, Any]:
@@ -1252,7 +1257,12 @@ def weather_payload() -> dict[str, Any]:
     if source == "real":
         return real_weather_payload()
     if not weather.get("enabled", True):
-        return {"error": "Mock weather disabled", "source": "mock"}
+        return {
+            "available": False,
+            "stale": False,
+            "error": "Mock weather disabled",
+            "source": "mock",
+        }
 
     code = int(weather.get("conditionCode") or 1000)
     is_day = bool(weather.get("isDay", True))
@@ -1260,6 +1270,9 @@ def weather_payload() -> dict[str, Any]:
     moon_phase = weather.get("moonPhase") or "Waxing Crescent"
 
     payload = {
+        "available": True,
+        "stale": False,
+        "fetchedAt": int(time.time() * 1000),
         "temperature": round(float(weather.get("temperature", 0)), 1),
         "condition": weather.get("condition", "Clear"),
         "conditionCode": code,

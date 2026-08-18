@@ -35,13 +35,13 @@ COMPONENTS = {
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 29, # Open-Meteo configuration, geocoding, and provider persistence
+        "version": 29, # Open-Meteo configuration, geocoding, and weather refresh controls
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 29, # Open-Meteo current and forecast adapter
+        "version": 29, # Provider adapters, freshness state, and manual weather refresh
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

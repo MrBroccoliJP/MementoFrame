@@ -19,6 +19,7 @@ Endpoints:
     GET  /config.json              - Serve saved frame configuration.
     GET  /spotify.json             - Return current Spotify playback metadata.
     GET  /weather.json             - Return current weather data.
+    POST /weather/refresh          - Reload weather settings and fetch fresh data.
     GET  /config_portal_pin.json   - Return active AP-mode PIN for local display UI.
     GET  /status.json              - Return Wi-Fi/AP mode, IP address, and uptime.
     GET  /health                   - Return service health status.
@@ -158,6 +159,9 @@ WEATHER_CITY = config.get("weather_city") or WEATHER_LOCATION
 cache = {}
 cooldowns = {}
 MAX_CACHE_AGE = 30  # seconds
+weather_refresh_revision = 0
+WEATHER_CACHE_SECONDS = 10 * 60
+WEATHER_STALE_SECONDS = 2 * 60 * 60
 
 def safe_spotify_call(endpoint_key, func, *args, **kwargs):
     """Call Spotify with short cache support and graceful rate-limit handling."""
@@ -479,20 +483,20 @@ def normalize_weather_alerts(data, configured_location=None):
 # =============================================================================
 # Weather data helper
 # =============================================================================
-def get_weatherapi_data():
+def get_weatherapi_data(force_refresh=False):
     """Fetch current weather + 3-day forecast from WeatherAPI.com free tier.
 
     Uses forecast.json so current conditions, forecast, astronomy/moon phase,
     UV index, and alerts are available from the same API response.
     """
     now = time.time()
-    if "weather" in cache:
+    if not force_refresh and "weather" in cache:
         cached_data, cached_time = cache["weather"]
-        if now - cached_time < 600:  # 10 min cache
+        if now - cached_time < WEATHER_CACHE_SECONDS:
             return cached_data
 
     if not WEATHER_API_KEY:
-        return {"error": "Weather API key not configured"}
+        return {"available": False, "stale": False, "error": "Weather API key not configured"}
 
     try:
         url = "https://api.weatherapi.com/v1/forecast.json"
@@ -519,6 +523,9 @@ def get_weatherapi_data():
 
         # ── Current conditions ────────────────────────────────────────────
         weather_info = {
+            "available": True,
+            "stale": False,
+            "fetchedAt": int(now * 1000),
             "temperature": round(current["temp_c"], 1),
             "condition": current_condition.get("text", ""),
             "conditionCode": current_code,
@@ -617,10 +624,20 @@ def get_weatherapi_data():
 
     except requests.exceptions.RequestException as e:
         if "weather" in cache:
-            return cache["weather"][0]
-        return {"error": f"Weather request failed: {e}"}
+            cached_data, cached_time = cache["weather"]
+            if now - cached_time <= WEATHER_STALE_SECONDS:
+                stale_data = dict(cached_data)
+                stale_data.update({"available": True, "stale": True})
+                return stale_data
+        return {"available": False, "stale": True, "error": f"Weather request failed: {e}"}
     except Exception as e:
-        return {"error": f"Unexpected error: {e}"}
+        if "weather" in cache:
+            cached_data, cached_time = cache["weather"]
+            if now - cached_time <= WEATHER_STALE_SECONDS:
+                stale_data = dict(cached_data)
+                stale_data.update({"available": True, "stale": True})
+                return stale_data
+        return {"available": False, "stale": False, "error": f"Unexpected error: {e}"}
 
 
 GOOGLE_CONDITION_CODES = {
@@ -701,18 +718,18 @@ def _google_alerts(data):
     return normalized
 
 
-def get_google_weather_data():
+def get_google_weather_data(force_refresh=False):
     """Fetch and normalize Google Weather current, hourly, daily, and alert data."""
     now = time.time()
-    if "weather" in cache:
+    if not force_refresh and "weather" in cache:
         cached_data, cached_time = cache["weather"]
         if now - cached_time < 600:
             return cached_data
 
     if not GOOGLE_WEATHER_API_KEY:
-        return {"error": "Google Weather API key not configured"}
+        return {"available": False, "stale": False, "error": "Google Weather API key not configured"}
     if WEATHER_LATITUDE is None or WEATHER_LONGITUDE is None:
-        return {"error": "Google Weather location coordinates not configured"}
+        return {"available": False, "stale": False, "error": "Google Weather location coordinates not configured"}
 
     base_params = {
         "key": GOOGLE_WEATHER_API_KEY,
@@ -745,6 +762,9 @@ def get_google_weather_data():
         current_uv = current.get("uvIndex")
 
         weather_info = {
+            "available": True,
+            "stale": False,
+            "fetchedAt": int(now * 1000),
             "temperature": round(_google_temperature(current.get("temperature")), 1),
             "condition": current_condition,
             "conditionCode": current_code,
@@ -803,10 +823,14 @@ def get_google_weather_data():
         return weather_info
     except requests.RequestException as e:
         if "weather" in cache:
-            return cache["weather"][0]
-        return {"error": f"Google Weather request failed: {e}"}
+            cached_data, cached_time = cache["weather"]
+            if now - cached_time <= WEATHER_STALE_SECONDS:
+                stale_data = dict(cached_data)
+                stale_data.update({"available": True, "stale": True})
+                return stale_data
+        return {"available": False, "stale": True, "error": f"Google Weather request failed: {e}"}
     except (KeyError, TypeError, ValueError) as e:
-        return {"error": f"Unexpected Google Weather response: {e}"}
+        return {"available": False, "stale": False, "error": f"Unexpected Google Weather response: {e}"}
 
 
 OPEN_METEO_CODES = {
@@ -834,15 +858,15 @@ def _open_meteo_condition(wmo_code):
     return OPEN_METEO_CODES.get(code, ("Unknown conditions", 1006))
 
 
-def get_open_meteo_weather_data():
+def get_open_meteo_weather_data(force_refresh=False):
     """Fetch current and forecast data from Open-Meteo's keyless Forecast API."""
     now = time.time()
-    if "weather" in cache:
+    if not force_refresh and "weather" in cache:
         cached_data, cached_time = cache["weather"]
         if now - cached_time < 600:
             return cached_data
     if WEATHER_LATITUDE is None or WEATHER_LONGITUDE is None:
-        return {"error": "Open-Meteo location coordinates not configured"}
+        return {"available": False, "stale": False, "error": "Open-Meteo location coordinates not configured"}
 
     try:
         response = requests.get(
@@ -865,6 +889,9 @@ def get_open_meteo_weather_data():
         is_day = bool(current.get("is_day", 1))
         uv = current.get("uv_index")
         weather_info = {
+            "available": True,
+            "stale": False,
+            "fetchedAt": int(now * 1000),
             "temperature": round(float(current.get("temperature_2m", 0)), 1),
             "condition": condition,
             "conditionCode": condition_code,
@@ -915,19 +942,23 @@ def get_open_meteo_weather_data():
         return weather_info
     except requests.RequestException as e:
         if "weather" in cache:
-            return cache["weather"][0]
-        return {"error": f"Open-Meteo request failed: {e}"}
+            cached_data, cached_time = cache["weather"]
+            if now - cached_time <= WEATHER_STALE_SECONDS:
+                stale_data = dict(cached_data)
+                stale_data.update({"available": True, "stale": True})
+                return stale_data
+        return {"available": False, "stale": True, "error": f"Open-Meteo request failed: {e}"}
     except (KeyError, IndexError, TypeError, ValueError) as e:
-        return {"error": f"Unexpected Open-Meteo response: {e}"}
+        return {"available": False, "stale": False, "error": f"Unexpected Open-Meteo response: {e}"}
 
 
-def get_weather_data():
+def get_weather_data(force_refresh=False):
     """Fetch weather data from the one provider selected in the dashboard."""
     if WEATHER_PROVIDER == "google":
-        return get_google_weather_data()
+        return get_google_weather_data(force_refresh=force_refresh)
     if WEATHER_PROVIDER == "openmeteo":
-        return get_open_meteo_weather_data()
-    return get_weatherapi_data()
+        return get_open_meteo_weather_data(force_refresh=force_refresh)
+    return get_weatherapi_data(force_refresh=force_refresh)
 
 
 # =============================================================================
@@ -1004,11 +1035,39 @@ def spotify_status():
 
 @app.route("/weather.json")
 def weather_status():
-    """Return current weather information or an error response."""
-    weather_data = get_weather_data()
-    if not weather_data:
-        return jsonify({"error": "Unable to fetch weather data"}), 503
-    return jsonify(weather_data)
+    """Return backend-owned weather availability and current/cached data."""
+    return jsonify(get_weather_data())
+
+
+@app.route("/weather/refresh", methods=["POST"])
+def weather_refresh():
+    """Reload saved weather settings, bypass the cache, and fetch fresh data."""
+    global WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_PROVIDER
+    global GOOGLE_WEATHER_API_KEY, WEATHER_LATITUDE, WEATHER_LONGITUDE, WEATHER_CITY
+    global weather_refresh_revision
+
+    latest_config = load_config()
+    WEATHER_API_KEY = latest_config.get("weather_api_key")
+    WEATHER_LOCATION = latest_config.get("weather_region", "Porto") or "Porto"
+    WEATHER_PROVIDER = latest_config.get("weather_provider") or ("weatherapi" if WEATHER_API_KEY else "openmeteo")
+    GOOGLE_WEATHER_API_KEY = latest_config.get("google_weather_api_key")
+    WEATHER_LATITUDE = latest_config.get("weather_latitude")
+    WEATHER_LONGITUDE = latest_config.get("weather_longitude")
+    WEATHER_CITY = latest_config.get("weather_city") or WEATHER_LOCATION
+    cache.pop("weather", None)
+
+    weather_data = get_weather_data(force_refresh=True)
+    if not weather_data or not weather_data.get("available"):
+        weather_refresh_revision += 1
+        message = (weather_data or {}).get("error", "Unable to fetch weather data")
+        return jsonify({"status": "error", "message": message}), 503
+
+    weather_refresh_revision += 1
+    return jsonify({
+        "status": "ok",
+        "message": "Weather information refreshed.",
+        "weather": weather_data,
+    })
 
 @app.route("/config_portal_pin.json")
 def config_portal_pin_json():
@@ -1112,26 +1171,35 @@ def update_stream():
 @app.route("/config/stream")
 def config_stream():
     """Open an SSE stream that notifies clients when config or photo metadata changes."""
-    CONFIG_FILES = [CONFIG_FILE, PHOTO_JSON]
+    watched_files = {
+        CONFIG_FILE: "config",
+        PHOTO_JSON: "reload",
+    }
 
     def event_stream():
-        """Yield SSE heartbeat and reload messages when watched files change."""
-        mtimes = {f: os.path.getmtime(f) if os.path.exists(f) else 0 for f in CONFIG_FILES}
+        """Yield targeted frontend-update messages and heartbeats."""
+        last_weather_revision = weather_refresh_revision
+        mtimes = {f: os.path.getmtime(f) if os.path.exists(f) else 0 for f in watched_files}
         yield "data: ready\n\n"
         while True:
             time.sleep(1)
-            changed = False
-            for f in CONFIG_FILES:
+            events = []
+            for f, event_name in watched_files.items():
                 try:
                     mtime = os.path.getmtime(f)
                     if mtime != mtimes[f]:
                         mtimes[f] = mtime
-                        changed = True
+                        events.append(event_name)
                         print(f"🔄 {f} changed — notifying clients")
                 except FileNotFoundError:
                     continue
-            if changed:
-                yield "data: reload\n\n"
+            if weather_refresh_revision != last_weather_revision:
+                last_weather_revision = weather_refresh_revision
+                events.append("weather")
+
+            if events:
+                for event_name in dict.fromkeys(events):
+                    yield f"data: {event_name}\n\n"
             else:
                 yield ": heartbeat\n\n"
 
