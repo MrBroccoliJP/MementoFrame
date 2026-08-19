@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 30, # Google Weather endpoint caching and mock availability behavior
+        "version": 30, # Google  Weather endpoint caching and mock availability behavior
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
