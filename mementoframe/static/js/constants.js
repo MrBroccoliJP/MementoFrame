@@ -65,7 +65,7 @@ export const PATHS = {
  * @property {number} CLOCK                - Clock tick rate (1 s — updates every second).
  * @property {number} SPOTIFY              - Spotify playback poll rate (5 s).
  * @property {number} WIFI                 - Wi-Fi/connectivity check rate (30 s).
- * @property {number} WEATHER              - Weather data poll rate (30 min).
+ * @property {number} WEATHER              - Weather data poll rate (1 h).
  * @property {number} PHOTOS               - Time each photo is displayed (20 s).
  * @property {number} QR                   - QR code IP refresh rate (30 s).
  * @property {number} HOURLY_CHECK         - Rate at which the auto power schedule is evaluated (1 min).
@@ -79,7 +79,7 @@ export const INTERVALS = {
   CLOCK:                 1000,
   SPOTIFY:               5000,
   WIFI:                  30000,
-  WEATHER:               30 * 60 * 1000,  // 30 minutes
+  WEATHER:               60 * 60 * 1000,  // 1 hour
   PHOTOS:                20000,
   QR:                    30000,
   UPDATE_STATUS:         60000,

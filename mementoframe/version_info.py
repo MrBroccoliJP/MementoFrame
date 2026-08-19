@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 56, # Internet/local connection status badge
+        "version": 57, # Persistent weekly calendar without weather and weather polling
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 30, # Internet reachability status for the configuration dashboard
+        "version": 31, # Improved mock controls and source-specific settings
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 29, # Provider adapters, freshness state, and manual weather refresh
+        "version": 30, # Google Weather endpoint caching and mock availability behavior
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

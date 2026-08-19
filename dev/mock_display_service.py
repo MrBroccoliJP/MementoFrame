@@ -79,21 +79,85 @@ def mock_management_html() -> str:
     networks = "\n".join(state.get("known_networks", []))
     return f"""
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MementoFrame Mock Controls</title><style>
-:root{{color-scheme:light dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}}body{{margin:0;background:#111827;color:#f9fafb}}main{{max-width:1160px;margin:0 auto;padding:32px 20px 64px}}a{{color:#93c5fd}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px;margin-top:22px}}.card{{background:#1f2937;border:1px solid #374151;border-radius:18px;padding:18px;box-shadow:0 12px 30px rgba(0,0,0,.25)}}label{{display:block;margin:10px 0 5px;color:#d1d5db;font-size:14px}}input,select,textarea{{width:100%;box-sizing:border-box;border:1px solid #4b5563;border-radius:10px;padding:10px;background:#111827;color:#f9fafb}}input[type=checkbox]{{width:auto}}button{{border:0;border-radius:999px;padding:10px 14px;margin:8px 8px 0 0;cursor:pointer;background:#2563eb;color:white;font-weight:700}}button.secondary{{background:#4b5563}}button.danger{{background:#dc2626}}code{{background:#111827;padding:2px 6px;border-radius:7px}}.muted{{color:#9ca3af}}.row{{display:flex;gap:10px;align-items:center;flex-wrap:wrap}}
-.topbar{{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex-wrap:wrap}}.nav{{display:flex;gap:8px;flex-wrap:wrap}}.nav a{{padding:8px 11px;background:#0f172a;border:1px solid #374151;border-radius:10px;text-decoration:none}}.integration-status{{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}}.status-pill{{padding:6px 10px;border:1px solid #475569;border-radius:999px;background:#0f172a;font-size:13px}}.status-pill.ok{{color:#86efac}}.status-pill.warn{{color:#fcd34d}}.card h2{{margin-top:0}}input:focus,select:focus,textarea:focus{{outline:2px solid #2563eb;outline-offset:1px}}button:hover{{filter:brightness(1.12);transform:translateY(-1px)}}hr{{border:0;border-top:1px solid #374151;margin:18px 0}}
-</style></head><body><main>
-<div class="topbar"><div><h1>MementoFrame Mock Controls</h1><p class="muted">Test display states and live integrations without Raspberry Pi hardware.</p></div><nav class="nav"><a href="/">Frame UI</a><a href="http://localhost:5000">Configuration</a><a href="/weather.json">Weather JSON</a><a href="/spotify.json">Spotify JSON</a><a href="/status.json">Status JSON</a></nav></div>
-<div class="integration-status"><span class="status-pill">Weather source: {weather.get('source', 'mock')}</span><span class="status-pill {'ok' if openmeteo_ready else 'warn'}">Open-Meteo: {'ready' if openmeteo_ready else 'needs coordinates'}</span><span class="status-pill {'ok' if weatherapi_ready else 'warn'}">WeatherAPI: {'ready' if weatherapi_ready else 'needs key'}</span><span class="status-pill {'ok' if google_ready else 'warn'}">Google Weather: {'ready' if google_ready else 'needs key/coordinates'}</span><span class="status-pill">Spotify: {state['spotify'].get('source', 'mock')}</span></div>
-<div class="grid">
+<title>MementoFrame Mock Controls</title>
+<link rel="stylesheet" href="/static/config_portal.css">
+<style>
+.mock-dashboard .dashboard-hero{{margin-bottom:18px}}.mock-dashboard .dashboard-meta{{max-width:560px}}
+.mock-links{{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}}.mock-links a{{padding:9px 12px;border:1px solid var(--dashboard-border);border-radius:12px;color:#d7c5ff;background:rgba(183,148,255,.07);font-size:.78rem;font-weight:750;text-decoration:none}}.mock-links a:hover{{background:rgba(183,148,255,.14)}}
+.mock-dashboard .settings-content>.card{{scroll-margin-top:18px;margin:0 0 12px;overflow:hidden;border:1px solid var(--dashboard-border);border-radius:20px;background:var(--dashboard-surface);box-shadow:0 14px 42px rgba(0,0,0,.16)}}.mock-dashboard .card>h2{{margin:0;padding:20px;border-bottom:1px solid rgba(255,255,255,.065);color:#f0f5f2;background:rgba(255,255,255,.018);font-size:1rem;letter-spacing:-.01em;text-transform:none}}.mock-dashboard .card>h2::before{{display:inline-grid;width:30px;height:30px;margin-right:12px;place-items:center;border:1px solid rgba(183,148,255,.32);border-radius:9px;color:var(--dashboard-accent);background:rgba(183,148,255,.1);font-size:.62rem;content:'MO'}}
+.mock-dashboard .card>p,.mock-dashboard .card>.muted{{margin:14px 20px;color:var(--dashboard-muted);line-height:1.55}}.mock-dashboard .card>p a{{color:var(--dashboard-accent)}}
+.mock-dashboard .section>p,.mock-dashboard .section>.muted{{margin:14px 20px;color:var(--dashboard-muted);line-height:1.55}}.mock-dashboard .section>p a{{color:var(--dashboard-accent)}}
+.mock-dashboard input[type=number],.mock-dashboard textarea{{min-height:46px;border-color:rgba(255,255,255,.11);border-radius:12px;color:#eef3f0;background:#101311}}.mock-dashboard textarea{{resize:vertical}}
+.mock-dashboard label:has(input[type=checkbox]){{display:flex;align-items:center;min-height:42px;padding:9px 11px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.025);cursor:pointer}}.mock-dashboard label:has(input[type=checkbox]):hover{{border-color:rgba(183,148,255,.28)}}
+.mock-dashboard form>button.secondary{{border:1px solid rgba(183,148,255,.28);color:#d7c5ff;background:rgba(183,148,255,.09);box-shadow:none}}.mock-dashboard form>button.danger{{color:#fff;background:#a92632;box-shadow:none}}.mock-dashboard hr{{width:100%;border:0;border-top:1px solid var(--dashboard-border);margin:8px 0}}
+.mock-dashboard .status-pill.ok{{border-color:rgba(76,217,130,.25);color:#dff9e8;background:rgba(38,150,82,.16)}}.mock-dashboard .status-pill.warn{{border-color:rgba(245,180,68,.28);color:#ffe8bd;background:rgba(181,118,26,.16)}}
+.scenario-panel{{display:flex;flex-direction:column;gap:.9rem;padding:14px;border:1px solid rgba(183,148,255,.15);border-radius:15px;background:rgba(183,148,255,.035)}}.scenario-panel[hidden]{{display:none}}.scenario-panel__title{{margin:0;color:var(--dashboard-accent);font-size:.7rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}}.scenario-panel--actions{{margin:0 20px 18px}}.scenario-panel--actions form{{margin:0;padding:0;border:0}}.scenario-panel--actions form+form{{padding:0;border:0}}
+.mock-dashboard .section form+form,.mock-dashboard .card form+form{{margin-top:0}}@media(max-width:700px){{.mock-links{{overflow-x:auto;flex-wrap:nowrap}}.mock-links a{{flex:0 0 auto}}}}
+</style></head><body class="frame-theme config-dashboard mock-dashboard"><div class="container">
+<header class="dashboard-hero"><div class="dashboard-brand"><span class="dashboard-brand__mark" aria-hidden="true">M</span><div><p class="dashboard-eyebrow">Development workspace</p><h1>Mock control center</h1><p class="dashboard-subtitle">Simulate frame states and integrations without Raspberry Pi hardware.</p></div></div><div class="dashboard-meta"><span class="status-pill">Weather: {weather.get('source', 'mock')}</span><span class="status-pill {'ok' if openmeteo_ready else 'warn'}">Open-Meteo {'ready' if openmeteo_ready else 'setup needed'}</span><span class="status-pill {'ok' if weatherapi_ready else 'warn'}">WeatherAPI {'ready' if weatherapi_ready else 'setup needed'}</span><span class="status-pill {'ok' if google_ready else 'warn'}">Google {'ready' if google_ready else 'setup needed'}</span><span class="status-pill">Spotify: {state['spotify'].get('source', 'mock')}</span></div></header>
+<nav class="mock-links" aria-label="Developer links"><a href="/">Open frame UI</a><a href="http://localhost:5000">Configuration dashboard</a><a href="/weather.json">Weather JSON</a><a href="/spotify.json">Spotify JSON</a><a href="/status.json">Status JSON</a></nav>
+<div class="dashboard-shell"><aside class="settings-sidebar"><p class="settings-sidebar__label">Mock scenarios</p><nav class="settings-nav" aria-label="Mock control sections"><a href="#system-mock"><span>Sy</span>System</a><a href="#time-mock"><span>Ti</span>Time</a><a href="#pin-mock"><span>Pi</span>PIN</a><a href="#spotify-mock"><span>Sp</span>Spotify</a><a href="#weather-mock"><span>We</span>Weather</a><a href="#updates-mock"><span>Up</span>Updates</a></nav><p class="sidebar-note">Open a section, change the scenario, and save it. The frame updates immediately where supported.</p></aside><main class="settings-content">
 <section class="card"><h2>System/AP mode</h2><p>Mode: <code>{state['mode']}</code>, IP: <code>{state['ip']}</code>, screen: <code>{state['screen']}</code></p><form method="post" action="/mock/state"><label>Mode</label><select name="mode"><option value="client" {'selected' if state['mode']=='client' else ''}>client / Wi‑Fi</option><option value="ap" {'selected' if state['mode']=='ap' else ''}>ap / setup hotspot</option><option value="unknown" {'selected' if state['mode']=='unknown' else ''}>unknown</option></select><label>IP address</label><input name="ip" value="{state['ip']}"><label>Wi‑Fi SSID</label><input name="wifi_ssid" value="{state.get('wifi_ssid','')}"><label>AP SSID</label><input name="ap_ssid" value="{state.get('ap_ssid','MementoFrame')}"><label>Known networks, one per line</label><textarea name="known_networks" rows="4">{networks}</textarea><button>Save system state</button></form><form method="post" action="/dev/toggle_mode"><button class="secondary">Toggle AP/client</button></form></section>
 <section class="card"><h2>Forced time</h2><p>Override enabled: <code>{time_cfg['enabled']}</code></p><form method="post" action="/mock/time"><label><input type="checkbox" name="enabled" {'checked' if time_cfg['enabled'] else ''}> Enable browser Date override on frame page</label><label>Fixed ISO datetime</label><input name="fixed_iso" value="{time_cfg['fixed_iso']}" placeholder="2026-05-15T10:08:00+01:00"><label><input type="checkbox" name="tick" {'checked' if time_cfg['tick'] else ''}> Let forced time continue ticking</label><button>Save time override</button></form><p class="muted">The frame route injects <code>/mock/time-override.js</code> before the frontend runs.</p></section>
 <section class="card"><h2>Config portal PIN</h2><p>Active PIN: <code>{pin.get('pin') or 'none'}</code>{' — ' + str(pin.get('seconds_remaining')) + 's remaining' if pin.get('active') else ''}</p><form method="post" action="/mock/pin/create"><button>Create/show PIN</button></form><form method="post" action="/mock/pin/clear"><button class="danger">Clear PIN</button></form><p class="muted">Current real endpoint: <code>/config_portal_pin.json</code>. Legacy aliases are also included for local testing.</p></section>
 <section class="card"><h2>Spotify</h2><p>Source: <code>{state['spotify'].get('source','mock')}</code></p><p>Current: <code>{track.get('track','not playing')}</code> {('— ' + track.get('artist','')) if track.get('artist') else ''}</p>{f'<p class="muted">{track.get("error")}</p>' if track.get('error') else ''}<form method="post" action="/mock/spotify"><label>Data source</label><select name="source"><option value="mock" {'selected' if state['spotify'].get('source','mock')=='mock' else ''}>mock data</option><option value="real" {'selected' if state['spotify'].get('source')=='real' else ''}>real Spotify</option></select><label><input type="checkbox" name="connected" {'checked' if state['spotify'].get('connected') else ''}> Connected</label><label><input type="checkbox" name="playing" {'checked' if state['spotify'].get('playing') else ''}> Playing</label><label>Mock track</label><select name="track_index">{''.join(f'<option value="{i}" {"selected" if i == int(state["spotify"].get("track_index",0)) else ""}>{t["track"]} — {t["artist"]}</option>' for i,t in enumerate(MOCK_TRACKS))}</select><button>Save Spotify</button></form><form method="post" action="/dev/toggle_spotify"><button class="secondary">Toggle play</button></form><form method="post" action="/dev/next_track"><button class="secondary">Next track</button></form><form method="get" action="/spotify/connect"><button>Connect real Spotify</button></form><form method="post" action="/spotify/manual"><label>Paste Spotify callback URL</label><input name="spotify_url" placeholder="https://httpbin.org/anything?code=..."><button>Save real Spotify token</button></form><form method="post" action="/spotify/disconnect"><button class="danger">Disconnect Spotify</button></form></section>
 <section class="card"><h2>Weather</h2><p>Source: <code>{weather.get('source','mock')}</code></p><p><a href="/weather.json">Weather JSON</a></p><form method="post" action="/mock/weather"><label>Data source</label><select name="source"><option value="mock" {'selected' if weather.get('source','mock')=='mock' else ''}>mock data</option><option value="real" {'selected' if weather.get('source')=='real' else ''}>real WeatherAPI</option></select><label><input type="checkbox" name="enabled" {'checked' if weather.get('enabled') else ''}> Enabled / show weather</label><label><input type="checkbox" name="forecast_enabled" {'checked' if weather.get('forecast_enabled', True) else ''}> Include mock forecast data</label><label>City / alert matching area</label><input name="city" value="{weather.get('city','')}"><label>Temperature °C</label><input name="temperature" type="number" step="0.1" value="{weather.get('temperature',0)}"><label>Condition text</label><input name="condition" value="{weather.get('condition','')}"><label>WeatherAPI condition code</label><input name="conditionCode" type="number" value="{weather.get('conditionCode',1000)}"><label><input type="checkbox" name="isDay" {'checked' if weather.get('isDay', True) else ''}> Daytime condition</label><label>UV index</label><input name="uv" type="number" step="0.1" value="{weather.get('uv',0)}"><label>Moon phase</label><select name="moonPhase">{''.join(f'<option value="{phase}" {"selected" if str(weather.get("moonPhase","Waxing Crescent")) == phase else ""}>{phase}</option>' for phase in ["New Moon","Waxing Crescent","First Quarter","Waxing Gibbous","Full Moon","Waning Gibbous","Last Quarter","Waning Crescent"])}</select><label>Humidity %</label><input name="humidity" type="number" value="{weather.get('humidity',0)}"><label>Wind kph</label><input name="windSpeed" type="number" step="0.1" value="{weather.get('windSpeed',0)}"><hr><label><input type="checkbox" name="alerts_enabled" {'checked' if weather.get('alerts_enabled') else ''}> Include mock weather alert</label><label>Alert event</label><input name="alert_event" value="{weather.get('alert_event','Thunderstorm warning')}"><label>Alert headline</label><input name="alert_headline" value="{weather.get('alert_headline','Mock thunderstorm warning')}"><label>Alert severity</label><select name="alert_severity">{''.join(f'<option value="{sev}" {"selected" if str(weather.get("alert_severity","Moderate")) == sev else ""}>{sev}</option>' for sev in ["Minor","Moderate","Severe","Extreme"])}</select><label>Alert areas</label><input name="alert_areas" value="{weather.get('alert_areas', weather.get('city', 'Porto'))}"><label>Alert description</label><textarea name="alert_desc" rows="3">{weather.get('alert_desc','Mock alert: thunderstorms are possible in your area.')}</textarea><label>Alert instruction</label><input name="alert_instruction" value="{weather.get('alert_instruction','Stay indoors if thunder is heard.')}"><label><input type="checkbox" name="alert_second_enabled" {'checked' if weather.get('alert_second_enabled') else ''}> Include second mock alert</label><label>Second alert event</label><input name="alert_second_event" value="{weather.get('alert_second_event','High temperature warning')}"><label>Second alert headline</label><input name="alert_second_headline" value="{weather.get('alert_second_headline','Mock heat warning')}"><label>Second alert severity</label><select name="alert_second_severity">{''.join(f'<option value="{sev}" {"selected" if str(weather.get("alert_second_severity","Severe")) == sev else ""}>{sev}</option>' for sev in ["Minor","Moderate","Severe","Extreme"])}</select><label>Second alert areas</label><input name="alert_second_areas" value="{weather.get('alert_second_areas','Portugal')}"><label>Second alert description</label><textarea name="alert_second_desc" rows="3">{weather.get('alert_second_desc','Mock alert: very hot weather is expected.')}</textarea><label>Second alert instruction</label><input name="alert_second_instruction" value="{weather.get('alert_second_instruction','Drink water and avoid direct sun.')}"><button>Save weather</button></form><p class="muted">Mock weather uses local <code>/assets/Weather/meteoicons/fill</code> icons. Alert areas are filtered against the city/area above. Use a broader area like <code>Portugal</code> to test country-wide alerts.</p></section>
 <section class="card"><h2>Software updates</h2><p>Installed: <code>{update_state.get('installed_version') or 'unknown'}</code></p><p>Latest: <code>{update_state.get('latest_version') or update_state.get('latest_tag') or 'not checked'}</code></p><p>Status: <code>{'mock pending update' if update_state.get('mock_pending_update') else ('available' if update_state.get('available') else 'not available')}</code></p><form method="post" action="/mock/update/pending"><label><input type="checkbox" name="mock_pending_update" {'checked' if update_state.get('mock_pending_update') else ''}> Mock pending update</label><button>Save mock flag</button></form><form method="post" action="/update/check"><button>Check GitHub releases</button></form><form method="post" action="/update/install"><button class="secondary">Install endpoint test</button></form><form method="post" action="/mock/update/autoupdate"><button class="secondary">Run autoupdate test</button></form>{f'<p class="muted">{update_state.get("last_error")}</p>' if update_state.get('last_error') else ''}<p class="muted">Mocks never install, reboot, or change project files.</p></section>
-</div><script>
+</main></div><script>
 (() => {{
+  const sectionIds = ['system-mock', 'time-mock', 'pin-mock', 'spotify-mock', 'weather-mock', 'updates-mock'];
+  document.querySelectorAll('.settings-content > .card').forEach((card, index) => {{
+    card.id = sectionIds[index] || `mock-section-${{index}}`;
+  }});
+  document.querySelectorAll('.settings-nav a').forEach((link) => {{
+    link.addEventListener('click', () => document.querySelector(link.hash)?.scrollIntoView({{ behavior: 'smooth', block: 'start' }}));
+  }});
+
+  function groupChildren(form, startIndex, endIndex, id, title) {{
+    const panel = document.createElement('div');
+    panel.id = id;
+    panel.className = 'scenario-panel';
+    panel.innerHTML = `<p class="scenario-panel__title">${{title}}</p>`;
+    [...form.children].slice(startIndex, endIndex).forEach((child) => panel.appendChild(child));
+    form.insertBefore(panel, form.lastElementChild);
+    return panel;
+  }}
+
+  function groupForms(forms, id, title) {{
+    const panel = document.createElement('div');
+    panel.id = id;
+    panel.className = 'scenario-panel scenario-panel--actions';
+    panel.innerHTML = `<p class="scenario-panel__title">${{title}}</p>`;
+    forms[0]?.parentNode.insertBefore(panel, forms[0]);
+    forms.forEach((form) => panel.appendChild(form));
+    return panel;
+  }}
+
+  const spotifySource = document.querySelector('form[action="/mock/spotify"] select[name="source"]');
+  const spotifyForm = spotifySource?.closest('form');
+  if (spotifyForm) {{
+    const mockFields = groupChildren(spotifyForm, 2, -1, 'spotify-mock-settings', 'Simulated playback');
+    const card = spotifyForm.closest('.card');
+    const mockActions = groupForms([
+      card.querySelector('form[action="/dev/toggle_spotify"]'),
+      card.querySelector('form[action="/dev/next_track"]')
+    ].filter(Boolean), 'spotify-mock-actions', 'Playback actions');
+    const realSettings = groupForms([
+      card.querySelector('form[action="/spotify/connect"]'),
+      card.querySelector('form[action="/spotify/manual"]'),
+      card.querySelector('form[action="/spotify/disconnect"]')
+    ].filter(Boolean), 'spotify-real-settings', 'Spotify connection');
+
+    const updateSpotifyPanels = () => {{
+      const isMock = spotifySource.value === 'mock';
+      mockFields.hidden = !isMock;
+      mockActions.hidden = !isMock;
+      realSettings.hidden = isMock;
+    }};
+    spotifySource.addEventListener('change', updateSpotifyPanels);
+    updateSpotifyPanels();
+  }}
+
   const source = document.querySelector('form[action="/mock/weather"] select[name="source"]');
   if (!source) return;
   const selected = source.value === 'real' ? '{weather_provider}' : source.value;
@@ -103,8 +167,13 @@ def mock_management_html() -> str:
     <option value="weatherapi">Live WeatherAPI</option>
     <option value="google">Live Google Weather</option>`;
   source.value = selected;
+  const weatherForm = source.closest('form');
+  const weatherFields = groupChildren(weatherForm, 2, -1, 'weather-mock-settings', 'Simulated weather data');
+  const updateWeatherPanel = () => {{ weatherFields.hidden = source.value !== 'mock'; }};
+  source.addEventListener('change', updateWeatherPanel);
+  updateWeatherPanel();
 }})();
-</script></main></body></html>"""
+</script></div></body></html>"""
 
 
 @app.route("/")
@@ -319,6 +388,7 @@ def save_mock_spotify_form():
 
 @app.route("/mock/weather", methods=["POST"])
 def save_mock_weather_form():
+    global weather_refresh_revision
     state = load_state()
     state["weather"].update({
         "source": request.form.get("source", "mock"),
@@ -349,6 +419,7 @@ def save_mock_weather_form():
         "alert_second_instruction": request.form.get("alert_second_instruction", "Drink water and avoid direct sun."),
     })
     save_state(state)
+    weather_refresh_revision += 1
     return redirect(url_for("mock_management"))
 
 
