@@ -140,8 +140,18 @@ art and applies it across the interface for a coordinated theme.
 - GPIO brightness pulse control
 - Auto on/off schedules
 - Dual timezone clocks
-- Weather widget
+- Weather widget with selectable Open-Meteo, WeatherAPI.com, or Google Weather providers
 - Spotify album art and playback state
+
+### Weather Providers
+
+WeatherAPI.com was MementoFrame's original and default weather provider. After
+inconsistent and inaccurate results were observed for the locations used during
+development, Open-Meteo and Google Weather were added as alternatives, with
+Open-Meteo becoming the default for new installations. The provider adapters
+normalize their different responses into the original MementoFrame weather
+flow, allowing the existing current-weather, hourly-forecast, daily-forecast,
+UV-index, and icon-rendering code to work across all three providers.
 
 ### Updates
 
@@ -469,7 +479,10 @@ available controls, test scenarios, and individual mock endpoints.
           ┌───────────────────┼───────────────────┐
           │                   │                   │
           ▼                   ▼                   ▼
-    Spotify API         WeatherAPI          GPIO screen control
+    Spotify API      Weather providers      GPIO screen control
+                     |- Open-Meteo
+                     |- WeatherAPI.com
+                     `- Google Weather
 
 
                     ┌──────────────────────────────┐
@@ -667,11 +680,29 @@ Special thanks to:
   </tr>
   <tr>
     <td align="center" width="220">
+      <a href="https://open-meteo.com/en/docs">
+        <img src="https://open-meteo.com/favicon.ico" alt="Open-Meteo" width="72"/>
+        <br/><strong>Open-Meteo</strong>
+      </a>
+    </td>
+    <td>Default keyless provider for current conditions and hourly and daily forecasts.</td>
+  </tr>
+  <tr>
+    <td align="center" width="220">
+      <a href="https://developers.google.com/maps/documentation/weather">
+        <img src="https://www.gstatic.com/images/branding/product/2x/googleg_96dp.png" alt="Google" width="72"/>
+        <br/><strong>Google Weather API</strong>
+      </a>
+    </td>
+    <td>Optional provider for current conditions, hourly and daily forecasts, and public weather alerts.</td>
+  </tr>
+  <tr>
+    <td align="center" width="220">
       <a href="https://www.weatherapi.com/">
         <img src="https://cdn.weatherapi.com/v4/images/weatherapi_logo.png" alt="WeatherAPI.com" width="180"/>
       </a>
     </td>
-    <td>Weather information displayed by MementoFrame.</td>
+    <td>Original MementoFrame weather provider; still supported for current conditions, forecasts, astronomy data, and weather alerts.</td>
   </tr>
   <tr>
     <td align="center" width="220">
@@ -680,6 +711,14 @@ Special thanks to:
       </a>
     </td>
     <td>Playback information, album artwork, and music integration used by the MementoFrame display interface.</td>
+  </tr>
+  <tr>
+    <td align="center" width="220">
+      <a href="https://github.com/davidshimjs/qrcodejs">
+        <strong>QRCode.js</strong>
+      </a>
+    </td>
+    <td>Dependency-free MIT-licensed QR encoder used to generate the local configuration-portal QR code. MementoFrame applies its own connected, rounded canvas renderer to the generated matrix.</td>
   </tr>
 </table>
 

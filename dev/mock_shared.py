@@ -633,14 +633,12 @@ def _meteoicon_url(icon_name: str | None) -> str:
 
 
 def _uv_icon_name(uv: Any) -> str:
-    """Use UV-specific icons only for clear daytime sky when UV is 5 or above."""
+    """Map every numeric UV index to the closest bundled UV icon."""
     try:
         uv_value = int(round(float(uv)))
     except Exception:
         return "clear-day"
 
-    if uv_value < 5:
-        return "clear-day"
     if uv_value >= 12:
         return "uv-index-11-plus"
     if uv_value == 11:

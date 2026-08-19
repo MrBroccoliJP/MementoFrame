@@ -367,14 +367,12 @@ def resolve_moon_phase_icon(moon_phase):
 
 
 def resolve_uv_icon_name(uv_value):
-    """Use UV-specific icons only for clear daytime sky when UV is 5 or above."""
+    """Map every numeric UV index to the closest bundled UV icon."""
     try:
         rounded = int(round(float(uv_value)))
     except (TypeError, ValueError):
         return "clear-day"
 
-    if rounded < 5:
-        return "clear-day"
     if rounded >= 12:
         return "uv-index-11-plus"
     if rounded == 11:

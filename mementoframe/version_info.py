@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 57, # Persistent weekly calendar without weather and weather polling
+        "version": 58, # Connected rounded QR modules and finder patterns
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 30, # Google  Weather endpoint caching and mock availability behavior
+        "version": 31, # Select the corresponding bundled icon for every UV index
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

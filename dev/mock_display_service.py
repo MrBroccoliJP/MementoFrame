@@ -92,6 +92,7 @@ def mock_management_html() -> str:
 .mock-dashboard form>button.secondary{{border:1px solid rgba(183,148,255,.28);color:#d7c5ff;background:rgba(183,148,255,.09);box-shadow:none}}.mock-dashboard form>button.danger{{color:#fff;background:#a92632;box-shadow:none}}.mock-dashboard hr{{width:100%;border:0;border-top:1px solid var(--dashboard-border);margin:8px 0}}
 .mock-dashboard .status-pill.ok{{border-color:rgba(76,217,130,.25);color:#dff9e8;background:rgba(38,150,82,.16)}}.mock-dashboard .status-pill.warn{{border-color:rgba(245,180,68,.28);color:#ffe8bd;background:rgba(181,118,26,.16)}}
 .scenario-panel{{display:flex;flex-direction:column;gap:.9rem;padding:14px;border:1px solid rgba(183,148,255,.15);border-radius:15px;background:rgba(183,148,255,.035)}}.scenario-panel[hidden]{{display:none}}.scenario-panel__title{{margin:0;color:var(--dashboard-accent);font-size:.7rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}}.scenario-panel--actions{{margin:0 20px 18px}}.scenario-panel--actions form{{margin:0;padding:0;border:0}}.scenario-panel--actions form+form{{padding:0;border:0}}
+.mock-dashboard .provider-switch{{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;margin:0;padding:0;border:0}}.mock-dashboard .provider-switch legend{{margin-bottom:8px;color:var(--dashboard-muted);font-size:.78rem}}.mock-dashboard .provider-switch label{{display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:rgba(255,255,255,.025);cursor:pointer}}.mock-dashboard .provider-switch label:has(input:checked){{border-color:rgba(183,148,255,.55);color:#f3edff;background:rgba(183,148,255,.13)}}
 .mock-dashboard .section form+form,.mock-dashboard .card form+form{{margin-top:0}}@media(max-width:700px){{.mock-links{{overflow-x:auto;flex-wrap:nowrap}}.mock-links a{{flex:0 0 auto}}}}
 </style></head><body class="frame-theme config-dashboard mock-dashboard"><div class="container">
 <header class="dashboard-hero"><div class="dashboard-brand"><span class="dashboard-brand__mark" aria-hidden="true">M</span><div><p class="dashboard-eyebrow">Development workspace</p><h1>Mock control center</h1><p class="dashboard-subtitle">Simulate frame states and integrations without Raspberry Pi hardware.</p></div></div><div class="dashboard-meta"><span class="status-pill">Weather: {weather.get('source', 'mock')}</span><span class="status-pill {'ok' if openmeteo_ready else 'warn'}">Open-Meteo {'ready' if openmeteo_ready else 'setup needed'}</span><span class="status-pill {'ok' if weatherapi_ready else 'warn'}">WeatherAPI {'ready' if weatherapi_ready else 'setup needed'}</span><span class="status-pill {'ok' if google_ready else 'warn'}">Google {'ready' if google_ready else 'setup needed'}</span><span class="status-pill">Spotify: {state['spotify'].get('source', 'mock')}</span></div></header>
@@ -158,20 +159,57 @@ def mock_management_html() -> str:
     updateSpotifyPanels();
   }}
 
-  const source = document.querySelector('form[action="/mock/weather"] select[name="source"]');
-  if (!source) return;
-  const selected = source.value === 'real' ? '{weather_provider}' : source.value;
-  source.innerHTML = `
-    <option value="mock">Simulated weather</option>
-    <option value="openmeteo">Live Open-Meteo</option>
-    <option value="weatherapi">Live WeatherAPI</option>
-    <option value="google">Live Google Weather</option>`;
-  source.value = selected;
-  const weatherForm = source.closest('form');
+  const sourceSelect = document.querySelector('form[action="/mock/weather"] select[name="source"]');
+  if (!sourceSelect) return;
+  const savedWeatherSource = '{weather.get("source", "mock")}';
+  const selectedSource = ['mock', 'openmeteo', 'weatherapi', 'google'].includes(savedWeatherSource)
+    ? savedWeatherSource
+    : (savedWeatherSource === 'real' ? '{weather_provider}' : 'mock');
+  const weatherForm = sourceSelect.closest('form');
+  const sourceLabel = sourceSelect.previousElementSibling;
+  const sourceSwitch = document.createElement('fieldset');
+  sourceSwitch.className = 'provider-switch';
+  const weatherSources = [
+    ['mock', 'Simulated weather'],
+    ['openmeteo', 'Live Open-Meteo'],
+    ['weatherapi', 'Live WeatherAPI'],
+    ['google', 'Live Google Weather']
+  ];
+  sourceSwitch.innerHTML = `<legend>Weather data source</legend>${{weatherSources.map(([value, label]) => `<label><input type="radio" name="source" value="${{value}}" ${{value === selectedSource ? 'checked' : ''}}> ${{label}}</label>`).join('')}}`;
+  sourceLabel?.remove();
+  sourceSelect.replaceWith(sourceSwitch);
+
   const weatherFields = groupChildren(weatherForm, 2, -1, 'weather-mock-settings', 'Simulated weather data');
-  const updateWeatherPanel = () => {{ weatherFields.hidden = source.value !== 'mock'; }};
-  source.addEventListener('change', updateWeatherPanel);
-  updateWeatherPanel();
+  const liveSettings = document.createElement('div');
+  liveSettings.id = 'weather-live-settings';
+  liveSettings.className = 'scenario-panel';
+  liveSettings.innerHTML = `<p class="scenario-panel__title">Live provider settings</p>
+    <div id="mock-weatherapi-settings">
+      <label>WeatherAPI.com key</label><input type="password" name="weather_api_key" value="{config.get('weather_api_key', '')}" autocomplete="off">
+      <label>WeatherAPI location</label><input name="weather_region" value="{config.get('weather_region', '')}" placeholder="e.g. Lisbon, Portugal">
+    </div>
+    <div id="mock-google-settings">
+      <label>Google Weather API key</label><input type="password" name="google_weather_api_key" value="{config.get('google_weather_api_key', '')}" autocomplete="off">
+    </div>
+    <div id="mock-coordinate-settings">
+      <label>City</label><input name="weather_city" value="{config.get('weather_city', '')}">
+      <label>Region / state</label><input name="weather_state" value="{config.get('weather_region', '')}">
+      <label>Country</label><input name="weather_country" value="{config.get('weather_country', '')}">
+      <label>Latitude</label><input type="number" step="any" name="weather_latitude" value="{config.get('weather_latitude') if config.get('weather_latitude') is not None else ''}">
+      <label>Longitude</label><input type="number" step="any" name="weather_longitude" value="{config.get('weather_longitude') if config.get('weather_longitude') is not None else ''}">
+    </div>`;
+  weatherForm.insertBefore(liveSettings, weatherForm.lastElementChild);
+
+  const updateWeatherPanels = () => {{
+    const selected = weatherForm.querySelector('input[name="source"]:checked')?.value || 'mock';
+    weatherFields.hidden = selected !== 'mock';
+    liveSettings.hidden = selected === 'mock';
+    liveSettings.querySelector('#mock-weatherapi-settings').hidden = selected !== 'weatherapi';
+    liveSettings.querySelector('#mock-google-settings').hidden = selected !== 'google';
+    liveSettings.querySelector('#mock-coordinate-settings').hidden = !['openmeteo', 'google'].includes(selected);
+  }};
+  weatherForm.querySelectorAll('input[name="source"]').forEach((radio) => radio.addEventListener('change', updateWeatherPanels));
+  updateWeatherPanels();
 }})();
 </script></div></body></html>"""
 
@@ -390,8 +428,12 @@ def save_mock_spotify_form():
 def save_mock_weather_form():
     global weather_refresh_revision
     state = load_state()
+    config = load_config()
+    source = request.form.get("source", "mock").strip().lower()
+    if source not in {"mock", "openmeteo", "weatherapi", "google"}:
+        source = "mock"
     state["weather"].update({
-        "source": request.form.get("source", "mock"),
+        "source": source,
         "enabled": bool_form("enabled"),
         "forecast_enabled": bool_form("forecast_enabled"),
         "city": request.form.get("city", "Porto"),
@@ -418,6 +460,30 @@ def save_mock_weather_form():
         "alert_second_desc": request.form.get("alert_second_desc", "Mock alert: very hot weather is expected."),
         "alert_second_instruction": request.form.get("alert_second_instruction", "Drink water and avoid direct sun."),
     })
+    if source != "mock":
+        config["weather_provider"] = source
+        config["weather_api_key"] = request.form.get("weather_api_key", config.get("weather_api_key", "")).strip()
+        config["google_weather_api_key"] = request.form.get("google_weather_api_key", config.get("google_weather_api_key", "")).strip()
+        if source == "weatherapi":
+            config["weather_region"] = request.form.get("weather_region", config.get("weather_region", "")).strip()
+        else:
+            city = request.form.get("weather_city", "").strip()
+            region = request.form.get("weather_state", "").strip()
+            country = request.form.get("weather_country", "").strip()
+            try:
+                latitude = float(request.form.get("weather_latitude", ""))
+                longitude = float(request.form.get("weather_longitude", ""))
+            except (TypeError, ValueError):
+                latitude = longitude = None
+            config.update({
+                "weather_city": city,
+                "weather_region": region,
+                "weather_country": country,
+                "weather_latitude": latitude,
+                "weather_longitude": longitude,
+                "weather_location_name": ", ".join(filter(None, [city, region, country])),
+            })
+        save_config(config)
     save_state(state)
     weather_refresh_revision += 1
     return redirect(url_for("mock_management"))
