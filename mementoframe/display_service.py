@@ -68,6 +68,7 @@ USERDATA_DIR = "resources/userdata"
 ASSETS_DIR = "resources/assets"
 PHOTO_JSON = os.path.join(USERDATA_DIR, "Photos/photos.json")
 SPOTIFY_CACHE = os.path.join(USERDATA_DIR, "cache/.cache_spotify")
+GOOGLE_WEATHER_CACHE_FILE = os.path.join(USERDATA_DIR, "cache/google_weather.json")
 RUNTIME_DIR = "runtime"
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
 UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
@@ -162,6 +163,56 @@ MAX_CACHE_AGE = 30  # seconds
 weather_refresh_revision = 0
 WEATHER_CACHE_SECONDS = 10 * 60
 WEATHER_STALE_SECONDS = 2 * 60 * 60
+GOOGLE_WEATHER_CACHE_SECONDS = {
+    "currentConditions": 60 * 60,
+    "forecast/hours": 60 * 60,
+    "forecast/days": 24 * 60 * 60,
+    "publicAlerts": 2 * 60 * 60,
+}
+google_weather_cache = {}
+google_weather_lock = threading.Lock()
+
+
+def _google_weather_location_key():
+    """Identify the location associated with persisted Google responses."""
+    return f"{WEATHER_LATITUDE},{WEATHER_LONGITUDE}"
+
+
+def load_google_weather_cache():
+    """Restore unexpired-capable endpoint data across display-service restarts."""
+    try:
+        with open(GOOGLE_WEATHER_CACHE_FILE, "r", encoding="utf-8") as cache_file:
+            stored = json.load(cache_file)
+        if stored.get("location") != _google_weather_location_key():
+            return
+        for path, entry in (stored.get("entries") or {}).items():
+            if path in GOOGLE_WEATHER_CACHE_SECONDS:
+                google_weather_cache[path] = (entry["data"], float(entry["timestamp"]))
+    except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return
+
+
+def save_google_weather_cache():
+    """Atomically persist Google endpoint responses without storing the API key."""
+    cache_dir = os.path.dirname(GOOGLE_WEATHER_CACHE_FILE)
+    temp_path = f"{GOOGLE_WEATHER_CACHE_FILE}.tmp"
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        payload = {
+            "location": _google_weather_location_key(),
+            "entries": {
+                path: {"data": data, "timestamp": timestamp}
+                for path, (data, timestamp) in google_weather_cache.items()
+            },
+        }
+        with open(temp_path, "w", encoding="utf-8") as cache_file:
+            json.dump(payload, cache_file)
+        os.replace(temp_path, GOOGLE_WEATHER_CACHE_FILE)
+    except (OSError, TypeError, ValueError) as e:
+        print(f"Could not persist Google Weather cache: {e}")
+
+
+load_google_weather_cache()
 
 def safe_spotify_call(endpoint_key, func, *args, **kwargs):
     """Call Spotify with short cache support and graceful rate-limit handling."""
@@ -316,14 +367,12 @@ def resolve_moon_phase_icon(moon_phase):
 
 
 def resolve_uv_icon_name(uv_value):
-    """Use UV-specific icons only for clear daytime sky when UV is 5 or above."""
+    """Map every numeric UV index to the closest bundled UV icon."""
     try:
         rounded = int(round(float(uv_value)))
     except (TypeError, ValueError):
         return "clear-day"
 
-    if rounded < 5:
-        return "clear-day"
     if rounded >= 12:
         return "uv-index-11-plus"
     if rounded == 11:
@@ -721,10 +770,6 @@ def _google_alerts(data):
 def get_google_weather_data(force_refresh=False):
     """Fetch and normalize Google Weather current, hourly, daily, and alert data."""
     now = time.time()
-    if not force_refresh and "weather" in cache:
-        cached_data, cached_time = cache["weather"]
-        if now - cached_time < 600:
-            return cached_data
 
     if not GOOGLE_WEATHER_API_KEY:
         return {"available": False, "stale": False, "error": "Google Weather API key not configured"}
@@ -738,99 +783,112 @@ def get_google_weather_data(force_refresh=False):
     }
 
     def lookup(path, metric=True, **extra):
+        cached = google_weather_cache.get(path)
+        if not force_refresh and cached:
+            cached_data, cached_time = cached
+            if now - cached_time < GOOGLE_WEATHER_CACHE_SECONDS[path]:
+                return cached_data
+
         params = dict(base_params)
         if metric:
             params["unitsSystem"] = "METRIC"
         params.update(extra)
         response = requests.get(f"https://weather.googleapis.com/v1/{path}:lookup", params=params, timeout=8)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        google_weather_cache[path] = (data, time.time())
+        save_google_weather_cache()
+        return data
 
-    try:
-        current = lookup("currentConditions")
-        hourly_data = lookup("forecast/hours", hours=6, pageSize=6)
-        daily_data = lookup("forecast/days", days=5, pageSize=5)
+    # Flask can serve multiple local clients concurrently. Serializing this
+    # section prevents simultaneous cache misses from duplicating Google calls.
+    with google_weather_lock:
         try:
-            alerts_data = lookup("publicAlerts", metric=False, pageSize=20)
-        except (requests.RequestException, ValueError):
-            alerts_data = {}
+            current = lookup("currentConditions")
+            hourly_data = lookup("forecast/hours", hours=6, pageSize=6)
+            daily_data = lookup("forecast/days", days=5, pageSize=5)
+            try:
+                alerts_data = lookup("publicAlerts", metric=False, pageSize=20)
+            except (requests.RequestException, ValueError):
+                cached_alerts = google_weather_cache.get("publicAlerts")
+                alerts_data = cached_alerts[0] if cached_alerts else {}
 
-        days = daily_data.get("forecastDays", []) or []
-        moon_phase = ((days[0].get("moonEvents") or {}).get("moonPhase", "") if days else "")
-        current_condition, current_code = _google_condition(current.get("weatherCondition"))
-        current_is_day = bool(current.get("isDaytime", True))
-        current_uv = current.get("uvIndex")
+            days = daily_data.get("forecastDays", []) or []
+            moon_phase = ((days[0].get("moonEvents") or {}).get("moonPhase", "") if days else "")
+            current_condition, current_code = _google_condition(current.get("weatherCondition"))
+            current_is_day = bool(current.get("isDaytime", True))
+            current_uv = current.get("uvIndex")
 
-        weather_info = {
-            "available": True,
-            "stale": False,
-            "fetchedAt": int(now * 1000),
-            "temperature": round(_google_temperature(current.get("temperature")), 1),
-            "condition": current_condition,
-            "conditionCode": current_code,
-            "isDay": current_is_day,
-            "uv": current_uv,
-            "moonPhase": moon_phase.replace("_", " ").title(),
-            "icon": resolve_weather_icon(current_code, current_is_day, moon_phase, current_uv),
-            "humidity": current.get("relativeHumidity", 0),
-            "windSpeed": ((current.get("wind") or {}).get("speed") or {}).get("value", 0),
-            "city": WEATHER_CITY,
-            "alerts": _google_alerts(alerts_data),
-        }
-
-        hourly_slots = []
-        # Google's first record represents the current hour; the UI shows upcoming whole hours.
-        for hour in (hourly_data.get("forecastHours", []) or [])[1:6]:
-            display_time = hour.get("displayDateTime", {}) or {}
-            condition_text, condition_code = _google_condition(hour.get("weatherCondition"))
-            is_day = bool(hour.get("isDaytime", True))
-            uv_value = hour.get("uvIndex")
-            hourly_slots.append({
-                "time": f"{int(display_time.get('hours', 0)):02d}:{int(display_time.get('minutes', 0)):02d}",
-                "icon": resolve_weather_icon(condition_code, is_day, moon_phase, uv_value),
-                "conditionCode": condition_code,
-                "isDay": is_day,
+            weather_info = {
+                "available": True,
+                "stale": False,
+                "fetchedAt": int(now * 1000),
+                "temperature": round(_google_temperature(current.get("temperature")), 1),
+                "condition": current_condition,
+                "conditionCode": current_code,
+                "isDay": current_is_day,
+                "uv": current_uv,
                 "moonPhase": moon_phase.replace("_", " ").title(),
-                "uv": uv_value,
-                "temp": f"{round(_google_temperature(hour.get('temperature')))}°C",
-                "condition": condition_text,
-            })
+                "icon": resolve_weather_icon(current_code, current_is_day, moon_phase, current_uv),
+                "humidity": current.get("relativeHumidity", 0),
+                "windSpeed": ((current.get("wind") or {}).get("speed") or {}).get("value", 0),
+                "city": WEATHER_CITY,
+                "alerts": _google_alerts(alerts_data),
+            }
 
-        daily_slots = []
-        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        today = datetime.date.today()
-        for day in days:
-            date_data = day.get("displayDate", {}) or {}
-            date_obj = datetime.date(int(date_data["year"]), int(date_data["month"]), int(date_data["day"]))
-            daytime = day.get("daytimeForecast") or day.get("nighttimeForecast") or {}
-            condition_text, condition_code = _google_condition(daytime.get("weatherCondition"))
-            uv_value = daytime.get("uvIndex")
-            day_moon_phase = ((day.get("moonEvents") or {}).get("moonPhase") or moon_phase)
-            daily_slots.append({
-                "label": "Today" if date_obj == today else day_names[date_obj.weekday()],
-                "icon": resolve_weather_icon(condition_code, True, day_moon_phase, uv_value),
-                "conditionCode": condition_code,
-                "isDay": True,
-                "moonPhase": day_moon_phase.replace("_", " ").title(),
-                "uv": uv_value,
-                "high": f"{round(_google_temperature(day.get('maxTemperature')))}°C",
-                "low": f"{round(_google_temperature(day.get('minTemperature')))}°C",
-                "condition": condition_text,
-            })
+            hourly_slots = []
+            # Google's first record is the current hour; show upcoming whole hours.
+            for hour in (hourly_data.get("forecastHours", []) or [])[1:6]:
+                display_time = hour.get("displayDateTime", {}) or {}
+                condition_text, condition_code = _google_condition(hour.get("weatherCondition"))
+                is_day = bool(hour.get("isDaytime", True))
+                uv_value = hour.get("uvIndex")
+                hourly_slots.append({
+                    "time": f"{int(display_time.get('hours', 0)):02d}:{int(display_time.get('minutes', 0)):02d}",
+                    "icon": resolve_weather_icon(condition_code, is_day, moon_phase, uv_value),
+                    "conditionCode": condition_code,
+                    "isDay": is_day,
+                    "moonPhase": moon_phase.replace("_", " ").title(),
+                    "uv": uv_value,
+                    "temp": f"{round(_google_temperature(hour.get('temperature')))}°C",
+                    "condition": condition_text,
+                })
 
-        weather_info["forecast"] = {"hourly": hourly_slots, "daily": daily_slots}
-        cache["weather"] = (weather_info, now)
-        return weather_info
-    except requests.RequestException as e:
-        if "weather" in cache:
-            cached_data, cached_time = cache["weather"]
-            if now - cached_time <= WEATHER_STALE_SECONDS:
-                stale_data = dict(cached_data)
-                stale_data.update({"available": True, "stale": True})
-                return stale_data
-        return {"available": False, "stale": True, "error": f"Google Weather request failed: {e}"}
-    except (KeyError, TypeError, ValueError) as e:
-        return {"available": False, "stale": False, "error": f"Unexpected Google Weather response: {e}"}
+            daily_slots = []
+            day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            today = datetime.date.today()
+            for day in days:
+                date_data = day.get("displayDate", {}) or {}
+                date_obj = datetime.date(int(date_data["year"]), int(date_data["month"]), int(date_data["day"]))
+                daytime = day.get("daytimeForecast") or day.get("nighttimeForecast") or {}
+                condition_text, condition_code = _google_condition(daytime.get("weatherCondition"))
+                uv_value = daytime.get("uvIndex")
+                day_moon_phase = ((day.get("moonEvents") or {}).get("moonPhase") or moon_phase)
+                daily_slots.append({
+                    "label": "Today" if date_obj == today else day_names[date_obj.weekday()],
+                    "icon": resolve_weather_icon(condition_code, True, day_moon_phase, uv_value),
+                    "conditionCode": condition_code,
+                    "isDay": True,
+                    "moonPhase": day_moon_phase.replace("_", " ").title(),
+                    "uv": uv_value,
+                    "high": f"{round(_google_temperature(day.get('maxTemperature')))}°C",
+                    "low": f"{round(_google_temperature(day.get('minTemperature')))}°C",
+                    "condition": condition_text,
+                })
+
+            weather_info["forecast"] = {"hourly": hourly_slots, "daily": daily_slots}
+            cache["weather"] = (weather_info, now)
+            return weather_info
+        except requests.RequestException as e:
+            if "weather" in cache:
+                cached_data, cached_time = cache["weather"]
+                if now - cached_time <= WEATHER_STALE_SECONDS:
+                    stale_data = dict(cached_data)
+                    stale_data.update({"available": True, "stale": True})
+                    return stale_data
+            return {"available": False, "stale": True, "error": f"Google Weather request failed: {e}"}
+        except (KeyError, TypeError, ValueError) as e:
+            return {"available": False, "stale": False, "error": f"Unexpected Google Weather response: {e}"}
 
 
 OPEN_METEO_CODES = {
@@ -1055,6 +1113,8 @@ def weather_refresh():
     WEATHER_LONGITUDE = latest_config.get("weather_longitude")
     WEATHER_CITY = latest_config.get("weather_city") or WEATHER_LOCATION
     cache.pop("weather", None)
+    google_weather_cache.clear()
+    save_google_weather_cache()
 
     weather_data = get_weather_data(force_refresh=True)
     if not weather_data or not weather_data.get("available"):

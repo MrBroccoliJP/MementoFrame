@@ -1697,7 +1697,7 @@ body:has(.left_panel.swapped) .system-info-box {
   padding: 6px !important;
   border-radius: 0 !important;
   background: #000 !important;
-  image-rendering: pixelated;
+  image-rendering: auto;
 }
 
 .qrcode_icon canvas {

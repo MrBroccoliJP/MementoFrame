@@ -684,6 +684,12 @@ def mock_weather():
         "alert_second_instruction": request.form.get("alert_second_instruction", "Drink water and avoid direct sun."),
     })
     save_state(state)
+    try:
+        # Notify the mock display immediately instead of waiting for its normal
+        # weather polling interval. A disabled payload intentionally returns 503.
+        requests.post("http://127.0.0.1:5001/weather/refresh", timeout=2)
+    except requests.RequestException:
+        pass
     return redirect(url_for("dashboard"))
 
 @app.route("/mock/spotify", methods=["POST"])

@@ -183,6 +183,7 @@ export function evaluateLayout(force = false) {
     const cycleMinute = currentMinute % INTERVALS.LAYOUT_CYCLE_MINUTES;
     const isSpotify = state.panels.spotifyPlaying;
     const isBigMode = state.panels.bigModeActive;
+    const hasWeather = !!state.weather.available;
     const hasForecast = !!state.weather.forecastAvailable;
 
     // In single-clock mode the date moves into the first row, leaving the
@@ -200,9 +201,16 @@ export function evaluateLayout(force = false) {
         forecastView: 'hidden'
     };
 
-if (isSpotify) {
+    if (isSpotify) {
+        // With no weather widgets, Spotify can remain large and the weekly
+        // calendar can stay visible continuously in the reclaimed space.
+        if (!hasWeather) {
+            updates.spotifyView = 'big';
+            updates.calendarView = 'week';
+            updates.forecastView = 'hidden';
+        }
         // Spotify shrunk + widgets stacked. Only show forecast if weather data exists.
-        if (cycleMinute === 0) { 
+        else if (cycleMinute === 0) {
             updates.spotifyView = 'shrunk'; 
             updates.calendarView = 'week'; 
             updates.forecastView = hasForecast ? '5h-icons' : 'hidden'; 
