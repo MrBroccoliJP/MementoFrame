@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 58, # Connected rounded QR modules and finder patterns
+        "version": 59, # Animate changing clock digits with a downward transition
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {

@@ -71,6 +71,7 @@ CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
 DEFAULT_CONFIG: dict[str, Any] = {
     "clock1": {"label": "Lisbon", "timezone": "Europe/Lisbon"},
     "clock2": {"label": "Shanghai", "timezone": "Asia/Shanghai", "enabled": True},
+    "clock_format": "24h",
     "weather_api_key": "",
     "weather_region": "Porto",
     "weather_provider": "openmeteo",

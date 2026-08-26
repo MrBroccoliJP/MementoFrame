@@ -279,6 +279,12 @@
         ("America/Argentina/Buenos_Aires (Argentina)", "America/Argentina/Buenos_Aires"), ("America/Sao_Paulo (Brazil)",
         "America/Sao_Paulo") ] %}
 
+        <label for="clock_format">Time Format</label>
+        <select id="clock_format" name="clock_format">
+          <option value="24h" {% if config.clock_format == "24h" %}selected{% endif %}>24-hour (23:45)</option>
+          <option value="12h" {% if config.clock_format == "12h" %}selected{% endif %}>12-hour (11:45 PM)</option>
+        </select>
+
         <label for="clock1_tz">Clock 1 Timezone</label>
         <select id="clock1_tz" name="clock1_tz" required>
           {% for label, tz in tz_options %}

@@ -729,6 +729,7 @@ def load_config():
     default = {
         "clock1": {"label": "Lisbon", "timezone": "Europe/Lisbon"},
         "clock2": {"label": "Shanghai", "timezone": "Asia/Shanghai", "enabled": True},
+        "clock_format": "24h",
         "weather_api_key": "",
         "weather_region": "",
         "weather_provider": "openmeteo",
@@ -1064,6 +1065,8 @@ def save_clock_settings():
     config["clock1"] = make_clock("clock1")
     config["clock2"] = make_clock("clock2")
     config["clock2"]["enabled"] = "enable_clock2" in request.form
+    requested_format = request.form.get("clock_format", "24h")
+    config["clock_format"] = requested_format if requested_format in {"12h", "24h"} else "24h"
 
     save_config(config)
     return redirect(url_for("dashboard"))

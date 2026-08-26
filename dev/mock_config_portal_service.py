@@ -404,6 +404,8 @@ def save_clock_settings():
     config = load_config()
     config["clock1"] = {"label": request.form.get("clock1_label", "Clock1"), "timezone": request.form.get("clock1_tz", "UTC")}
     config["clock2"] = {"label": request.form.get("clock2_label", "Clock2"), "timezone": request.form.get("clock2_tz", "UTC"), "enabled": bool_form("enable_clock2")}
+    requested_format = request.form.get("clock_format", "24h")
+    config["clock_format"] = requested_format if requested_format in {"12h", "24h"} else "24h"
     save_config(config)
     return redirect(url_for("dashboard"))
 
