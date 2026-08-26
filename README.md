@@ -97,9 +97,10 @@ status, and configuration QR code continue to appear wherever the selected
 layout has space for them. The interface also swaps sides once per hour to vary
 the presentation and reduce prolonged use of the same screen area.
 
-Interface accent colors cycle automatically through a randomized palette. When
-Spotify is playing, the player derives the accent color from the current album
-art and applies it across the interface for a coordinated theme.
+In both the Classic and Minimal Sidebar themes, interface accent colors cycle
+automatically through a randomized palette. When Spotify is playing, the
+player derives a primary and companion color from the current album art and
+applies that palette across the interface.
 
 ### Project Photos
 
@@ -140,6 +141,8 @@ art and applies it across the interface for a coordinated theme.
 - GPIO brightness pulse control
 - Auto on/off schedules
 - Dual timezone clocks
+- Selectable Classic and Minimal Sidebar display themes
+- Filled, flat, line, or recolored monochrome forecast icons; current weather and warnings remain filled
 - Weather widget with selectable Open-Meteo, WeatherAPI.com, or Google Weather providers
 - Spotify album art and playback state
 
@@ -573,6 +576,7 @@ MementoFrame/
 | `/upload` | Upload photos |
 | `/delete_selected_photos` | Remove photos |
 | `/save_clock_settings` | Save clock configuration |
+| `/save_appearance_settings` | Save display theme and forecast icon style |
 | `/save_display_settings` | Save brightness settings |
 | `/save_auto_power` | Save power schedule |
 | `/save_weather_api` | Save Open-Meteo, WeatherAPI, or Google Weather configuration |

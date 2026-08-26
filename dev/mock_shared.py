@@ -67,6 +67,8 @@ SPOTIFY_CACHE = RUNTIME_DIR / ".cache_spotify"
 
 CONFIG_PORTAL_PIN_LENGTH = 6
 CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
+DISPLAY_THEMES = {"classic", "minimal"}
+WEATHER_ICON_PACKS = {"fill", "flat", "line", "monochrome"}
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "clock1": {"label": "Lisbon", "timezone": "Europe/Lisbon"},
@@ -82,6 +84,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "weather_longitude": None,
     "weather_location_name": "",
     "brightness": 80,
+    "display_theme": "classic",
+    "weather_icon_pack": "fill",
     "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
     "updates": {
         "auto_update": False,
@@ -154,6 +158,7 @@ DEFAULT_STATE: dict[str, Any] = {
         "moonPhase": "Waxing Crescent",
         "icon": "/assets/Weather/meteoicons/fill/partly-cloudy-day.svg",
         "humidity": 72,
+        "precipitationProbability": 38,
         "windSpeed": 14.4,
         "city": "Porto",
         "forecast_enabled": True,
@@ -235,6 +240,10 @@ def load_config() -> dict[str, Any]:
     merged = deep_merge(DEFAULT_CONFIG, stored)
     if "weather_provider" not in stored:
         merged["weather_provider"] = "weatherapi" if stored.get("weather_api_key") else "openmeteo"
+    if merged.get("display_theme") not in DISPLAY_THEMES:
+        merged["display_theme"] = DEFAULT_CONFIG["display_theme"]
+    if merged.get("weather_icon_pack") not in WEATHER_ICON_PACKS:
+        merged["weather_icon_pack"] = DEFAULT_CONFIG["weather_icon_pack"]
     return merged
 
 
@@ -1004,6 +1013,17 @@ def real_weather_payload(provider: str | None = None) -> dict[str, Any]:
         code = current_condition.get("code", 1000)
         is_day = bool(int(current.get("is_day", 1)))
         uv = current.get("uv")
+        current_epoch = float(current.get("last_updated_epoch") or time.time())
+        today_forecast = forecast_days[0] if forecast_days else {}
+        current_hour_forecast = min(
+            today_forecast.get("hour", []) or [],
+            key=lambda hour: abs(float(hour.get("time_epoch") or 0) - current_epoch),
+            default={},
+        )
+        precipitation_probability = round(max(
+            float(current_hour_forecast.get("chance_of_rain") or 0),
+            float(current_hour_forecast.get("chance_of_snow") or 0),
+        ))
         payload = {
             "available": True,
             "stale": False,
@@ -1016,6 +1036,7 @@ def real_weather_payload(provider: str | None = None) -> dict[str, Any]:
             "moonPhase": moon_phase,
             "icon": resolve_meteoicon(code, is_day, uv, moon_phase),
             "humidity": int(current["humidity"]),
+            "precipitationProbability": precipitation_probability,
             "windSpeed": float(current["wind_kph"]),
             "city": data["location"]["name"],
             "alerts": _alerts_from_weatherapi(data, location),
@@ -1078,7 +1099,7 @@ def _real_open_meteo_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         response = requests.get("https://api.open-meteo.com/v1/forecast", params={
             "latitude": latitude, "longitude": longitude,
             "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day,uv_index",
-            "hourly": "temperature_2m,weather_code,is_day,uv_index",
+            "hourly": "temperature_2m,weather_code,is_day,uv_index,precipitation_probability",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max",
             "timezone": "auto", "forecast_days": 5,
         }, timeout=8)
@@ -1087,19 +1108,26 @@ def _real_open_meteo_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         current = data.get("current", {}) or {}
         condition, code = _open_meteo_condition(current.get("weather_code"))
         is_day, uv = bool(current.get("is_day", 1)), current.get("uv_index")
+        hourly_data = data.get("hourly", {}) or {}
+        times = hourly_data.get("time", []) or []
+        current_time = str(current.get("time", ""))
+        current_indexes = [i for i, value in enumerate(times) if str(value) <= current_time]
+        precipitation_values = hourly_data.get("precipitation_probability", []) or []
+        precipitation_probability = 0
+        if current_indexes and current_indexes[-1] < len(precipitation_values):
+            precipitation_probability = round(float(precipitation_values[current_indexes[-1]] or 0))
         payload = {
             "available": True, "stale": False, "fetchedAt": int(time.time() * 1000),
             "temperature": round(float(current.get("temperature_2m", 0)), 1),
             "condition": condition, "conditionCode": code, "isDay": is_day, "uv": uv,
             "moonPhase": "", "icon": resolve_meteoicon(code, is_day, uv, None),
             "humidity": int(current.get("relative_humidity_2m", 0)),
+            "precipitationProbability": precipitation_probability,
             "windSpeed": float(current.get("wind_speed_10m", 0)),
             "city": cfg.get("weather_city") or "Open-Meteo location",
             "alerts": [], "source": "real", "provider": "openmeteo",
         }
-        hourly_data = data.get("hourly", {}) or {}
-        times = hourly_data.get("time", []) or []
-        indexes = [i for i, value in enumerate(times) if str(value) > str(current.get("time", ""))][:5]
+        indexes = [i for i, value in enumerate(times) if str(value) > current_time][:5]
         hourly = []
         for i in indexes:
             text, item_code = _open_meteo_condition(hourly_data.get("weather_code", [])[i])
@@ -1144,6 +1172,12 @@ def _google_condition(condition: dict[str, Any] | None) -> tuple[str, int]:
 
 def _google_degrees(value: dict[str, Any] | None) -> float:
     return float((value or {}).get("degrees", 0))
+
+
+def _google_precipitation_probability(current: dict[str, Any] | None) -> int:
+    precipitation = (current or {}).get("precipitation") or {}
+    probability = precipitation.get("probability") or {}
+    return round(float(probability.get("percent") or 0))
 
 
 def _alerts_from_google(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1204,6 +1238,7 @@ def _real_google_weather_payload(cfg: dict[str, Any]) -> dict[str, Any]:
             "moonPhase": moon.replace("_", " ").title(),
             "icon": resolve_meteoicon(code, is_day, uv, moon),
             "humidity": current.get("relativeHumidity", 0),
+            "precipitationProbability": _google_precipitation_probability(current),
             "windSpeed": ((current.get("wind") or {}).get("speed") or {}).get("value", 0),
             "city": cfg.get("weather_city") or cfg.get("weather_location_name") or "Google location",
             "alerts": _alerts_from_google(alert_data), "source": "real", "provider": "google",
@@ -1282,6 +1317,7 @@ def weather_payload() -> dict[str, Any]:
         "moonPhase": moon_phase,
         "icon": resolve_meteoicon(code, is_day, uv, moon_phase),
         "humidity": int(float(weather.get("humidity", 0))),
+        "precipitationProbability": int(float(weather.get("precipitationProbability", 0))),
         "windSpeed": float(weather.get("windSpeed", 0)),
         "city": weather.get("city", "Porto"),
         "alerts": _mock_alert_payload(weather),

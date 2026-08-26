@@ -75,15 +75,18 @@ function startSpotifyPolling(ms) {
 /**
  * Write an accent colour to the CSS custom property and state.
  *
- * @param {string} color - Any valid CSS colour string.
+ * @param {string} color          - Primary CSS colour.
+ * @param {string} secondaryColor - Companion CSS colour from the same palette.
  */
-function setAccentVar(color) {
+function setAccentVar(color, secondaryColor = color) {
   document.documentElement.style.setProperty("--accent-color", color);
   document.documentElement.style.setProperty("--accent-text",  color);
+  document.documentElement.style.setProperty("--accent-secondary-color", secondaryColor);
   state.spotify.currentAccent = color;
+  state.spotify.currentSecondaryAccent = secondaryColor;
 
   window.dispatchEvent(new CustomEvent("mementoframe:accent-changed", {
-    detail: { color },
+    detail: { color, secondaryColor },
   }));
 }
 
@@ -150,7 +153,9 @@ function ensureReadable(color) {
  */
 function applyAccent(color, transition = true, spotifyGradient = null) {
   color = ensureReadable(color);
-  setAccentVar(color);
+  const gradient = spotifyGradient || buildSpotifyGradientFromAccent(color);
+  const secondaryColor = ensureReadable(gradient.end);
+  setAccentVar(color, secondaryColor);
 
   const spotify     = $(SELECTORS.spotifyBox);
   const calendarBox = $(SELECTORS.calendarBox);
@@ -165,7 +170,6 @@ function applyAccent(color, transition = true, spotifyGradient = null) {
 
   if (spotify) {
     spotify.style.transition = ts;
-    const gradient = spotifyGradient || buildSpotifyGradientFromAccent(color);
     const foreground = getSpotifyForegroundForGradient(gradient);
     spotify.style.background = "";
     spotify.style.setProperty("--spotify-gradient-start", gradient.start);

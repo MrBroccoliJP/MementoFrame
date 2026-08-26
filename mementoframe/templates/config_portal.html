@@ -206,6 +206,7 @@
         <nav class="settings-nav" aria-label="Configuration sections">
           <a href="#wifi-settings"><span aria-hidden="true">Wi</span>Wi-Fi</a>
           <a href="#clock-settings"><span aria-hidden="true">Cl</span>Clocks</a>
+          <a href="#appearance-settings"><span aria-hidden="true">Ap</span>Appearance</a>
           <a href="#display-settings"><span aria-hidden="true">Di</span>Display</a>
           <a href="#weather-settings"><span aria-hidden="true">We</span>Weather</a>
           <a href="#photo-settings"><span aria-hidden="true">Ph</span>Photos</a>
@@ -311,6 +312,29 @@
         <input type="text" name="clock2_label" placeholder="Label (e.g. Shanghai)"
           value="{{ config.clock2.label or '' }}">
         <button type="submit">Save Clock Settings</button>
+      </form>
+    </details>
+
+    <!-- Appearance -->
+    <details id="appearance-settings" open class="section">
+      <summary><span class="section-summary-icon" aria-hidden="true">Ap</span><span><strong>Appearance</strong><small>Choose the sidebar theme and forecast icon style</small></span></summary>
+      <form action="/save_appearance_settings" method="POST">
+        <label for="display_theme">Display Theme</label>
+        <select id="display_theme" name="display_theme">
+          <option value="classic" {% if (config.display_theme or 'classic') == 'classic' %}selected{% endif %}>Classic</option>
+          <option value="minimal" {% if config.display_theme == 'minimal' %}selected{% endif %}>Minimal sidebar</option>
+        </select>
+
+        <label for="weather_icon_pack">Forecast Icon Style</label>
+        <select id="weather_icon_pack" name="weather_icon_pack">
+          <option value="fill" {% if (config.weather_icon_pack or 'fill') == 'fill' %}selected{% endif %}>Filled colour</option>
+          <option value="flat" {% if config.weather_icon_pack == 'flat' %}selected{% endif %}>Flat colour</option>
+          <option value="line" {% if config.weather_icon_pack == 'line' %}selected{% endif %}>Line colour</option>
+          <option value="monochrome" {% if config.weather_icon_pack == 'monochrome' %}selected{% endif %}>Monochrome</option>
+        </select>
+        <p class="setting-hint">This style is used by hourly and daily forecasts. The main weather and warning icons always stay filled.</p>
+
+        <button type="submit">Save Appearance</button>
       </form>
     </details>
 

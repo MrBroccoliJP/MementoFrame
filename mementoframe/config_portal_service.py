@@ -23,7 +23,8 @@ Endpoints:
     POST     /delete_selected_photos   - Delete selected uploaded photos.
     POST     /test_brightness          - Start a background brightness test.
     POST     /save_clock_settings      - Save dashboard clock settings.
-    POST     /save_display_settings    - Save brightness/display settings.
+    POST     /save_appearance_settings - Save theme and weather icon settings.
+    POST     /save_display_settings    - Save brightness settings.
     POST     /save_auto_power          - Save automatic screen power schedule.
     POST     /save_weather_api         - Save weather provider, credentials, and location.
     POST     /weather/geocode          - Resolve a weather location to coordinates.
@@ -724,6 +725,10 @@ def get_spotify_user():
 # =============================================================================
 # Configuration persistence
 # =============================================================================
+DISPLAY_THEMES = {"classic", "minimal"}
+WEATHER_ICON_PACKS = {"fill", "flat", "line", "monochrome"}
+
+
 def load_config():
     """Load frame configuration and merge any missing default keys."""
     default = {
@@ -740,6 +745,8 @@ def load_config():
         "weather_longitude": None,
         "weather_location_name": "",
         "brightness": 80,
+        "display_theme": "classic",
+        "weather_icon_pack": "fill",
         "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
         "updates": {
             "auto_update": False,
@@ -764,6 +771,10 @@ def load_config():
             if isinstance(val, dict) and isinstance(cfg.get(key), dict):
                 for sub_key, sub_val in val.items():
                     cfg[key].setdefault(sub_key, sub_val)
+        if cfg.get("display_theme") not in DISPLAY_THEMES:
+            cfg["display_theme"] = default["display_theme"]
+        if cfg.get("weather_icon_pack") not in WEATHER_ICON_PACKS:
+            cfg["weather_icon_pack"] = default["weather_icon_pack"]
         return cfg
     except Exception as e:
         print(f"⚠️ Error loading config.json: {e}")
@@ -1082,8 +1093,21 @@ def save_display_settings():
     except ValueError:
         level = 80
 
-    threading.Thread(target=set_brightness, args=(level,), daemon=True).start()
+    if config.get("brightness") != level:
+        threading.Thread(target=set_brightness, args=(level,), daemon=True).start()
     config["brightness"] = level
+    save_config(config)
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/save_appearance_settings", methods=["POST"])
+def save_appearance_settings():
+    """Save the selected kiosk theme and forecast icon pack."""
+    config = load_config()
+    requested_theme = request.form.get("display_theme", config.get("display_theme", "classic"))
+    requested_pack = request.form.get("weather_icon_pack", config.get("weather_icon_pack", "fill"))
+    config["display_theme"] = requested_theme if requested_theme in DISPLAY_THEMES else "classic"
+    config["weather_icon_pack"] = requested_pack if requested_pack in WEATHER_ICON_PACKS else "fill"
     save_config(config)
     return redirect(url_for("dashboard"))
 

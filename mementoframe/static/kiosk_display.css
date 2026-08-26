@@ -1614,10 +1614,14 @@ body {
   box-sizing: border-box;
   border-left: 1px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
 }
-.weather-warning-details svg {
+.weather-warning-details svg,
+.weather-warning-details img {
   width: 19px;
   height: 19px;
   flex: 0 0 19px;
+  object-fit: contain;
+}
+.weather-warning-details svg {
   fill: none;
   stroke: #FFC107;
   stroke-width: 2;
@@ -1684,6 +1688,9 @@ body {
   justify-content: center;
   gap: 6px;
   line-height: 1;
+}
+.weather-detail--precipitation {
+  display: none;
 }
 .weather-detail-label {
   display: flex;
