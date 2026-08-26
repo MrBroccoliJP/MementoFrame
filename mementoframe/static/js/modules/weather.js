@@ -49,6 +49,10 @@ export async function updateWeather() {
   const tEl  = $(SELECTORS.weatherTemp);
   const cEl  = $(SELECTORS.weatherCond);
   const icon = $(SELECTORS.weatherIcon);
+  const humidityEl = document.getElementById("weather-humidity");
+  const windEl = document.getElementById("weather-wind");
+  const uvEl = document.getElementById("weather-uv");
+  const highLowEl = document.getElementById("weather-high-low");
 
   if (!state.online) {
     currentWeatherCondition = "Offline";
@@ -56,6 +60,10 @@ export async function updateWeather() {
     currentWeatherUvIconUrl = null;
     currentWeatherAlerts = [];
     if (tEl)  tEl.textContent = "--°C";
+    if (humidityEl) humidityEl.textContent = "--%";
+    if (windEl) windEl.textContent = "-- km/h";
+    if (uvEl) uvEl.textContent = "--";
+    if (highLowEl) highLowEl.textContent = "--° / --°";
     applyWeatherContainerDisplay();
     // The local display service remains reachable while internet access is
     // down and owns the decision to serve cached data or mark it unavailable.
@@ -74,6 +82,12 @@ export async function updateWeather() {
   currentWeatherAlerts = Array.isArray(data.alerts) ? data.alerts : [];
 
   if (tEl) tEl.textContent = `${data.temperature}°C`;
+  if (humidityEl) humidityEl.textContent = `${Math.round(Number(data.humidity) || 0)}%`;
+  if (windEl) windEl.textContent = `${Math.round(Number(data.windSpeed) || 0)} km/h`;
+  if (uvEl) {
+    const uv = Number(data.uv);
+    uvEl.textContent = Number.isFinite(uv) ? String(Math.round(uv)) : "--";
+  }
 
   if (box) box.style.display = "flex";
   applyWeatherContainerDisplay();
@@ -83,6 +97,12 @@ export async function updateWeather() {
   // If /weather.json has no valid forecast, do not generate fake frontend data.
   const forecast = data.forecast;
   const forecastAvailable = hasValidForecast(forecast);
+  const todayForecast = forecastAvailable ? forecast.daily?.[0] : null;
+  if (highLowEl) {
+    const high = todayForecast?.high ? String(todayForecast.high).replace("°C", "°") : "--°";
+    const low = todayForecast?.low ? String(todayForecast.low).replace("°C", "°") : "--°";
+    highLowEl.textContent = `${high} / ${low}`;
+  }
   updateWeatherAvailability(true, forecastAvailable);
 
   if (forecastAvailable) {
@@ -156,6 +176,7 @@ function renderForecasts(forecast) {
         <div class="forecast-item">
           <div class="time">${escapeHtml(h.time)}</div>
           <img src="${escapeAttr(normalizeIconUrl(h.icon))}" crossorigin="anonymous" alt="${escapeAttr(h.condition)}">
+          <div class="temp">${escapeHtml(formatTemp(h.temp))}</div>
         </div>`
       ).join("")
     }</div>`;
@@ -205,11 +226,33 @@ function forecastRow({ label, icon, condition, tempHtml, tempClass = "" }) {
 }
 
 function applyWeatherContainerDisplay() {
+  const box  = $(SELECTORS.weatherBox);
   const cEl  = $(SELECTORS.weatherCond);
   const icon = $(SELECTORS.weatherIcon);
+  const warningEl = document.getElementById("weather-warning-text");
 
   const alert = getActiveWeatherAlert();
   if (alert) {
+    box?.classList.add("has-weather-warning");
+    if (warningEl) {
+      const warningText = formatWeatherAlertLabel(alert);
+      warningEl.title = warningText;
+      warningEl.innerHTML = `<span class="weather-warning-text__inner">${escapeHtml(warningText)}</span>`;
+      warningEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
+      const severity = String(alert?.severity || "").trim().toLowerCase();
+      if (severity) warningEl.classList.add(`alert-${severity}`);
+      scheduleWeatherConditionScrollRefresh();
+    }
+
+    if (box?.classList.contains("single-clock-weather")) {
+      if (cEl) {
+        setWeatherConditionText(cEl, currentWeatherCondition);
+        cEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
+      }
+      if (icon) setWeatherIcon(icon, normalizeIconUrl(alert.icon || currentWeatherIconUrl), null);
+      return;
+    }
+
     if (cEl) {
       setWeatherConditionText(cEl, formatWeatherAlertText(alert));
       const severity = String(alert?.severity || "").trim().toLowerCase();
@@ -220,6 +263,8 @@ function applyWeatherContainerDisplay() {
     return;
   }
 
+  box?.classList.remove("has-weather-warning");
+  warningEl?.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
   if (cEl) {
     setWeatherConditionText(cEl, currentWeatherCondition);
     cEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
@@ -241,12 +286,16 @@ function getActiveWeatherAlert() {
 }
 
 function formatWeatherAlertText(alert) {
+  return `⚠ ${formatWeatherAlertLabel(alert)}`;
+}
+
+function formatWeatherAlertLabel(alert) {
   const event = String(alert?.event || "").trim();
   const headline = String(alert?.headline || "").trim();
 
-  if (event) return `⚠ ${event}`;
-  if (headline) return `⚠ ${headline}`;
-  return "⚠ Weather alert";
+  if (event) return event;
+  if (headline) return headline;
+  return "Weather warning";
 }
 
 function setWeatherIcon(iconEl, iconUrl, uvIconUrl = null) {
@@ -301,9 +350,32 @@ function setWeatherConditionText(el, condition) {
 function scheduleWeatherConditionScrollRefresh() {
   requestAnimationFrame(() => {
     updateWeatherConditionScrollFlag();
-    setTimeout(updateWeatherConditionScrollFlag, 80);
-    setTimeout(updateWeatherConditionScrollFlag, 250);
+    updateWeatherWarningScrollFlag();
+    setTimeout(() => {
+      updateWeatherConditionScrollFlag();
+      updateWeatherWarningScrollFlag();
+    }, 80);
+    setTimeout(() => {
+      updateWeatherConditionScrollFlag();
+      updateWeatherWarningScrollFlag();
+    }, 250);
   });
+}
+
+function updateWeatherWarningScrollFlag() {
+  const warning = document.getElementById("weather-warning-text");
+  const inner = warning?.querySelector(".weather-warning-text__inner");
+  if (!warning || !inner) return;
+
+  const boxHeight = Math.floor(warning.getBoundingClientRect().height || warning.clientHeight || 0);
+  const textHeight = Math.ceil(inner.scrollHeight || inner.getBoundingClientRect().height || 0);
+  const distance = Math.max(0, textHeight - boxHeight);
+  const shouldScroll = boxHeight > 0 && distance > 2;
+
+  warning.classList.toggle("is-scroll-y", shouldScroll);
+  warning.style.setProperty("--weather-warning-scroll-distance", `${distance}px`);
+  const duration = Math.max(5.5, Math.min(11, 4.5 + distance / 12));
+  warning.style.setProperty("--weather-warning-scroll-duration", `${duration.toFixed(1)}s`);
 }
 
 function updateWeatherConditionScrollFlag() {

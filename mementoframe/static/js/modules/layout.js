@@ -299,6 +299,17 @@ function applyWidgetVisibility() {
   }
  
   // ── 3. Forecast box ──────────────────────────────────────────────────────
+  // Dual-clock flow: calendars replace the date/classic-weather pair with
+  // the expanded weather card. Single-clock mode always stays expanded.
+  const dateBox = $(SELECTORS.dateBox);
+  const weatherBox = $(SELECTORS.weatherBox);
+  const dualCalendarWeather = state.clocks.enableSecond && calendarView !== 'hidden';
+  dateBox?.classList.toggle('dual-calendar-hidden', dualCalendarWeather);
+  weatherBox?.classList.toggle(
+    'single-clock-weather',
+    !state.clocks.enableSecond || dualCalendarWeather
+  );
+
   if (forecastView === 'hidden') {
     setWidget(forecastBox, spotifyView === 'big' ? 'gone' : 'gone');
   } else {

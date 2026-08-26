@@ -52,6 +52,7 @@ export async function loadConfig() {
   state.clocks.clock2Tz     = cfg?.clock2?.timezone || "UTC";
   state.clocks.clock1Label  = cfg?.clock1?.label    || "Clock 1";
   state.clocks.clock2Label  = cfg?.clock2?.label    || "Clock 2";
+  state.clocks.format       = cfg?.clock_format === "12h" ? "12h" : "24h";
 }
 
 /**

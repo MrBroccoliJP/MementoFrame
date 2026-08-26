@@ -32,6 +32,7 @@ export const state = {
     clock2Tz: "UTC",
     clock1Label: "",
     clock2Label: "",
+    format: "24h",
     enableSecond: false,
     lastCalendarDate: null,
   },

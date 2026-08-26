@@ -45,19 +45,91 @@ export function initClocks() {
 }
 
 /**
- * Format a Date object as "HH:MM" in a given IANA timezone.
+ * Format a Date object using the configured 12- or 24-hour clock.
  *
- * Uses `Intl.DateTimeFormat` with `hour12: false` so the output is always
- * 24-hour, locale-independent, and zero-padded.
+ * The locale and hour cycle are explicit so the result is stable across
+ * browser/device locale settings.
  *
  * @param {Date}   date - The UTC date to format.
  * @param {string} tz   - IANA timezone string (e.g. "Europe/Lisbon").
- * @returns {string} Formatted time string, e.g. "14:05".
+ * @returns {{time: string, period: string}} Digits and optional AM/PM suffix.
  */
 function fmtTime(date, tz) {
-  return new Intl.DateTimeFormat([], {
-    hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz,
-  }).format(date);
+  const use12Hour = state.clocks.format === "12h";
+  const parts = new Intl.DateTimeFormat(use12Hour ? "en-US" : "en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: use12Hour ? "h12" : "h23",
+    timeZone: tz,
+  }).formatToParts(date);
+
+  const hour = parts.find(part => part.type === "hour")?.value || "00";
+  const minute = parts.find(part => part.type === "minute")?.value || "00";
+  const period = use12Hour
+    ? (parts.find(part => part.type === "dayPeriod")?.value || "").toUpperCase()
+    : "";
+  return { time: `${hour}:${minute}`, period };
+}
+
+/** Render stable character slots and animate only the digits that change. */
+function setAnimatedTime(el, formatted) {
+  if (!el) return;
+  const { time, period } = formatted;
+  if (el.dataset.clockTime === time && el.dataset.clockPeriod === period) return;
+
+  const previous = el.dataset.clockTime;
+  el.dataset.clockTime = time;
+  el.dataset.clockPeriod = period;
+  el.setAttribute("aria-label", period ? `${time} ${period}` : time);
+
+  const slots = el.querySelectorAll(":scope > .clock-character");
+  if (!previous || slots.length !== time.length) {
+    const characters = [...time].map((character) => {
+      const slot = document.createElement("span");
+      slot.className = character === ":"
+        ? "clock-character clock-separator"
+        : "clock-character clock-digit";
+      slot.setAttribute("aria-hidden", "true");
+      slot.textContent = character;
+      return slot;
+    });
+    if (period) {
+      const suffix = document.createElement("span");
+      suffix.className = "clock-period";
+      suffix.setAttribute("aria-hidden", "true");
+      suffix.textContent = period;
+      characters.push(suffix);
+    }
+    el.replaceChildren(...characters);
+    return;
+  }
+
+  let suffix = el.querySelector(":scope > .clock-period");
+  if (period && !suffix) {
+    suffix = document.createElement("span");
+    suffix.className = "clock-period";
+    suffix.setAttribute("aria-hidden", "true");
+    el.appendChild(suffix);
+  }
+  if (suffix) {
+    suffix.textContent = period;
+    suffix.hidden = !period;
+  }
+
+  [...time].forEach((character, index) => {
+    if (character === previous[index]) return;
+    const slot = slots[index];
+    if (!slot) return;
+
+    const outgoing = document.createElement("span");
+    outgoing.className = "clock-digit-value clock-digit-value--outgoing";
+    outgoing.textContent = previous[index];
+    const incoming = document.createElement("span");
+    incoming.className = "clock-digit-value clock-digit-value--incoming";
+    incoming.textContent = character;
+    slot.replaceChildren(outgoing, incoming);
+    incoming.addEventListener("animationend", () => slot.replaceChildren(character), { once: true });
+  });
 }
 
 /**
@@ -86,14 +158,17 @@ export function updateClock() {
   const dateBox   = $(SELECTORS.dateBox);
   const firstRow  = $(SELECTORS.firstRow);
   const secondRow = $(SELECTORS.secondRow);
+  const weatherBox = $(SELECTORS.weatherBox);
 
   const clock1El  = $(SELECTORS.clock1);
   const clock2El  = $(SELECTORS.clock2);
   const region1El = clock1Box?.querySelector(".region");
   const region2El = clock2Box?.querySelector(".region");
 
+  dualBox?.classList.toggle("twelve-hour", state.clocks.format === "12h");
+
   // --- Clock 1 ---
-  setText(clock1El, fmtTime(nowUtc, state.clocks.clock1Tz));
+  setAnimatedTime(clock1El, fmtTime(nowUtc, state.clocks.clock1Tz));
   if (region1El) setText(region1El, state.clocks.clock1Label);
 
   // Detect date change in clock 1's timezone and regenerate calendar
@@ -109,12 +184,15 @@ export function updateClock() {
     if (clock2Box) clock2Box.style.display = "flex";
     clock1Box?.classList.remove("no-border");
     dualBox?.classList.remove("single-clock");
+    const calendarVisible = state.panels.calendarView !== "hidden";
+    weatherBox?.classList.toggle("single-clock-weather", calendarVisible);
+    dateBox?.classList.toggle("dual-calendar-hidden", calendarVisible);
     if (clock1Box) clock1Box.style.width = "50%";
 
     // Move date box to second row so both clocks sit in the first row
     if (dateBox && secondRow && !secondRow.contains(dateBox)) secondRow.appendChild(dateBox);
 
-    setText(clock2El, fmtTime(nowUtc, state.clocks.clock2Tz));
+    setAnimatedTime(clock2El, fmtTime(nowUtc, state.clocks.clock2Tz));
 
     // Calculate day difference between the two timezones
     const date1 = new Date(nowUtc.toLocaleString("en-US", { timeZone: state.clocks.clock1Tz }));
@@ -127,6 +205,8 @@ export function updateClock() {
     // Single-clock mode: hide clock 2, restore full-width layout
     if (clock2Box) clock2Box.style.display = "none";
     dualBox?.classList.add("single-clock");
+    weatherBox?.classList.add("single-clock-weather");
+    dateBox?.classList.remove("dual-calendar-hidden");
     clock1Box?.classList.add("no-border");
 
     // Return date box to the first row
@@ -173,7 +253,9 @@ export function generateCalendar() {
     const cells = Array.from({ length: lastDate }, (_, i) => {
       const day = i + 1;
       const isToday = day === today ? "today" : "";
-      return `<td class="${isToday}">${day}</td>`;
+      const dayOfWeek = (firstDay + i) % 7;
+      const isWeekend = dayOfWeek >= 5 ? "weekend" : "";
+      return `<td class="${[isToday, isWeekend].filter(Boolean).join(" ")}">${day}</td>`;
     }).join("");
 
     const all = blanks + cells;
@@ -204,8 +286,9 @@ export function generateCalendar() {
         const d = new Date(weekStart);
         d.setDate(weekStart.getDate() + i);
         const isToday = d.getDate() === today && d.getMonth() === month ? "today" : "";
+        const isWeekend = i >= 5 ? "weekend" : "";
         weekCells += `
-          <td class="${isToday}">
+          <td class="${[isToday, isWeekend].filter(Boolean).join(" ")}">
             <div class="wk-day">${days[i]}</div>
             <div class="wk-date">${d.getDate()}</div>
           </td>`;

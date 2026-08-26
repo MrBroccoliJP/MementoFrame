@@ -291,6 +291,7 @@ body {
   display: block;
 }
 .right_panel {
+  --compact-card-height: 70px;
   box-sizing: border-box;
   padding: 0;
   position: fixed;
@@ -324,6 +325,13 @@ body {
   visibility: visible;
   pointer-events: auto;
 }
+.dual_clock-box,
+.date-box,
+.weather-box,
+#calendar-box,
+#forecast-box {
+  box-sizing: border-box;
+}
 /* Background lives here — completely decoupled from children opacity */
 .rounded-box::before {
   content: "";
@@ -350,9 +358,9 @@ body {
   flex-direction: row;
 }
 .second_row {
-  height: 90px;
-  min-height: 90px;
-  max-height: 90px;
+  height: calc(var(--compact-card-height) + 10px);
+  min-height: calc(var(--compact-card-height) + 10px);
+  max-height: calc(var(--compact-card-height) + 10px);
   max-width: 100%;
   overflow: hidden;
   flex-shrink: 1;
@@ -367,6 +375,11 @@ body {
   height: 0;
   min-height: 0;
   max-height: 0;
+}
+.second_row .weather-box {
+  height: var(--compact-card-height);
+  min-height: var(--compact-card-height);
+  max-height: var(--compact-card-height);
 }
 .hidden {
   opacity: 0 !important;
@@ -402,7 +415,9 @@ body {
   height: auto;
   flex: 1;
   box-sizing: border-box;
-  max-height: 80px;
+  height: var(--compact-card-height);
+  min-height: var(--compact-card-height);
+  max-height: var(--compact-card-height);
 }
 .first-row .date-box::before {
   content: "";
@@ -536,13 +551,70 @@ body {
    Clock and date widgets
    ========================= */
 .clock {
+  position: relative;
   margin-top: 5px;
   font-size: 40px;
   font-weight: bold;
+  display: inline-flex;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.clock-character {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  height: 1.1em;
+}
+.clock-digit {
+  width: .62em;
+  overflow: hidden;
+}
+.clock-separator {
+  width: .38em;
+}
+.clock-period {
+  position: absolute;
+  right: -1.05em;
+  bottom: .16em;
+  width: 1em;
+  font-size: .32em;
+  font-weight: 700;
+  line-height: 1;
+  text-align: left;
+}
+.dual_clock-box.twelve-hour:not(.single-clock) .clock {
+  transform: translateX(-7px);
+}
+.clock-digit-value {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  will-change: transform, opacity;
+}
+.clock-digit-value--outgoing {
+  animation: clock-digit-drop-out 320ms cubic-bezier(.4, 0, 1, 1) forwards;
+}
+.clock-digit-value--incoming {
+  animation: clock-digit-drop-in 360ms cubic-bezier(0, 0, .2, 1) forwards;
+}
+@keyframes clock-digit-drop-out {
+  to { transform: translateY(85%); opacity: 0; }
+}
+@keyframes clock-digit-drop-in {
+  from { transform: translateY(-85%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clock-digit-value--outgoing,
+  .clock-digit-value--incoming {
+    animation-duration: 1ms;
+  }
 }
 .region {
   font-size: 12px;
-  margin-top: 5px;
+  margin-top: 0;
 }
 .day {
   padding-left: 10px;
@@ -562,7 +634,9 @@ body {
   flex: 1;
   align-items: center;
   justify-content: center;
-  max-height: 80px;
+  height: var(--compact-card-height);
+  min-height: var(--compact-card-height);
+  max-height: var(--compact-card-height);
 }
 .dual_clock-box::before {
   content: "";
@@ -587,12 +661,12 @@ body {
 }
 .clock-box-left {
   border-right: 1px solid white;
-  padding-bottom: 10px;
+  padding-bottom: 0;
   justify-content: center;
   width: 50%;
 }
 .clock-box-right {
-  padding-bottom: 10px;
+  padding-bottom: 0;
   justify-content: center;
   width: 50%;
 }
@@ -619,9 +693,12 @@ body {
   justify-content: center;
   align-items: center;
   flex: 1 1 0;
-  height: 80px;
+  height: var(--compact-card-height);
   min-width: 0;
   flex-basis: 0;
+}
+.date-box.dual-calendar-hidden {
+  display: none !important;
 }
 .month-year {
   display: flex;
@@ -694,6 +771,7 @@ body {
 }
 #calendar-week table {
   width: 100%;
+  margin-left: 0;
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 5px 0;
@@ -735,8 +813,12 @@ body {
   line-height: 1;
   transition: color 1s ease, var(--panel-transition);
 }
+#calendar-week td.weekend .wk-date {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-color) 55%, transparent);
+}
 #calendar-month table {
-  width: 100%;
+  width: calc(100% + 5px);
+  margin-left: -5px;
   border-collapse: separate;
   border-spacing: 5px;
   table-layout: fixed;
@@ -760,6 +842,9 @@ body {
   color: #111 !important;
   font-weight: 700;
 }
+#calendar-month td.weekend {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-color) 55%, transparent);
+}
 .spotify-box.spotify-shrunk ~ #calendar-box,
 .spotify-box.spotify-shrunk ~ #forecast-box {
   display: flex !important;
@@ -767,11 +852,15 @@ body {
   height: auto;
 }
 #calendar-box.visible ~ #forecast-box.visible {
-  max-height: 75px;
+  height: var(--compact-card-height);
+  min-height: var(--compact-card-height);
+  max-height: var(--compact-card-height);
   flex-grow: 0;
 }
 .spotify-box.spotify-shrunk ~ #calendar-box.visible {
-  max-height: 75px;
+  height: var(--compact-card-height);
+  min-height: var(--compact-card-height);
+  max-height: var(--compact-card-height);
   flex-grow: 0;
 }
 .spotify-box.spotify-shrunk ~ #calendar-box #calendar-week table {
@@ -815,6 +904,7 @@ body {
 }
 #calendar-month,
 #calendar-week {
+  width: 100%;
   transition: opacity 0.35s ease, transform 0.35s ease;
   transform-origin: top center;
 }
@@ -863,7 +953,9 @@ body {
 .spotify-box.spotify-shrunk ~ #calendar-box.visible,
 #calendar-box.week-mode.visible,
 #calendar-box.week-mode.widget-visible {
-  max-height: 70px;
+  height: var(--compact-card-height);
+  min-height: var(--compact-card-height);
+  max-height: var(--compact-card-height);
 }
 
 /* =========================
@@ -874,7 +966,7 @@ body {
   background-color: transparent;
   position: relative;
   isolation: isolate;
-  padding: 5px;
+  padding: 2px 5px;
   flex-grow: 0;
 }
 #forecast-box::before {
@@ -903,43 +995,54 @@ body {
 .forecast-row {
   display: flex;
   flex-direction: row;
-  margin-top: 4px;
-  margin-bottom: 4px;
+  margin: 0;
   gap: 8px;
   width: 100%;
   justify-content: space-between;
-  height: 95%;
+  height: 100%;
+  box-sizing: border-box;
 }
 .forecast-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   background-color: var(--panel-cell-bg);
-  padding: 4px 2px;
+  height: 100%;
+  padding: 1px 2px;
+  box-sizing: border-box;
   border-radius: 8px;
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
-  max-height: 70px;
+  max-height: 100%;
   transition: var(--panel-transition);
 }
 .forecast-item img {
-  width: 100%;
-  max-width: 45px;
-  height: 45px;
+  width: 50px;
+  max-width: 50px;
+  height: 50px;
   object-fit: contain;
   margin: 0;
 }
 .forecast-item .time {
-  font-size: 10px;
+  position: absolute;
+  top: 3px;
+  z-index: 1;
+  font-size: 9px;
+  line-height: 1;
   color: var(--accent-color);
   font-weight: bold;
   white-space: nowrap;
 }
 .forecast-item .temp {
+  position: absolute;
+  bottom: 3px;
+  z-index: 1;
   font-weight: bold;
-  font-size: 12px;
+  font-size: 9px;
+  line-height: 1;
   white-space: nowrap;
 }
 .forecast-item .cond {
@@ -994,13 +1097,17 @@ body {
   text-overflow: ellipsis;
 }
 .spotify-box.spotify-shrunk ~ #forecast-box .forecast-item {
-  padding: 4px 2px;
+  padding: 1px 2px;
 }
 #forecast-5h-icons,
 #forecast-5h-big,
 #forecast-5d-big {
   transition: opacity 0.35s ease, transform 0.35s ease;
   transform-origin: top center;
+}
+#forecast-5h-icons {
+  width: 100%;
+  height: 100%;
 }
 #forecast-5h-icons.hidden,
 #forecast-5h-big.hidden,
@@ -1439,6 +1546,170 @@ body {
   opacity: 1;
   overflow: hidden !important;
   box-sizing: border-box !important;
+}
+.weather-info {
+  min-width: 0;
+}
+.weather-primary {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+}
+.weather-details {
+  display: none;
+  align-self: stretch;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  min-width: 64px;
+  margin-left: 4px;
+  padding-left: 0;
+  border-left: 1px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
+}
+.weather-details-secondary {
+  min-width: 58px;
+  margin-left: 0;
+  padding-left: 0;
+}
+.weather-box.single-clock-weather .weather-details {
+  display: flex;
+  min-width: 0;
+  width: auto;
+  flex: 0 0 22.5%;
+  margin-left: 0;
+  padding-left: 0;
+  box-sizing: border-box;
+}
+.weather-box.single-clock-weather {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+.weather-box.single-clock-weather .weather-primary {
+  display: flex;
+  flex: 0 0 55%;
+  min-width: 0;
+  align-items: stretch;
+}
+.weather-warning-details {
+  display: none;
+}
+.weather-box.single-clock-weather.has-weather-warning .weather-details {
+  display: none;
+}
+.weather-box.single-clock-weather.has-weather-warning .weather-primary {
+  flex-basis: 50%;
+}
+.weather-box.single-clock-weather.has-weather-warning .weather-warning-details {
+  align-self: stretch;
+  display: flex;
+  flex: 0 0 50%;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-left: 0;
+  padding: 5px 7px;
+  box-sizing: border-box;
+  border-left: 1px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
+}
+.weather-warning-details svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  fill: none;
+  stroke: #FFC107;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#weather-warning-text {
+  display: block;
+  min-width: 0;
+  max-height: 46px;
+  overflow: hidden;
+  color: #FFC107;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: left;
+}
+.weather-warning-text__inner {
+  display: block;
+  transform: translateY(0);
+  will-change: transform;
+}
+#weather-warning-text.is-scroll-y .weather-warning-text__inner {
+  animation: weatherWarningScrollToEndY var(--weather-warning-scroll-duration, 7s) linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  #weather-warning-text.is-scroll-y .weather-warning-text__inner {
+    animation: none;
+  }
+}
+.weather-warning-details span.alert-moderate { color: #FF9800; }
+.weather-warning-details span.alert-severe { color: #F44336; }
+.weather-warning-details span.alert-extreme { color: #FF5252; }
+.weather-box.single-clock-weather .weather-icon img {
+  width: 50px;
+  height: 50px;
+  margin-top: 0;
+}
+.weather-box.single-clock-weather .weather-icon {
+  flex: 0 0 50px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0;
+}
+.weather-box.single-clock-weather .weather-temperature {
+  margin-top: 0;
+  margin-right: 0;
+}
+.weather-box.single-clock-weather .weather-info {
+  align-self: stretch;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+}
+.weather-detail {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+}
+.weather-detail-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: color-mix(in srgb, var(--accent-text) 55%, transparent);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+.weather-detail-label svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.weather-detail-value {
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .weather-icon img {
   width: 70px;
@@ -1943,4 +2214,38 @@ body:has(.left_panel.swapped) .system-info-box {
   91.01%, 100% {
     transform: translateY(0);
   }
+}
+@keyframes weatherWarningScrollToEndY {
+  0%, 16% { transform: translateY(0); }
+  76%, 91% { transform: translateY(calc(-1 * var(--weather-warning-scroll-distance, 0px))); }
+  91.01%, 100% { transform: translateY(0); }
+}
+
+/* One immutable height for every compact top-level card. Large Spotify and
+   the monthly calendar intentionally do not match these selectors. */
+.dual_clock-box,
+.first-row .date-box,
+.second_row > .date-box,
+.second_row > .weather-box,
+#calendar-box.week-mode.visible,
+#calendar-box.week-mode.widget-visible,
+#forecast-box.visible:has(#forecast-5h-icons:not(.hidden)),
+#forecast-box.widget-visible:has(#forecast-5h-icons:not(.hidden)) {
+  box-sizing: border-box !important;
+  height: var(--compact-card-height) !important;
+  min-height: var(--compact-card-height) !important;
+  max-height: var(--compact-card-height) !important;
+}
+
+.spotify-box.spotify-shrunk .album-art {
+  width: 85px !important;
+  height: 85px !important;
+}
+
+.spotify-box.spotify-shrunk.visible,
+.spotify-box.spotify-shrunk.widget-visible {
+  box-sizing: border-box !important;
+  height: 85px !important;
+  min-height: 85px !important;
+  max-height: 85px !important;
 }
