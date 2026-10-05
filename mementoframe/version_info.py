@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 65, # Keep update overlay visible during rollback recovery
+        "version": 66, # Keep pre-reboot update overlay text stable
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 22,  # Reuse staged update archives during repeated checks
+        "version": 23,  # Preserve active update state across status refreshes
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },

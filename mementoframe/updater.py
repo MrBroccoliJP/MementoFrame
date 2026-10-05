@@ -187,8 +187,64 @@ def base_state(**updates: Any) -> dict[str, Any]:
     return state
 
 
-def replace_state(**updates: Any) -> dict[str, Any]:
+ACTIVE_UPDATE_STATE_FIELDS = [
+    "update_in_progress",
+    "update_started_at",
+    "update_candidate_version",
+    "update_candidate_tag",
+    "pending_restart",
+    "reboot_requested",
+    "reboot_requested_at",
+    "applied_update",
+    "updated_at",
+    "backup_path",
+    "release_root",
+    "copied_top_level",
+    "restored_preserved",
+    "refreshed_release_files",
+    "removed_special_files",
+    "fixed_permissions",
+    "rollback_required",
+    "rollback_applied",
+    "rollback_in_progress",
+    "rollback_reboot_requested",
+    "rollback_reboot_requested_at",
+    "rollback_backup_path",
+    "broken_releases",
+]
+
+
+def active_update_state(state: dict[str, Any]) -> bool:
+    """Return True while an update/rollback still needs its reboot flow."""
+    return bool(
+        state.get("update_in_progress")
+        or state.get("pending_restart")
+        or state.get("reboot_requested")
+        or state.get("rollback_in_progress")
+        or state.get("rollback_reboot_requested")
+    )
+
+
+def preserved_active_update_fields(previous: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+    """Keep unrelated state refreshes from hiding an update overlay mid-install."""
+    if not active_update_state(previous):
+        return {}
+
+    preserved: dict[str, Any] = {}
+    for key in ACTIVE_UPDATE_STATE_FIELDS:
+        if key in updates or key not in previous:
+            continue
+        value = previous.get(key)
+        if value in (None, False):
+            continue
+        preserved[key] = value
+    return preserved
+
+
+def replace_state(*, preserve_active_update: bool = True, **updates: Any) -> dict[str, Any]:
+    previous = read_json(STATE_FILE, {}) if preserve_active_update else {}
     state = base_state(**updates)
+    state.update(preserved_active_update_fields(previous, updates))
     atomic_write_json(STATE_FILE, state)
     return state
 
@@ -1399,6 +1455,7 @@ def install() -> dict[str, Any]:
     fixed_permissions = repair_runtime_permissions()
     install_requirements()
     return replace_state(
+        preserve_active_update=False,
         installed_version=installed_version(),
         installed_at=now_ts(),
         env_created=env_created,

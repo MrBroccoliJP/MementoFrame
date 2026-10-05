@@ -127,8 +127,6 @@ export function applyUpdateState(state) {
       statusText.textContent = "Update failed - restoring previous version";
     } else if (verifying) {
       statusText.textContent = "Finishing update - verifying update";
-    } else if (lastState.pending_restart) {
-      statusText.textContent = "Update installed - restart pending";
     } else {
       statusText.textContent = "Applying software update";
     }
