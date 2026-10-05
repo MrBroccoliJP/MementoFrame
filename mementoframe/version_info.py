@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 63, # Improve hourly forecast readability
+        "version": 65, # Keep update overlay visible during rollback recovery
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 32, # Improved source settings and added reinstall action
+        "version": 33, # Preserve update overlay state when starting installs
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 32, # Keep Google daily forecasts on current and future days
+        "version": 34, # Detect post-rollback update verification state
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 19,  # Keep update overlay active until post-reboot validation
+        "version": 21,  # Track rollback recovery through reboot verification
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },

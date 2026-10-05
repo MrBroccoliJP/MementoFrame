@@ -87,10 +87,17 @@ export function applyUpdateState(state) {
   const statusText = document.getElementById("updateStatusText");
 
   const available = !!lastState.available;
+  const rollbackActive = !!(
+    lastState.rollback_in_progress ||
+    lastState.rollback_reboot_requested ||
+    lastState.post_rollback_pending ||
+    lastState.rollback_post_reboot_attempt
+  );
   const updating = !!(
     lastState.update_in_progress ||
     lastState.pending_restart ||
-    lastState.reboot_requested
+    lastState.reboot_requested ||
+    rollbackActive
   );
 
   indicator.classList.toggle("hidden", !available || updating);
@@ -103,9 +110,23 @@ export function applyUpdateState(state) {
   overlay.setAttribute("aria-hidden", updating ? "false" : "true");
 
   if (statusText) {
-    const verifying = !!(lastState.post_reboot_checked_at || lastState.post_reboot_attempt);
-    if (verifying) {
-      statusText.textContent = "Update finished - verifying update";
+    const rollbackVerifying = !!(
+      lastState.post_rollback_pending ||
+      lastState.rollback_post_reboot_attempt
+    );
+    const verifying = !!(
+      lastState.post_reboot_pending ||
+      lastState.post_reboot_checked_at ||
+      lastState.post_reboot_attempt
+    );
+    if (rollbackVerifying) {
+      statusText.textContent = "Restoring previous version - verifying frame";
+    } else if (lastState.rollback_reboot_requested) {
+      statusText.textContent = "Previous version restored - restarting frame";
+    } else if (lastState.rollback_in_progress || lastState.rollback_required) {
+      statusText.textContent = "Update failed - restoring previous version";
+    } else if (verifying) {
+      statusText.textContent = "Finishing update - verifying update";
     } else if (lastState.pending_restart) {
       statusText.textContent = "Update installed - restart pending";
     } else {

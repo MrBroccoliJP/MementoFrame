@@ -818,6 +818,8 @@ def run_updater(command, background=False):
             state = load_update_state()
             state["update_in_progress"] = True
             state["pending_restart"] = False
+            state["reboot_requested"] = False
+            state["update_started_at"] = state.get("update_started_at") or int(time.time())
             _atomic_write_json(UPDATE_STATE_FILE, state)
         except Exception as e:
             print(f"⚠️ Could not pre-set update_in_progress: {e}")

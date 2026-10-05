@@ -104,9 +104,44 @@ def load_update_state():
     state.setdefault("available", False)
     state.setdefault("pending_restart", False)
     state.setdefault("update_in_progress", False)
+    state.setdefault("reboot_requested", False)
+    state.setdefault("post_reboot_pending", False)
+    state.setdefault("rollback_in_progress", False)
+    state.setdefault("rollback_reboot_requested", False)
+    state.setdefault("post_rollback_pending", False)
     state.setdefault("installed_version", GLOBAL_APP_VERSION)
+    if state.get("pending_restart") or state.get("reboot_requested"):
+        boot_time = system_boot_time()
+        reboot_requested_at = state.get("reboot_requested_at")
+        try:
+            state["post_reboot_pending"] = bool(
+                boot_time and reboot_requested_at and boot_time >= float(reboot_requested_at)
+            )
+        except (TypeError, ValueError):
+            state["post_reboot_pending"] = False
+    if state.get("rollback_reboot_requested"):
+        boot_time = system_boot_time()
+        rollback_reboot_requested_at = state.get("rollback_reboot_requested_at")
+        try:
+            state["post_rollback_pending"] = bool(
+                boot_time and rollback_reboot_requested_at and boot_time >= float(rollback_reboot_requested_at)
+            )
+        except (TypeError, ValueError):
+            state["post_rollback_pending"] = False
     state["auto_update"] = bool(updates_cfg.get("auto_update", False))
     return state
+
+
+def system_boot_time():
+    """Return the Linux system boot timestamp when available."""
+    try:
+        with open("/proc/stat", "r", encoding="utf-8") as stat_file:
+            for line in stat_file:
+                if line.startswith("btime "):
+                    return float(line.split()[1])
+    except Exception:
+        return None
+    return None
 
 config = load_config()
 

@@ -178,6 +178,8 @@ def base_state(**updates: Any) -> dict[str, Any]:
         "reboot_requested": False,
         "update_in_progress": False,
         "applied_update": False,
+        "rollback_in_progress": False,
+        "rollback_reboot_requested": False,
         "last_error": None,
         "broken_releases": [],
     }
@@ -201,6 +203,8 @@ def write_state(**updates: Any) -> dict[str, Any]:
     state.setdefault("reboot_requested", False)
     state.setdefault("update_in_progress", False)
     state.setdefault("applied_update", False)
+    state.setdefault("rollback_in_progress", False)
+    state.setdefault("rollback_reboot_requested", False)
     state.setdefault("last_error", None)
     state.setdefault("broken_releases", [])
     atomic_write_json(STATE_FILE, state)
@@ -464,7 +468,7 @@ def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
     return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
 
 
-def check_for_update() -> dict[str, Any]:
+def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
     cfg = load_config()
     updates = cfg.get("updates", {})
     repo = updates.get("repo", "")
@@ -472,6 +476,14 @@ def check_for_update() -> dict[str, Any]:
     current = installed_version()
     previous_state = read_json(STATE_FILE, {})
     broken_releases = previous_state.get("broken_releases") or []
+    active_update_fields = {}
+    if keep_update_in_progress:
+        active_update_fields = {
+            "update_in_progress": True,
+            "pending_restart": False,
+            "reboot_requested": False,
+            "update_started_at": previous_state.get("update_started_at") or now_ts(),
+        }
 
     try:
         release = github_latest_release(repo, channel=channel)
@@ -496,6 +508,7 @@ def check_for_update() -> dict[str, Any]:
         if is_broken:
             return replace_state(
                 **common,
+                **active_update_fields,
                 available=False,
                 broken_release_skipped=True,
                 last_error=f"Latest release {tag or latest} is marked as broken after a failed update; waiting for a newer release.",
@@ -503,6 +516,7 @@ def check_for_update() -> dict[str, Any]:
 
         state = replace_state(
             **common,
+            **active_update_fields,
             available=available,
             broken_release_skipped=False,
             last_error=None,
@@ -516,6 +530,7 @@ def check_for_update() -> dict[str, Any]:
             checked_at=now_ts(),
             available=False,
             broken_releases=broken_releases,
+            **active_update_fields,
             last_error=str(exc),
         )
 
@@ -555,6 +570,9 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
             latest_version=latest or None,
             latest_tag=tag,
             available=False,
+            update_in_progress=bool(previous_state.get("update_in_progress")),
+            pending_restart=False,
+            reboot_requested=False,
             checked_at=now_ts(),
             last_error=f"Release {tag or latest} is marked as broken after a failed update; reinstall skipped.",
         )
@@ -572,6 +590,10 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
         available=True,
         force_reinstall=True,
         reinstall_requested_at=now_ts(),
+        update_in_progress=bool(previous_state.get("update_in_progress")),
+        pending_restart=False,
+        reboot_requested=False,
+        update_started_at=previous_state.get("update_started_at") or now_ts(),
         last_error=None,
     )
     return stage_release_download(state)
@@ -937,7 +959,7 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
     state = read_json(STATE_FILE, {})
     has_reinstall_archive = allow_reinstall and bool(cached_archive_for_state(state))
     if not has_reinstall_archive and (not state.get("zipball_url") or not state.get("available")):
-        state = check_for_update()
+        state = check_for_update(keep_update_in_progress=True)
     if has_reinstall_archive:
         state = write_state(available=True, force_reinstall=True, last_error=None)
     if not state.get("available") and not allow_reinstall:
@@ -1029,7 +1051,7 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
 
 
 def request_reboot() -> None:
-    write_state(pending_restart=True, reboot_requested=True)
+    write_state(pending_restart=True, reboot_requested=True, reboot_requested_at=now_ts())
     proc = sudo_cmd("reboot", timeout=10)
     if proc.returncode != 0:
         print(f"⚠️ reboot failed: {proc.stderr.strip() or proc.stdout.strip()}")
@@ -1073,6 +1095,13 @@ def autoupdate(no_reboot: bool = False) -> dict[str, Any]:
     repair = repair_systemd_services_if_needed()
     if not repair.get("ok"):
         return write_state(auto_update_skipped="service_repair_failed", last_autoupdate_check=now_ts())
+
+    current_state = read_json(STATE_FILE, {})
+    if current_state.get("rollback_reboot_requested"):
+        rollback_check = post_rollback_check()
+        if rollback_check.get("rollback_in_progress") or rollback_check.get("rollback_required"):
+            return rollback_check
+        # Rollback is verified, so continue with normal updater behavior below.
 
     current_state = read_json(STATE_FILE, {})
     if current_state.get("pending_restart") or current_state.get("reboot_requested"):
@@ -1126,6 +1155,12 @@ def url_ok(url: str, timeout: int = 8) -> bool:
 
 def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> dict[str, Any]:
     """Restore the previous app files and mark the failed release as broken."""
+    write_state(
+        rollback_in_progress=True,
+        rollback_required=True,
+        rollback_started_at=now_ts(),
+        last_error=f"{reason}; restoring previous version.",
+    )
     backup_value = str(state.get("backup_path") or "").strip()
     broken_releases = add_broken_release(state, reason)
 
@@ -1134,6 +1169,8 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
             broken_releases=broken_releases,
             rollback_required=True,
             rollback_applied=False,
+            rollback_in_progress=False,
+            rollback_reboot_requested=False,
             update_in_progress=False,
             pending_restart=False,
             reboot_requested=False,
@@ -1146,6 +1183,8 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
             broken_releases=broken_releases,
             rollback_required=True,
             rollback_applied=False,
+            rollback_in_progress=False,
+            rollback_reboot_requested=False,
             update_in_progress=False,
             pending_restart=False,
             reboot_requested=False,
@@ -1168,12 +1207,14 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
         return write_state(
             installed_version=installed_version(),
             available=False,
-            update_in_progress=False,
-            pending_restart=False,
-            reboot_requested=False,
+            update_in_progress=True,
+            pending_restart=True,
+            reboot_requested=True,
             applied_update=False,
             rollback_required=False,
             rollback_applied=True,
+            rollback_in_progress=True,
+            rollback_reboot_requested=False,
             rollback_at=now_ts(),
             rollback_backup_path=str(backup),
             rollback_restored_top_level=copied,
@@ -1187,6 +1228,8 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
             broken_releases=broken_releases,
             rollback_required=True,
             rollback_applied=False,
+            rollback_in_progress=False,
+            rollback_reboot_requested=False,
             update_in_progress=False,
             pending_restart=False,
             reboot_requested=False,
@@ -1235,15 +1278,73 @@ def post_reboot_check() -> dict[str, Any]:
     result = restore_backup_after_failed_update(read_json(STATE_FILE, state), reason)
 
     if result.get("rollback_applied"):
+        write_state(
+            rollback_in_progress=True,
+            rollback_reboot_requested=True,
+            rollback_reboot_requested_at=now_ts(),
+            update_in_progress=True,
+            pending_restart=True,
+            reboot_requested=True,
+            last_error=f"{result.get('last_error')}; rebooting into restored version.",
+        )
         proc = sudo_cmd("reboot", timeout=10)
         if proc.returncode != 0:
             return write_state(
+                rollback_in_progress=False,
                 rollback_reboot_requested=False,
                 last_error=f"{result.get('last_error')}; reboot after rollback failed: {proc.stderr.strip() or proc.stdout.strip()}",
             )
         return write_state(rollback_reboot_requested=True)
 
     return result
+
+
+def post_rollback_check() -> dict[str, Any]:
+    """Verify services after rebooting into a restored backup."""
+    state = read_json(STATE_FILE, {})
+    if not state.get("rollback_reboot_requested"):
+        return write_state(post_rollback_checked_at=now_ts())
+
+    last_failed_urls: list[str] = []
+    for attempt in range(1, HEALTH_CHECK_ATTEMPTS + 1):
+        write_state(
+            rollback_in_progress=True,
+            rollback_post_reboot_attempt=attempt,
+            rollback_post_reboot_attempts_total=HEALTH_CHECK_ATTEMPTS,
+            post_rollback_checked_at=now_ts(),
+            last_error=None if attempt == 1 else "Rollback verification is still waiting for services.",
+        )
+
+        deadline = time.time() + HEALTH_CHECK_SECONDS
+        while time.time() < deadline:
+            failed_urls = [u for u in HEALTH_URLS if not url_ok(u)]
+            if not failed_urls:
+                return write_state(
+                    update_in_progress=False,
+                    pending_restart=False,
+                    reboot_requested=False,
+                    rollback_required=False,
+                    rollback_in_progress=False,
+                    rollback_reboot_requested=False,
+                    rollback_verified_at=now_ts(),
+                    rollback_verified_version=installed_version(),
+                    last_successful_boot_version=installed_version(),
+                    last_error=None,
+                )
+            last_failed_urls = failed_urls
+            time.sleep(HEALTH_POLL_SECONDS)
+
+    return write_state(
+        rollback_in_progress=False,
+        rollback_reboot_requested=False,
+        rollback_required=True,
+        post_rollback_checked_at=now_ts(),
+        last_error=(
+            "Rollback verification failed after "
+            f"{HEALTH_CHECK_ATTEMPTS} attempts of {HEALTH_CHECK_SECONDS} seconds. "
+            f"Failed URLs: {', '.join(last_failed_urls) or 'unknown'}"
+        ),
+    )
 
 def install() -> dict[str, Any]:
     cfg = load_config()
@@ -1326,7 +1427,7 @@ def print_json(data: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MementoFrame updater")
-    parser.add_argument("command", choices=["install", "status", "check", "update", "reinstall", "autoupdate", "post-reboot-check", "reboot", "diagnose", "repair-services", "prune-backups"])
+    parser.add_argument("command", choices=["install", "status", "check", "update", "reinstall", "autoupdate", "post-reboot-check", "post-rollback-check", "reboot", "diagnose", "repair-services", "prune-backups"])
     parser.add_argument("--no-reboot", action="store_true", help="Do not reboot after update/autoupdate")
     args = parser.parse_args()
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -1361,6 +1462,8 @@ def main() -> int:
             print_json(autoupdate(no_reboot=args.no_reboot))
         elif args.command == "post-reboot-check":
             print_json(post_reboot_check())
+        elif args.command == "post-rollback-check":
+            print_json(post_rollback_check())
         elif args.command == "reboot":
             request_reboot()
             print_json(read_json(STATE_FILE, {}))
