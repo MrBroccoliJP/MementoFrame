@@ -569,6 +569,16 @@ def get_weatherapi_data(force_refresh=False):
         current_code = current_condition.get("code")
         current_is_day = bool(current.get("is_day", 1))
         current_uv = current.get("uv")
+        current_epoch = float(current.get("last_updated_epoch") or now)
+        current_hour_forecast = min(
+            today_forecast.get("hour", []) or [],
+            key=lambda hour: abs(float(hour.get("time_epoch") or 0) - current_epoch),
+            default={},
+        )
+        precipitation_probability = round(max(
+            float(current_hour_forecast.get("chance_of_rain") or 0),
+            float(current_hour_forecast.get("chance_of_snow") or 0),
+        ))
 
         # ── Current conditions ────────────────────────────────────────────
         weather_info = {
@@ -588,6 +598,7 @@ def get_weatherapi_data(force_refresh=False):
                 uv_value=current_uv,
             ),
             "humidity": current["humidity"],
+            "precipitationProbability": precipitation_probability,
             "windSpeed": current["wind_kph"],
             "city": data["location"]["name"],
             "alerts": normalize_weather_alerts(data, WEATHER_LOCATION),
@@ -745,6 +756,13 @@ def _google_temperature(value):
     return float((value or {}).get("degrees", 0))
 
 
+def _google_precipitation_probability(current):
+    """Extract Google's current precipitation probability as a percentage."""
+    precipitation = (current or {}).get("precipitation") or {}
+    probability = precipitation.get("probability") or {}
+    return round(float(probability.get("percent") or 0))
+
+
 def _google_alerts(data):
     normalized = []
     for alert in data.get("weatherAlerts", []) or []:
@@ -831,6 +849,7 @@ def get_google_weather_data(force_refresh=False):
                 "moonPhase": moon_phase.replace("_", " ").title(),
                 "icon": resolve_weather_icon(current_code, current_is_day, moon_phase, current_uv),
                 "humidity": current.get("relativeHumidity", 0),
+                "precipitationProbability": _google_precipitation_probability(current),
                 "windSpeed": ((current.get("wind") or {}).get("speed") or {}).get("value", 0),
                 "city": WEATHER_CITY,
                 "alerts": _google_alerts(alerts_data),
@@ -933,7 +952,7 @@ def get_open_meteo_weather_data(force_refresh=False):
                 "latitude": WEATHER_LATITUDE,
                 "longitude": WEATHER_LONGITUDE,
                 "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day,uv_index",
-                "hourly": "temperature_2m,weather_code,is_day,uv_index",
+                "hourly": "temperature_2m,weather_code,is_day,uv_index,precipitation_probability",
                 "daily": "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max",
                 "timezone": "auto",
                 "forecast_days": 5,
@@ -946,6 +965,14 @@ def get_open_meteo_weather_data(force_refresh=False):
         condition, condition_code = _open_meteo_condition(current.get("weather_code"))
         is_day = bool(current.get("is_day", 1))
         uv = current.get("uv_index")
+        hourly = data.get("hourly", {}) or {}
+        hourly_times = hourly.get("time", []) or []
+        current_time = str(current.get("time", ""))
+        current_indexes = [index for index, value in enumerate(hourly_times) if str(value) <= current_time]
+        precipitation_values = hourly.get("precipitation_probability", []) or []
+        precipitation_probability = 0
+        if current_indexes and current_indexes[-1] < len(precipitation_values):
+            precipitation_probability = round(float(precipitation_values[current_indexes[-1]] or 0))
         weather_info = {
             "available": True,
             "stale": False,
@@ -958,14 +985,12 @@ def get_open_meteo_weather_data(force_refresh=False):
             "moonPhase": "",
             "icon": resolve_weather_icon(condition_code, is_day=is_day, uv_value=uv),
             "humidity": int(current.get("relative_humidity_2m", 0)),
+            "precipitationProbability": precipitation_probability,
             "windSpeed": float(current.get("wind_speed_10m", 0)),
             "city": WEATHER_CITY,
             "alerts": [],
         }
 
-        hourly = data.get("hourly", {}) or {}
-        hourly_times = hourly.get("time", []) or []
-        current_time = str(current.get("time", ""))
         future_indexes = [index for index, value in enumerate(hourly_times) if str(value) > current_time][:5]
         hourly_slots = []
         for index in future_indexes:

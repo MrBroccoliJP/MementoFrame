@@ -97,6 +97,7 @@ export const state = {
     pollTimer: null,
     accentTimer: null,
     currentAccent: null,
+    currentSecondaryAccent: null,
     lastTrackId: null,
     wasPaused: false,
     hideTimeout: null,
