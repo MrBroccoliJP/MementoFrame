@@ -43,6 +43,7 @@ body {
   --panel-bg: rgba(28, 28, 28, 0.84);
   --panel-cell-bg: rgba(44, 44, 44, 0.88);
   --weather-content-lift: -2px;
+  --hourly-forecast-height: 84px;
   --pin-expanded-bg: var(--panel-cell-bg);
   --spotify-gradient-start: rgb(80, 80, 80);
   --spotify-gradient-end: rgb(42, 42, 42);
@@ -1030,9 +1031,9 @@ body {
 }
 .forecast-item .time {
   position: absolute;
-  top: 3px;
+  top: 5px;
   z-index: 1;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   color: var(--accent-color);
   font-weight: bold;
@@ -1040,10 +1041,10 @@ body {
 }
 .forecast-item .temp {
   position: absolute;
-  bottom: 3px;
+  bottom: 5px;
   z-index: 1;
   font-weight: bold;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1;
   white-space: nowrap;
 }
@@ -2241,12 +2242,22 @@ body:has(.left_panel.swapped) .system-info-box {
 .second_row > .weather-box,
 #calendar-box.week-mode.visible,
 #calendar-box.week-mode.widget-visible,
-#forecast-box.visible:has(#forecast-5h-icons:not(.hidden)),
-#forecast-box.widget-visible:has(#forecast-5h-icons:not(.hidden)) {
+#forecast-box.visible:has(#forecast-5h-big:not(.hidden)),
+#forecast-box.widget-visible:has(#forecast-5h-big:not(.hidden)),
+#forecast-box.visible:has(#forecast-5d-big:not(.hidden)),
+#forecast-box.widget-visible:has(#forecast-5d-big:not(.hidden)) {
   box-sizing: border-box !important;
   height: var(--compact-card-height) !important;
   min-height: var(--compact-card-height) !important;
   max-height: var(--compact-card-height) !important;
+}
+
+#forecast-box.visible:has(#forecast-5h-icons:not(.hidden)),
+#forecast-box.widget-visible:has(#forecast-5h-icons:not(.hidden)) {
+  box-sizing: border-box !important;
+  height: var(--hourly-forecast-height) !important;
+  min-height: var(--hourly-forecast-height) !important;
+  max-height: var(--hourly-forecast-height) !important;
 }
 
 .spotify-box.spotify-shrunk .album-art {

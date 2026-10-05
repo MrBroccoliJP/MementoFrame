@@ -763,6 +763,23 @@ def _google_precipitation_probability(current):
     return round(float(probability.get("percent") or 0))
 
 
+def _google_forecast_day_date(day):
+    """Return the local date represented by one Google forecast day."""
+    date_data = day.get("displayDate", {}) or {}
+    return datetime.date(int(date_data["year"]), int(date_data["month"]), int(date_data["day"]))
+
+
+def _google_daily_forecast_is_current(data):
+    """Avoid carrying yesterday's daily forecast through Google's 24h cache."""
+    days = data.get("forecastDays", []) or []
+    if not days:
+        return True
+    try:
+        return _google_forecast_day_date(days[0]) >= datetime.date.today()
+    except (KeyError, TypeError, ValueError):
+        return True
+
+
 def _google_alerts(data):
     normalized = []
     for alert in data.get("weatherAlerts", []) or []:
@@ -804,7 +821,10 @@ def get_google_weather_data(force_refresh=False):
         cached = google_weather_cache.get(path)
         if not force_refresh and cached:
             cached_data, cached_time = cached
-            if now - cached_time < GOOGLE_WEATHER_CACHE_SECONDS[path]:
+            cache_is_fresh = now - cached_time < GOOGLE_WEATHER_CACHE_SECONDS[path]
+            if path == "forecast/days" and not _google_daily_forecast_is_current(cached_data):
+                cache_is_fresh = False
+            if cache_is_fresh:
                 return cached_data
 
         params = dict(base_params)
@@ -824,14 +844,18 @@ def get_google_weather_data(force_refresh=False):
         try:
             current = lookup("currentConditions")
             hourly_data = lookup("forecast/hours", hours=6, pageSize=6)
-            daily_data = lookup("forecast/days", days=5, pageSize=5)
+            daily_data = lookup("forecast/days", days=6, pageSize=6)
             try:
                 alerts_data = lookup("publicAlerts", metric=False, pageSize=20)
             except (requests.RequestException, ValueError):
                 cached_alerts = google_weather_cache.get("publicAlerts")
                 alerts_data = cached_alerts[0] if cached_alerts else {}
 
-            days = daily_data.get("forecastDays", []) or []
+            google_today = datetime.date.today()
+            days = [
+                day for day in (daily_data.get("forecastDays", []) or [])
+                if _google_forecast_day_date(day) >= google_today
+            ]
             moon_phase = ((days[0].get("moonEvents") or {}).get("moonPhase", "") if days else "")
             current_condition, current_code = _google_condition(current.get("weatherCondition"))
             current_is_day = bool(current.get("isDaytime", True))
@@ -875,15 +899,15 @@ def get_google_weather_data(force_refresh=False):
 
             daily_slots = []
             day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            today = datetime.date.today()
+            today = google_today
             for day in days:
-                date_data = day.get("displayDate", {}) or {}
-                date_obj = datetime.date(int(date_data["year"]), int(date_data["month"]), int(date_data["day"]))
+                date_obj = _google_forecast_day_date(day)
                 daytime = day.get("daytimeForecast") or day.get("nighttimeForecast") or {}
                 condition_text, condition_code = _google_condition(daytime.get("weatherCondition"))
                 uv_value = daytime.get("uvIndex")
                 day_moon_phase = ((day.get("moonEvents") or {}).get("moonPhase") or moon_phase)
                 daily_slots.append({
+                    "date": date_obj.isoformat(),
                     "label": "Today" if date_obj == today else day_names[date_obj.weekday()],
                     "icon": resolve_weather_icon(condition_code, True, day_moon_phase, uv_value),
                     "conditionCode": condition_code,
@@ -894,6 +918,8 @@ def get_google_weather_data(force_refresh=False):
                     "low": f"{round(_google_temperature(day.get('minTemperature')))}°C",
                     "condition": condition_text,
                 })
+                if len(daily_slots) >= 5:
+                    break
 
             weather_info["forecast"] = {"hourly": hourly_slots, "daily": daily_slots}
             cache["weather"] = (weather_info, now)

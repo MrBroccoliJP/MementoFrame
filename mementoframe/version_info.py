@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 62, # Clarify update overlay verification state
+        "version": 63, # Improve hourly forecast readability
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -41,7 +41,7 @@ COMPONENTS = {
     },
     "display_service": {
         "label": "Display Service",
-        "version": 31, # Select the corresponding bundled icon for every UV index
+        "version": 32, # Keep Google daily forecasts on current and future days
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
