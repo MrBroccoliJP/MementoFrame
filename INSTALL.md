@@ -25,7 +25,7 @@ The recommended setup is the one-command installer. It creates/uses the `memento
 - Chromium kiosk mode for the physical display
 - GPIO pins for display power and brightness pulses
 - `updater.py` for first-time app bootstrap and future GitHub Release updates
-- Separate systemd services for config, display, network, kiosk, and post-reboot update validation
+- Separate systemd services for config, display, network, kiosk, and timer-driven update checks
 - WebP image conversion/thumbnails through Pillow with system WebP libraries
 
 ---
@@ -47,7 +47,7 @@ By default, `install.sh` downloads and installs the latest stable GitHub Release
 Install a specific release tag:
 
 ```bash
-sudo INSTALL_TAG=v1.25.22.21.21.13 bash install.sh
+sudo INSTALL_TAG=v5.51.27.28.22.17 bash install.sh
 ```
 
 Install the newest non-draft pre-release/release instead of only the latest stable release:
@@ -71,7 +71,7 @@ sudo INSTALL_REPO=owner/repository bash install.sh
 Developer-only local checkout override:
 
 ```bash
-sudo SRC_DIR="$(pwd)" bash install.sh
+sudo SRC_DIR="$(pwd)" bash mementoframe/install.sh
 ```
 
 `SRC_DIR` must point to the repository root, the directory containing the inner `mementoframe/` folder.
@@ -95,7 +95,7 @@ The installed runtime app folder contains the split-service layout:
 | `config_portal_service.py` | Admin/configuration portal on port `5000`. |
 | `display_service.py` | Local display/frontend API on port `5001`. |
 | `network_manager_service.py` | NetworkManager Wi-Fi/AP fallback watchdog. |
-| `updater.py` | Installer/update/post-reboot helper. |
+| `updater.py` | Installer, update, autoupdate, and repair helper. |
 | `version_info.py` | Composite release/component version metadata. |
 | `requirements.txt` | Python dependencies. |
 | `config.json` | User configuration. |
@@ -122,7 +122,7 @@ The installed runtime app folder contains the split-service layout:
 11. Runs `python3 updater.py install` as the `mementoframe` user.
 12. Forces update settings in `config.json` so auto-update is enabled and the repository/channel match the installer selection.
 13. Creates `/usr/local/bin/mementoframe-kiosk.sh` with DPMS/screen blanking disabled and Raspberry Pi Chromium flags.
-14. Creates the split systemd services.
+14. Creates the split systemd services and the hourly updater timer.
 15. Creates `/etc/sudoers.d/mementoframe-updater` with only the limited permissions required by Wi-Fi setup, updater restarts, and reboot.
 16. Enables and starts the services.
 17. Reboots automatically unless `SKIP_REBOOT=1` is set.
@@ -314,22 +314,38 @@ Requires=mementoframe-display.service
 
 The kiosk launcher disables X screen saver/DPMS every time X starts. This prevents HDMI from going to “No Signal” after the default 10-minute X timeout. It also hides the cursor with `unclutter`, sets the X root background black, stores Chromium cache in `/dev/shm`, and uses GPU/compositing flags for smoother image fades.
 
-### `mementoframe-post-reboot.service`
+### `mementoframe-updater.service`
 
-Runs the update lifecycle health check after boot.
-
-```text
-/etc/systemd/system/mementoframe-post-reboot.service
-```
-
-It polls:
+Runs automatic update checks/install attempts when triggered by the timer.
 
 ```text
-http://127.0.0.1:5000/health
-http://127.0.0.1:5001/health
+/etc/systemd/system/mementoframe-updater.service
 ```
 
-and clears `pending_restart` in `runtime/update_state.json` once both services respond.
+Important values:
+
+```ini
+User=mementoframe
+WorkingDirectory=/home/mementoframe/mementoframe
+ExecStart=/home/mementoframe/mementoframe/venv/bin/python3 /home/mementoframe/mementoframe/updater.py autoupdate
+```
+
+### `mementoframe-updater.timer`
+
+Runs the updater service periodically.
+
+```text
+/etc/systemd/system/mementoframe-updater.timer
+```
+
+Important values:
+
+```ini
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+Unit=mementoframe-updater.service
+```
 
 ---
 
@@ -351,7 +367,8 @@ systemctl status mementoframe-config.service
 systemctl status mementoframe-display.service
 systemctl status mementoframe-network.service
 systemctl status mementoframe-kiosk.service
-systemctl status mementoframe-post-reboot.service
+systemctl status mementoframe-updater.service
+systemctl status mementoframe-updater.timer
 ```
 
 Useful logs:
@@ -361,6 +378,7 @@ journalctl -u mementoframe-config.service -f
 journalctl -u mementoframe-display.service -f
 journalctl -u mementoframe-network.service -f
 journalctl -u mementoframe-kiosk.service -f
+journalctl -u mementoframe-updater.service -n 80 --no-pager
 ```
 
 ---
@@ -381,6 +399,8 @@ mementoframe ALL=(root) NOPASSWD: \
   /usr/bin/systemctl restart mementoframe-display.service, \
   /usr/bin/systemctl restart mementoframe-network.service, \
   /usr/bin/systemctl restart mementoframe-kiosk.service, \
+  /usr/bin/systemctl restart NetworkManager, \
+  /home/mementoframe/mementoframe/repair_services.sh, \
   /usr/bin/systemctl stop hostapd, \
   /usr/bin/systemctl stop dnsmasq, \
   /usr/bin/nmcli, \
@@ -443,7 +463,7 @@ v<release>.<frontend>.<config>.<display>.<network>.<updater>
 Example:
 
 ```text
-v1.25.22.21.21.13
+v5.51.27.28.22.17
 ```
 
 Manual terminal update:

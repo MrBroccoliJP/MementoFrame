@@ -45,9 +45,10 @@ MementoFrame uses separate services so each part can be logged, restarted, and d
 |---|---|---:|---|
 | `mementoframe-config.service` | `config_portal_service.py` | `5000` | Admin/configuration portal. |
 | `mementoframe-display.service` | `display_service.py` | `5001` | Display frontend server and local widget API. |
-| `mementoframe-network.service` | `network_manager_service.py` | — | Wi-Fi/AP fallback watchdog. |
-| `mementoframe-kiosk.service` | Chromium | — | Fullscreen display browser. |
-| `mementoframe-post-reboot.service` | `updater.py post-reboot-check` | — | Clears update pending-restart state after health checks pass. |
+| `mementoframe-network.service` | `network_manager_service.py` | - | Wi-Fi/AP fallback watchdog. |
+| `mementoframe-kiosk.service` | Chromium | - | Fullscreen display browser. |
+| `mementoframe-updater.timer` | systemd timer | - | Runs periodic update checks. |
+| `mementoframe-updater.service` | `updater.py autoupdate` | - | Checks and installs eligible GitHub Release updates. |
 
 ---
 
@@ -64,19 +65,19 @@ release.frontend.config.display.network.updater
 Example:
 
 ```text
-v1.25.22.21.21.13
+v5.51.27.28.22.17
 ```
 
 Meaning:
 
 | Segment | Meaning |
 |---:|---|
-| `1` | Release counter |
-| `25` | Frontend version |
-| `22` | Config portal version |
-| `21` | Display service version |
-| `21` | Network manager version |
-| `13` | Updater version |
+| `5` | Release counter |
+| `51` | Frontend version |
+| `27` | Config portal version |
+| `28` | Display service version |
+| `22` | Network manager version |
+| `17` | Updater version |
 
 The updater compares the full composite version from GitHub release tags.
 
@@ -212,23 +213,27 @@ Reconnect to client network
 ## Project Structure
 
 ```text
-mementoframe/
-├── config_portal_service.py
-├── display_service.py
-├── network_manager_service.py
-├── updater.py
-├── version_info.py
-├── requirements.txt
-├── config.json
-├── runtime/
-├── resources/
-│   ├── assets/
-│   └── userdata/
-│       ├── Photos/
-│       └── cache/
-├── static/
-├── templates/
-└── docs/
+MementoFrame/
+|-- README.md
+|-- INSTALL.md
+|-- docs/
+|-- dev/
++-- mementoframe/
+    |-- config_portal_service.py
+    |-- display_service.py
+    |-- network_manager_service.py
+    |-- updater.py
+    |-- version_info.py
+    |-- install.sh
+    |-- repair_services.sh
+    |-- requirements.txt
+    |-- config.json
+    |-- runtime/
+    |-- resources/
+    |   |-- assets/
+    |   +-- userdata/
+    |-- static/
+    +-- templates/
 ```
 
 ---
@@ -254,7 +259,7 @@ mementoframe/
 | `/versions` | Return version metadata |
 | `/health` | Config portal health check |
 
-### Display service — port `5001`
+### Display service — port `5001` [only acessible on device]
 
 | Endpoint | Description |
 |---|---|
@@ -290,8 +295,8 @@ mementoframe/
 ### Hardware
 
 - Raspberry Pi 3B+
-- HDMI display
-- GPIO-connected brightness/display circuitry
+- HDMI display [EP-0170]
+- GPIO-connected brightness/display circuitry [for brighness control]
 - DS3231 RTC optional
 
 ### Software
@@ -317,7 +322,7 @@ Quick install:
 cd ~
 git clone https://github.com/MrBroccoliJP/MementoFrame.git
 cd MementoFrame
-sudo bash install.sh
+sudo SRC_DIR="$(pwd)" bash mementoframe/install.sh
 ```
 
 ---
@@ -329,6 +334,7 @@ journalctl -u mementoframe-config.service -f
 journalctl -u mementoframe-display.service -f
 journalctl -u mementoframe-network.service -f
 journalctl -u mementoframe-kiosk.service -f
+journalctl -u mementoframe-updater.service -n 80 --no-pager
 ```
 
 ---
@@ -338,6 +344,35 @@ journalctl -u mementoframe-kiosk.service -f
 Creative Commons Attribution-NonCommercial 4.0 International
 
 [http://creativecommons.org/licenses/by-nc/4.0/](http://creativecommons.org/licenses/by-nc/4.0/)
+
+---
+
+## Acknowledgements
+
+MementoFrame's weather experience is made brighter by a couple of excellent weather projects.
+
+<p align="center">
+  <a href="https://meteocons.com" title="Meteocons animated weather icons">
+    <img src="mementoframe/resources/assets/Weather/meteoicons/fill/partly-cloudy-day.svg" alt="Meteocons weather icon" width="88">
+  </a>
+</p>
+
+<p align="center">
+  Weather icons powered by <a href="https://meteocons.com" title="Meteocons animated weather icons">Meteocons</a>
+</p>
+
+<p align="center">
+  <a href="https://www.weatherapi.com/" title="Free Weather API">
+    <img src="//cdn.weatherapi.com/v4/images/weatherapi_logo.png" alt="Weather data by WeatherAPI.com" border="0">
+  </a>
+</p>
+
+<p align="center">
+  Powered by <a href="https://www.weatherapi.com/" title="Free Weather API">WeatherAPI.com</a>
+</p>
+
+- [Meteocons](https://meteocons.com) provides the beautiful open-source weather icon style used throughout the display widgets.
+- Weather data is provided through [WeatherAPI.com](https://www.weatherapi.com/).
 
 ---
 

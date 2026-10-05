@@ -35,7 +35,7 @@ COMPONENTS = {
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 27, #Wi-Fi/AP fallback watchdog improvements, on reconnection attempts
+        "version": 28, #added reinstall button to the config portal
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
@@ -47,13 +47,13 @@ COMPONENTS = {
     },
     "network_manager": {
         "label": "Network Manager",
-        "version": 22, #Wi-Fi/AP fallback watchdog improvements
+        "version": 23, #Wi-Fi/AP fallback watchdog improvements
         "file": "network_manager_service.py",
         "description": "NetworkManager Wi-Fi/AP fallback watchdog",
     },
     "updater": {
         "label": "Updater",
-        "version": 17,  #changed install scripts
+        "version": 18,  #changed install scripts
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },
