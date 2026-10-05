@@ -255,7 +255,7 @@ function applyWeatherContainerDisplay() {
   const alert = getActiveWeatherAlert();
   if (alert) {
     box?.classList.add("has-weather-warning");
-    if (warningIconEl) warningIconEl.src = filledIconUrl(alert.icon || "/assets/Weather/meteoicons/fill/weather-alarm.svg");
+    if (warningIconEl) warningIconEl.src = alertSeverityIconUrl(alert);
     if (warningEl) {
       const warningText = formatWeatherAlertLabel(alert);
       warningEl.title = warningText;
@@ -286,13 +286,31 @@ function applyWeatherContainerDisplay() {
   }
 
   box?.classList.remove("has-weather-warning");
-  if (warningIconEl) warningIconEl.src = "/assets/Weather/meteoicons/fill/weather-alarm.svg";
+  if (warningIconEl) warningIconEl.src = "/assets/Weather/meteoicons/fill/code-yellow.svg";
   warningEl?.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
   if (cEl) {
     setWeatherConditionText(cEl, currentWeatherCondition);
     cEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
   }
   if (icon) setWeatherIcon(icon, currentWeatherIconUrl, currentWeatherUvIconUrl);
+}
+
+function alertSeverityIconUrl(alert) {
+  const severity = String(alert?.severity || "").trim().toLowerCase();
+  const iconBySeverity = {
+    extreme: "code-red",
+    severe: "code-orange",
+    moderate: "code-yellow",
+    minor: "code-green",
+    extremo: "code-red",
+    severo: "code-orange",
+    grave: "code-orange",
+    moderado: "code-yellow",
+    menor: "code-green",
+    ligeiro: "code-green",
+  };
+  const iconName = iconBySeverity[severity] || "code-yellow";
+  return `/assets/Weather/meteoicons/fill/${iconName}.svg`;
 }
 
 function getActiveWeatherAlert() {

@@ -525,14 +525,26 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
     Prepare the configured channel's latest release for a forced reinstall.
 
     This intentionally marks the candidate available even when its version is
-    equal to the installed version.
+    equal to the installed version. If a release archive is already staged, use
+    that local archive before attempting any network request.
     """
+    previous_state = read_json(STATE_FILE, {})
+    cached = cached_archive_for_state(previous_state)
+    if cached and previous_state.get("zipball_url"):
+        return write_state(
+            available=True,
+            force_reinstall=True,
+            reinstall_requested_at=now_ts(),
+            download_ready=True,
+            downloaded_archive=str(cached),
+            last_error=None,
+        )
+
     cfg = load_config()
     updates = cfg.get("updates", {})
     repo = updates.get("repo", "")
     channel = updates.get("channel", "stable")
     current = installed_version()
-    previous_state = read_json(STATE_FILE, {})
     release = github_latest_release(repo, channel=channel)
     latest = str(release.get("tag_name") or "").lstrip("v")
     tag = release.get("tag_name")
@@ -923,8 +935,11 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
     cfg = load_config()
     preserve = list(cfg.get("updates", {}).get("preserve") or DEFAULT_PRESERVE)
     state = read_json(STATE_FILE, {})
-    if not state.get("zipball_url") or not state.get("available"):
+    has_reinstall_archive = allow_reinstall and bool(cached_archive_for_state(state))
+    if not has_reinstall_archive and (not state.get("zipball_url") or not state.get("available")):
         state = check_for_update()
+    if has_reinstall_archive:
+        state = write_state(available=True, force_reinstall=True, last_error=None)
     if not state.get("available") and not allow_reinstall:
         return write_state(update_in_progress=False, applied_update=False)
     if not state.get("zipball_url"):

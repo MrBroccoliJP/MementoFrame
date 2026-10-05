@@ -87,7 +87,11 @@ export function applyUpdateState(state) {
   const statusText = document.getElementById("updateStatusText");
 
   const available = !!lastState.available;
-  const updating = !!lastState.update_in_progress;
+  const updating = !!(
+    lastState.update_in_progress ||
+    lastState.pending_restart ||
+    lastState.reboot_requested
+  );
 
   indicator.classList.toggle("hidden", !available || updating);
   indicator.classList.toggle("visible", available && !updating);

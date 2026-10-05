@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 59, # Animate changing clock digits with a downward transition
+        "version": 61, # Weather warning marker and compact widget alignment refinements
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
