@@ -29,6 +29,26 @@ import { fetchJson } from "../utils.js";
 import { PATHS } from "../constants.js";
 import { updateWeather } from "./weather.js";
 
+const DISPLAY_THEMES = new Set(["classic", "minimal"]);
+const WEATHER_ICON_PACKS = new Set(["fill", "flat", "line", "monochrome"]);
+
+function applyDisplayAppearance(config) {
+  const displayTheme = DISPLAY_THEMES.has(config?.display_theme)
+    ? config.display_theme
+    : "classic";
+  const weatherIconPack = WEATHER_ICON_PACKS.has(config?.weather_icon_pack)
+    ? config.weather_icon_pack
+    : "fill";
+
+  config.display_theme = displayTheme;
+  config.weather_icon_pack = weatherIconPack;
+
+  if (document.body) {
+    document.body.dataset.theme = displayTheme;
+    document.body.dataset.weatherIconPack = weatherIconPack;
+  }
+}
+
 /**
  * Fetch config.json and populate `state` with the parsed values.
  *
@@ -43,8 +63,12 @@ import { updateWeather } from "./weather.js";
  * @returns {Promise<void>}
  */
 export async function loadConfig() {
-  const cfg = await fetchJson(PATHS.CONFIG, {});
-  state.config = cfg || {};
+  const response = await fetchJson(PATHS.CONFIG, {});
+  const cfg = response && typeof response === "object" && !Array.isArray(response)
+    ? response
+    : {};
+  state.config = cfg;
+  applyDisplayAppearance(cfg);
 
   // Clock timezone and label defaults — used by clock.js and power.js
   state.clocks.enableSecond = cfg?.clock2?.enabled ?? false;
@@ -81,6 +105,7 @@ export function setupConfigWatcher() {
       setTimeout(() => window.location.reload(), 500);
     } else if (e.data === "config") {
       await loadConfig();
+      await updateWeather();
     } else if (e.data === "weather") {
       await updateWeather();
     }

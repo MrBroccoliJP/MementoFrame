@@ -3,6 +3,7 @@
 
 <head>
   <link rel="stylesheet" href="{{ url_for('static', filename='kiosk_display.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='kiosk_themes.css') }}">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 </head>
@@ -109,14 +110,20 @@
             <span id="weather-high-low" class="weather-detail-value">--° / --°</span>
           </div>
         </div>
-        <div class="weather-details weather-details-secondary" aria-label="Humidity and wind speed">
-          <div class="weather-detail">
+        <div class="weather-details weather-details-secondary" aria-label="Humidity, precipitation chance, and wind speed">
+          <div class="weather-detail weather-detail--humidity">
             <span class="weather-detail-label" title="Humidity" aria-label="Humidity">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5S3.5 6.7 3.5 10a4.5 4.5 0 0 0 9 0C12.5 6.7 8 1.5 8 1.5Z"/></svg>
             </span>
             <span id="weather-humidity" class="weather-detail-value">--%</span>
           </div>
-          <div class="weather-detail">
+          <div class="weather-detail weather-detail--precipitation">
+            <span class="weather-detail-label" title="Precipitation chance" aria-label="Precipitation chance">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5S3.5 6.7 3.5 10a4.5 4.5 0 0 0 9 0C12.5 6.7 8 1.5 8 1.5Z"/></svg>
+            </span>
+            <span id="weather-precipitation" class="weather-detail-value">--%</span>
+          </div>
+          <div class="weather-detail weather-detail--wind">
             <span class="weather-detail-label" title="Wind speed" aria-label="Wind speed">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 5h8.8a2 2 0 1 0-1.7-3M1.5 8h11a2 2 0 1 1-1.7 3M1.5 11h5"/></svg>
             </span>
@@ -124,7 +131,7 @@
           </div>
         </div>
         <div class="weather-warning-details" role="status" aria-live="polite">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17.5v.5"/></svg>
+          <img id="weather-warning-icon" src="/assets/Weather/meteoicons/fill/weather-alarm.svg" alt="" aria-hidden="true">
           <span id="weather-warning-text">Weather warning</span>
         </div>
       </div>

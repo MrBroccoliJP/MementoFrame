@@ -9,6 +9,8 @@ import { $, fetchJson } from "../utils.js";
 
 const WEATHER_ALERT_CYCLE_MS = 5 * 60 * 1000;
 const WEATHER_ALERT_VISIBLE_MS = 60 * 1000;
+const WEATHER_ICON_PACKS = new Set(["fill", "flat", "line", "monochrome"]);
+const METEOICON_PACK_PATTERN = /\/meteoicons\/(?:fill|flat|line|monochrome)\//;
 
 let currentWeatherCondition = "";
 let currentWeatherIconUrl = PATHS.WEATHER_OFFLINE_ICON;
@@ -50,6 +52,7 @@ export async function updateWeather() {
   const cEl  = $(SELECTORS.weatherCond);
   const icon = $(SELECTORS.weatherIcon);
   const humidityEl = document.getElementById("weather-humidity");
+  const precipitationEl = document.getElementById("weather-precipitation");
   const windEl = document.getElementById("weather-wind");
   const uvEl = document.getElementById("weather-uv");
   const highLowEl = document.getElementById("weather-high-low");
@@ -61,6 +64,7 @@ export async function updateWeather() {
     currentWeatherAlerts = [];
     if (tEl)  tEl.textContent = "--°C";
     if (humidityEl) humidityEl.textContent = "--%";
+    if (precipitationEl) precipitationEl.textContent = "--%";
     if (windEl) windEl.textContent = "-- km/h";
     if (uvEl) uvEl.textContent = "--";
     if (highLowEl) highLowEl.textContent = "--° / --°";
@@ -77,12 +81,18 @@ export async function updateWeather() {
   }
 
   currentWeatherCondition = data.condition || "";
-  currentWeatherIconUrl = normalizeIconUrl(data.icon || PATHS.WEATHER_OFFLINE_ICON);
-  currentWeatherUvIconUrl = data.uvIcon ? normalizeIconUrl(data.uvIcon) : null;
+  currentWeatherIconUrl = filledIconUrl(data.icon || PATHS.WEATHER_OFFLINE_ICON);
+  currentWeatherUvIconUrl = data.uvIcon ? filledIconUrl(data.uvIcon) : null;
   currentWeatherAlerts = Array.isArray(data.alerts) ? data.alerts : [];
 
   if (tEl) tEl.textContent = `${data.temperature}°C`;
   if (humidityEl) humidityEl.textContent = `${Math.round(Number(data.humidity) || 0)}%`;
+  if (precipitationEl) {
+    const precipitation = Number(data.precipitationProbability);
+    precipitationEl.textContent = Number.isFinite(precipitation)
+      ? `${Math.round(precipitation)}%`
+      : "--%";
+  }
   if (windEl) windEl.textContent = `${Math.round(Number(data.windSpeed) || 0)} km/h`;
   if (uvEl) {
     const uv = Number(data.uv);
@@ -175,7 +185,7 @@ function renderForecasts(forecast) {
       hourly.map((h) => `
         <div class="forecast-item">
           <div class="time">${escapeHtml(h.time)}</div>
-          <img src="${escapeAttr(normalizeIconUrl(h.icon))}" crossorigin="anonymous" alt="${escapeAttr(h.condition)}">
+          <img src="${escapeAttr(forecastIconUrl(h.icon))}" data-filled-src="${escapeAttr(filledIconUrl(h.icon))}" crossorigin="anonymous" alt="${escapeAttr(h.condition)}">
           <div class="temp">${escapeHtml(formatTemp(h.temp))}</div>
         </div>`
       ).join("")
@@ -208,7 +218,17 @@ function renderForecasts(forecast) {
     }</div>`;
   }
 
+  installForecastIconFallbacks();
   scheduleConditionScrollRefresh();
+}
+
+function installForecastIconFallbacks() {
+  document.querySelectorAll("#forecast-box img[data-filled-src]").forEach((img) => {
+    img.addEventListener("error", () => {
+      const fallback = img.dataset.filledSrc;
+      if (fallback && img.getAttribute("src") !== fallback) img.src = fallback;
+    }, { once: true });
+  });
 }
 
 function forecastRow({ label, icon, condition, tempHtml, tempClass = "" }) {
@@ -217,7 +237,7 @@ function forecastRow({ label, icon, condition, tempHtml, tempClass = "" }) {
   return `
     <div class="forecast-list-item">
       <div class="time">${escapeHtml(label)}</div>
-      <img src="${escapeAttr(normalizeIconUrl(icon))}" crossorigin="anonymous" alt="${escapeAttr(cleanCondition)}">
+      <img src="${escapeAttr(forecastIconUrl(icon))}" data-filled-src="${escapeAttr(filledIconUrl(icon))}" crossorigin="anonymous" alt="${escapeAttr(cleanCondition)}">
       <div class="cond" title="${escapeAttr(cleanCondition)}">
         <span class="cond-inner">${escapeHtml(cleanCondition)}</span>
       </div>
@@ -230,10 +250,12 @@ function applyWeatherContainerDisplay() {
   const cEl  = $(SELECTORS.weatherCond);
   const icon = $(SELECTORS.weatherIcon);
   const warningEl = document.getElementById("weather-warning-text");
+  const warningIconEl = document.getElementById("weather-warning-icon");
 
   const alert = getActiveWeatherAlert();
   if (alert) {
     box?.classList.add("has-weather-warning");
+    if (warningIconEl) warningIconEl.src = filledIconUrl(alert.icon || "/assets/Weather/meteoicons/fill/weather-alarm.svg");
     if (warningEl) {
       const warningText = formatWeatherAlertLabel(alert);
       warningEl.title = warningText;
@@ -249,7 +271,7 @@ function applyWeatherContainerDisplay() {
         setWeatherConditionText(cEl, currentWeatherCondition);
         cEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
       }
-      if (icon) setWeatherIcon(icon, normalizeIconUrl(alert.icon || currentWeatherIconUrl), null);
+      if (icon) setWeatherIcon(icon, filledIconUrl(alert.icon || currentWeatherIconUrl), null);
       return;
     }
 
@@ -259,11 +281,12 @@ function applyWeatherContainerDisplay() {
       cEl.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
       if (severity) cEl.classList.add(`alert-${severity}`);
     }
-    if (icon) setWeatherIcon(icon, normalizeIconUrl(alert.icon || currentWeatherIconUrl), null);
+    if (icon) setWeatherIcon(icon, filledIconUrl(alert.icon || currentWeatherIconUrl), null);
     return;
   }
 
   box?.classList.remove("has-weather-warning");
+  if (warningIconEl) warningIconEl.src = "/assets/Weather/meteoicons/fill/weather-alarm.svg";
   warningEl?.classList.remove("alert-minor", "alert-moderate", "alert-severe", "alert-extreme");
   if (cEl) {
     setWeatherConditionText(cEl, currentWeatherCondition);
@@ -431,6 +454,16 @@ function updateConditionScrollFlags() {
 function normalizeIconUrl(icon) {
   const value = String(icon || PATHS.WEATHER_OFFLINE_ICON);
   return value.startsWith("//") ? `https:${value}` : value;
+}
+
+export function filledIconUrl(icon) {
+  return normalizeIconUrl(icon).replace(METEOICON_PACK_PATTERN, "/meteoicons/fill/");
+}
+
+export function forecastIconUrl(icon) {
+  const configuredPack = state.config?.weather_icon_pack;
+  const pack = WEATHER_ICON_PACKS.has(configuredPack) ? configuredPack : "fill";
+  return filledIconUrl(icon).replace("/meteoicons/fill/", `/meteoicons/${pack}/`);
 }
 
 function formatTemp(value) {

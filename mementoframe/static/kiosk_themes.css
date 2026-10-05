@@ -1,0 +1,316 @@
+/*
+ * Optional kiosk themes.
+ *
+ * kiosk_display.css owns the kiosk's geometry, visibility states, widget flow,
+ * system-tray placement, and panel-swap behavior. Theme rules deliberately
+ * stay presentational so every theme follows the Classic layout contract.
+ */
+
+body[data-theme="minimal"] {
+  --minimal-card: #141414;
+  --minimal-card-soft: #1b1b1b;
+  --minimal-primary: var(--accent-color, #e8b84b);
+  --minimal-secondary: var(--accent-secondary-color, #5dc9ae);
+  --minimal-gold: var(--minimal-primary);
+  --minimal-teal: var(--minimal-secondary);
+  --minimal-text: #f0ece0;
+  --minimal-soft-text: #c9c9c2;
+  --minimal-muted: #6f6f6a;
+  --minimal-dim: #4a4a46;
+  --minimal-warning-bg: #3a1a14;
+  --minimal-warning-text: #ef8a70;
+  --panel-bg: var(--minimal-card);
+  --panel-cell-bg: var(--minimal-card-soft);
+  --pin-expanded-bg: var(--minimal-card);
+  --accent-text: var(--minimal-text);
+  color: var(--minimal-text);
+  font-family: "Inter", sans-serif;
+}
+
+/* Shared card material */
+body[data-theme="minimal"] .rounded-box,
+body[data-theme="minimal"] .dual_clock-box,
+body[data-theme="minimal"] .first-row .date-box {
+  border-color: transparent !important;
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+body[data-theme="minimal"] .rounded-box::before,
+body[data-theme="minimal"] .dual_clock-box::before,
+body[data-theme="minimal"] .first-row .date-box::before,
+body[data-theme="minimal"] #forecast-box::before {
+  background: var(--minimal-card);
+}
+
+/* Clock and date */
+body[data-theme="minimal"] .clock-box-left,
+body[data-theme="minimal"] .clock-box-right {
+  border-color: transparent !important;
+}
+
+body[data-theme="minimal"] .clock {
+  color: var(--minimal-gold);
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+body[data-theme="minimal"] .clock-box-right .clock {
+  color: var(--minimal-teal);
+}
+
+body[data-theme="minimal"] .region {
+  color: var(--minimal-muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+body[data-theme="minimal"] .first-row .date-box {
+  font-family: "Inter", sans-serif;
+}
+
+body[data-theme="minimal"] .day {
+  color: var(--minimal-teal);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+body[data-theme="minimal"] .first-row .date-box .month-year,
+body[data-theme="minimal"] .month-year {
+  color: var(--minimal-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* Current weather */
+body[data-theme="minimal"] .weather-box {
+  border-color: transparent !important;
+  color: var(--minimal-text);
+}
+
+body[data-theme="minimal"] .weather-temperature,
+body[data-theme="minimal"] .weather-box.single-clock-weather .weather-temperature {
+  color: var(--minimal-text);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+body[data-theme="minimal"] .weather-box.single-clock-weather .weather-detail,
+body[data-theme="minimal"] .weather-box.single-clock-weather .weather-detail-value {
+  color: var(--minimal-muted);
+}
+
+body[data-theme="minimal"] .weather-box.single-clock-weather .weather-detail-value {
+  font-size: 10px;
+  font-weight: 400;
+}
+
+body[data-theme="minimal"] .weather-warning-details {
+  border-color: transparent;
+  border-radius: 999px;
+  background: var(--minimal-warning-bg);
+}
+
+body[data-theme="minimal"] #weather-warning-text {
+  color: var(--minimal-warning-text);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+body[data-theme="minimal"] .weather-warning-details:has(#weather-warning-text.alert-minor) {
+  background: #3a3014;
+}
+
+body[data-theme="minimal"] #weather-warning-text.alert-minor {
+  color: #f0c75e;
+}
+
+body[data-theme="minimal"] .weather-warning-details:has(#weather-warning-text.alert-moderate) {
+  background: #3a2414;
+}
+
+body[data-theme="minimal"] #weather-warning-text.alert-moderate {
+  color: #ff9d57;
+}
+
+body[data-theme="minimal"] .weather-warning-details:has(#weather-warning-text.alert-severe) {
+  background: #421916;
+}
+
+body[data-theme="minimal"] #weather-warning-text.alert-severe {
+  color: #ff756b;
+}
+
+body[data-theme="minimal"] .weather-warning-details:has(#weather-warning-text.alert-extreme) {
+  background: #46131c;
+}
+
+body[data-theme="minimal"] #weather-warning-text.alert-extreme {
+  color: #ff5d70;
+}
+
+/* Calendar */
+body[data-theme="minimal"] #calendar-week td {
+  border-radius: 16px !important;
+  box-shadow: none !important;
+}
+
+body[data-theme="minimal"] #calendar-week .wk-day {
+  color: var(--minimal-muted) !important;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+body[data-theme="minimal"] #calendar-week .wk-date {
+  background: transparent;
+  color: var(--minimal-soft-text);
+  font-family: "Inter", sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+body[data-theme="minimal"] #calendar-week td.today {
+  background: var(--minimal-gold) !important;
+}
+
+body[data-theme="minimal"] #calendar-week td.today .wk-day,
+body[data-theme="minimal"] #calendar-week td.today .wk-date {
+  background: transparent !important;
+  color: #0d0d0d !important;
+  font-weight: 500;
+}
+
+body[data-theme="minimal"] #calendar-week td.weekend:not(.today) .wk-day,
+body[data-theme="minimal"] #calendar-week td.weekend:not(.today) .wk-date {
+  color: var(--minimal-dim) !important;
+}
+
+body[data-theme="minimal"] #calendar-week td.weekend .wk-date {
+  box-shadow: none !important;
+}
+
+body[data-theme="minimal"] #calendar-week td.weekend:not(.today) {
+  border-radius: 3px !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--minimal-primary) 55%, transparent) !important;
+}
+
+body[data-theme="minimal"] #calendar-month th,
+body[data-theme="minimal"] #calendar-month .calendar-title,
+body[data-theme="minimal"] #calendar-month caption {
+  color: var(--minimal-gold) !important;
+}
+
+body[data-theme="minimal"] #calendar-month td {
+  background: var(--minimal-card-soft);
+  color: var(--minimal-soft-text);
+}
+
+body[data-theme="minimal"] #calendar-month td.today {
+  background: var(--minimal-gold) !important;
+  color: #0d0d0d !important;
+}
+
+/* Forecast */
+body[data-theme="minimal"] #forecast-box {
+  border-color: transparent !important;
+}
+
+body[data-theme="minimal"] #forecast-box:has(#forecast-5h-icons:not(.hidden))::before {
+  background: transparent;
+}
+
+body[data-theme="minimal"] .forecast-item {
+  border-radius: 12px;
+  background: var(--minimal-card);
+}
+
+body[data-theme="minimal"] .forecast-item img {
+  opacity: 0.72;
+}
+
+body[data-theme="minimal"] .forecast-item .time {
+  color: var(--minimal-muted);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+body[data-theme="minimal"] .forecast-item .temp {
+  color: var(--minimal-soft-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+body[data-theme="minimal"] .forecast-list-item {
+  background: var(--minimal-card-soft);
+}
+
+body[data-theme="minimal"] .forecast-list-item .time {
+  color: var(--minimal-gold);
+}
+
+body[data-weather-icon-pack="monochrome"] #forecast-box img {
+  filter: invert(1);
+  opacity: 0.58;
+}
+
+/* Spotify */
+body[data-theme="minimal"] .spotify-box {
+  border-color: transparent !important;
+  color: var(--minimal-text);
+  --spotify-gradient-start: var(--minimal-card) !important;
+  --spotify-gradient-end: var(--minimal-card) !important;
+  --spotify-foreground: var(--minimal-text) !important;
+  --spotify-muted: var(--minimal-muted) !important;
+  --spotify-progress-track: #2a2a2a !important;
+  --spotify-progress-fill: var(--minimal-gold) !important;
+}
+
+body[data-theme="minimal"] .spotify-box::before {
+  background: var(--minimal-card) !important;
+}
+
+body[data-theme="minimal"] .spotify-box.spotify-shrunk .track-name {
+  color: var(--minimal-text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+body[data-theme="minimal"] .spotify-box.spotify-shrunk .track-artist {
+  color: var(--minimal-muted);
+  font-size: 11px;
+}
+
+body[data-theme="minimal"] .spotify-box .play_pause-icon {
+  color: var(--minimal-gold);
+}
+
+body[data-theme="minimal"] .spotify-box .progress-container {
+  background: #2a2a2a;
+}
+
+body[data-theme="minimal"] .spotify-box .progress-bar {
+  background: var(--minimal-gold);
+}
+
+/* System tray. Placement, order, sizing, and swapping come from Classic. */
+body[data-theme="minimal"] .system-info-box {
+  --system-tray-radius: 10px;
+  --system-tray-bg: transparent;
+  --system-tray-cell-bg: var(--minimal-card);
+}
+
+body[data-theme="minimal"] .wifi-green img {
+  filter: invert(75%) sepia(27%) saturate(780%) hue-rotate(116deg) brightness(92%) contrast(86%);
+}
+
+body[data-theme="minimal"] .update-status-card__icon {
+  color: var(--minimal-muted) !important;
+}
+
+body[data-theme="minimal"] .update-status-card::after {
+  background: var(--minimal-gold) !important;
+}
