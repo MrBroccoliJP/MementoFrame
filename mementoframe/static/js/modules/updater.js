@@ -103,9 +103,14 @@ export function applyUpdateState(state) {
   overlay.setAttribute("aria-hidden", updating ? "false" : "true");
 
   if (statusText) {
-    statusText.textContent = lastState.pending_restart
-      ? "Update installed — restart pending"
-      : "Applying software update";
+    const verifying = !!(lastState.post_reboot_checked_at || lastState.post_reboot_attempt);
+    if (verifying) {
+      statusText.textContent = "Update finished - verifying update";
+    } else if (lastState.pending_restart) {
+      statusText.textContent = "Update installed - restart pending";
+    } else {
+      statusText.textContent = "Applying software update";
+    }
   }
 }
 

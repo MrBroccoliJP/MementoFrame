@@ -1007,7 +1007,7 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
             installed_version=installed_version(),
             latest_version=str(latest).lstrip("v"),
             available=False,
-            update_in_progress=False,
+            update_in_progress=True,
             pending_restart=True,
             reboot_requested=True,
             applied_update=True,
@@ -1214,6 +1214,7 @@ def post_reboot_check() -> dict[str, Any]:
             if not failed_urls:
                 prune_result = prune_old_backups()
                 return write_state(
+                    update_in_progress=False,
                     pending_restart=False,
                     reboot_requested=False,
                     rollback_required=False,

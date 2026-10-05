@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 61, # Weather warning marker and compact widget alignment refinements
+        "version": 62, # Clarify update overlay verification state
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 18,  #changed install scripts
+        "version": 19,  # Keep update overlay active until post-reboot validation
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },
