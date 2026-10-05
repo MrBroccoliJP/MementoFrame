@@ -468,6 +468,31 @@ def github_latest_release(repo: str, channel: str = "stable") -> dict[str, Any]:
     return http_json(f"https://api.github.com/repos/{repo}/releases/latest")
 
 
+def reusable_download_fields(previous_state: dict[str, Any], zipball_url: str | None) -> dict[str, Any]:
+    """Carry staged download metadata forward when a check sees the same release."""
+    if not zipball_url:
+        return {}
+
+    downloaded_url = previous_state.get("downloaded_zipball_url")
+    downloaded_archive = previous_state.get("downloaded_archive")
+    if downloaded_url != zipball_url or not downloaded_archive:
+        return {}
+
+    archive = Path(str(downloaded_archive))
+    if not archive.exists() or not archive.is_file():
+        return {}
+
+    fields: dict[str, Any] = {
+        "download_ready": True,
+        "downloaded_archive": str(archive),
+        "downloaded_zipball_url": zipball_url,
+    }
+    for key in ["downloaded_at", "downloaded_sha256"]:
+        if previous_state.get(key):
+            fields[key] = previous_state[key]
+    return fields
+
+
 def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
     cfg = load_config()
     updates = cfg.get("updates", {})
@@ -491,6 +516,8 @@ def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
         tag = release.get("tag_name")
         is_broken = release_is_marked_broken(latest, str(tag) if tag else None, previous_state)
         available = bool(latest and version_newer(latest, current) and not is_broken)
+        zipball_url = release.get("zipball_url")
+        download_fields = reusable_download_fields(previous_state, zipball_url)
 
         common = dict(
             installed_version=current,
@@ -499,10 +526,11 @@ def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
             release_name=release.get("name"),
             release_notes=release.get("body") or "",
             release_url=release.get("html_url"),
-            zipball_url=release.get("zipball_url"),
+            zipball_url=zipball_url,
             release_assets=release.get("assets") or [],
             checked_at=now_ts(),
             broken_releases=broken_releases,
+            **download_fields,
         )
 
         if is_broken:
@@ -563,6 +591,8 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
     release = github_latest_release(repo, channel=channel)
     latest = str(release.get("tag_name") or "").lstrip("v")
     tag = release.get("tag_name")
+    zipball_url = release.get("zipball_url")
+    download_fields = reusable_download_fields(previous_state, zipball_url)
 
     if release_is_marked_broken(latest, str(tag) if tag else None, previous_state):
         return replace_state(
@@ -584,7 +614,7 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
         release_name=release.get("name"),
         release_notes=release.get("body") or "",
         release_url=release.get("html_url"),
-        zipball_url=release.get("zipball_url"),
+        zipball_url=zipball_url,
         release_assets=release.get("assets") or [],
         checked_at=now_ts(),
         available=True,
@@ -594,6 +624,7 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
         pending_restart=False,
         reboot_requested=False,
         update_started_at=previous_state.get("update_started_at") or now_ts(),
+        **download_fields,
         last_error=None,
     )
     return stage_release_download(state)

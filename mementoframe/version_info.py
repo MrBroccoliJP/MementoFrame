@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 21,  # Track rollback recovery through reboot verification
+        "version": 22,  # Reuse staged update archives during repeated checks
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },
