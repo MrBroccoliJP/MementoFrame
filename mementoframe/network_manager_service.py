@@ -86,6 +86,20 @@ AP_IP = "192.168.4.1"
 # Wi-Fi channel used by the access point profile.
 AP_CHANNEL = "6"
 
+# NetworkManager settings that define the fallback AP profile. These are applied
+# on every startup so older or partially-created profiles get repaired in place.
+AP_PROFILE_SETTINGS = [
+    ("connection.autoconnect", "no"),
+    ("connection.interface-name", AP_INTERFACE),
+    ("802-11-wireless.ssid", AP_SSID),
+    ("802-11-wireless.mode", "ap"),
+    ("802-11-wireless.band", "bg"),
+    ("802-11-wireless.channel", AP_CHANNEL),
+    ("ipv4.method", "shared"),
+    ("ipv4.addresses", f"{AP_IP}/24"),
+    ("ipv6.method", "disabled"),
+]
+
 # Main watchdog loop interval.
 CHECK_INTERVAL = 5
 
@@ -415,49 +429,38 @@ def ensure_ap_profile():
         - IPv6 disabled
         - Wi-Fi power saving disabled where possible
     """
-    if ap_profile_exists():
+    exists = ap_profile_exists()
+
+    if exists:
+        print(f"🔧 Repairing NetworkManager AP profile '{AP_CON_NAME}'…")
+    else:
+        print(f"🔧 Creating NetworkManager AP profile '{AP_CON_NAME}'…")
+
         run(
+            ["sudo", "nmcli", "connection", "delete", AP_CON_NAME],
+            label=f"cleanup stale {AP_CON_NAME}",
+        )
+
+        if run(
+            [
+                "sudo", "nmcli", "connection", "add",
+                "type", "wifi", "ifname", AP_INTERFACE,
+                "con-name", AP_CON_NAME, "autoconnect", "no", "ssid", AP_SSID,
+            ],
+            label=f"create {AP_CON_NAME}",
+        ).returncode != 0:
+            print("❌ AP profile creation failed.")
+            sys.exit(1)
+
+    for key, value in AP_PROFILE_SETTINGS:
+        if run(
             [
                 "sudo", "nmcli", "connection", "modify", AP_CON_NAME,
-                "connection.autoconnect", "no",
+                key, value,
             ],
-            label=f"ensure {AP_CON_NAME} autoconnect disabled",
-        )
-        return
-
-    print(f"🔧 Creating NetworkManager AP profile '{AP_CON_NAME}'…")
-
-    run(
-        ["sudo", "nmcli", "connection", "delete", AP_CON_NAME],
-        label=f"cleanup stale {AP_CON_NAME}",
-    )
-
-    commands = [
-        [
-            "sudo", "nmcli", "connection", "add",
-            "type", "wifi", "ifname", AP_INTERFACE,
-            "con-name", AP_CON_NAME, "autoconnect", "no", "ssid", AP_SSID,
-        ],
-        [
-            "sudo", "nmcli", "connection", "modify", AP_CON_NAME,
-            "802-11-wireless.mode", "ap",
-            "802-11-wireless.band", "bg",
-            "802-11-wireless.channel", AP_CHANNEL,
-        ],
-        [
-            "sudo", "nmcli", "connection", "modify", AP_CON_NAME,
-            "ipv4.method", "shared",
-            "ipv4.address", f"{AP_IP}/24",
-        ],
-        [
-            "sudo", "nmcli", "connection", "modify", AP_CON_NAME,
-            "ipv6.method", "disabled",
-        ],
-    ]
-
-    for cmd in commands:
-        if run(cmd).returncode != 0:
-            print("❌ AP profile creation failed.")
+            label=f"set {AP_CON_NAME} {key}",
+        ).returncode != 0:
+            print("❌ AP profile configuration failed.")
             sys.exit(1)
 
     conn_file = f"/etc/NetworkManager/system-connections/{AP_CON_NAME}.nmconnection"
@@ -518,6 +521,26 @@ def ensure_client_profiles_patched():
 # Mode switching
 # =============================================================================
 
+def prepare_wifi_device_for_ap():
+    """
+    Put the Wi-Fi device in a clean state before activating AP mode.
+
+    NetworkManager can leave wlan0 disconnected, unmanaged, or radio-disabled
+    after failed client connection attempts. These commands are intentionally
+    best-effort; AP activation still reports the real failure if it cannot start.
+    """
+    run(["sudo", "nmcli", "radio", "wifi", "on"], label="wifi radio on before AP")
+    run(
+        ["sudo", "nmcli", "device", "set", AP_INTERFACE, "managed", "yes"],
+        label=f"ensure {AP_INTERFACE} managed",
+    )
+    run(
+        ["sudo", "nmcli", "device", "disconnect", AP_INTERFACE],
+        label=f"clear {AP_INTERFACE} state before AP",
+    )
+    time.sleep(2)
+
+
 def start_ap():
     """
     Activate fallback AP mode.
@@ -533,7 +556,14 @@ def start_ap():
 
     print("📡 Activating AP mode…")
 
+    prepare_wifi_device_for_ap()
     result = nmcli("connection", "up", AP_CON_NAME)
+
+    if result.returncode != 0:
+        print("  ⚠️ AP activation failed once; retrying after NetworkManager reload.")
+        run(["sudo", "nmcli", "connection", "reload"], label="reload NetworkManager connections")
+        prepare_wifi_device_for_ap()
+        result = nmcli("connection", "up", AP_CON_NAME)
 
     if result.returncode != 0:
         print("  ❌ AP activation failed.")

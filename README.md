@@ -580,6 +580,7 @@ MementoFrame/
 | `/update/status` | Return updater state |
 | `/update/check` | Check for updates |
 | `/update/install` | Start update |
+| `/update/reinstall` | Reinstall the configured channel's latest release |
 | `/spotify/connect` | Start Spotify OAuth |
 | `/spotify/manual` | Finish Spotify OAuth |
 | `/versions` | Return version metadata |
@@ -648,6 +649,7 @@ journalctl -u mementoframe-config.service -f
 journalctl -u mementoframe-display.service -f
 journalctl -u mementoframe-network.service -f
 journalctl -u mementoframe-kiosk.service -f
+journalctl -u mementoframe-updater.service -n 80 --no-pager
 ```
 
 ---

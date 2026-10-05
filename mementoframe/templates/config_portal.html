@@ -101,6 +101,7 @@
         const latest = document.querySelector('#update_latest_value');
         const statusValue = document.querySelector('#update_status_value');
         const installButton = document.querySelector('#update_install_button');
+        const reinstallButton = document.querySelector('#update_reinstall_button');
 
         if (latest) {
           latest.textContent = state.latest_version || state.latest_tag || 'not checked';
@@ -111,6 +112,8 @@
             ? 'Updating'
             : state.pending_restart
               ? 'Restart pending'
+              : state.download_ready
+                ? 'Downloaded'
               : state.available
                 ? 'Available'
                 : 'Up to date';
@@ -118,6 +121,10 @@
 
         if (installButton) {
           installButton.disabled = !state.available || state.update_in_progress;
+        }
+
+        if (reinstallButton) {
+          reinstallButton.disabled = state.update_in_progress;
         }
       } catch (_e) {
         // Keep the existing rendered state if the endpoint is unavailable.
@@ -130,6 +137,13 @@
 
     function installUpdateNow() {
       runUpdateAction('/update/install', 'Starting update. The frame may restart automatically…');
+    }
+
+    function reinstallCurrentVersion() {
+      if (!window.confirm('Reinstall the current release and restart the frame when finished?')) {
+        return;
+      }
+      runUpdateAction('/update/reinstall', 'Reinstalling current release. The frame may restart automatically…');
     }
 
 
@@ -555,6 +569,7 @@
           <strong id="update_status_value">
             {% if us.update_in_progress %}Updating
             {% elif us.pending_restart %}Restart pending
+            {% elif us.download_ready %}Downloaded
             {% elif us.available %}Available
             {% else %}Up to date{% endif %}
           </strong>
@@ -592,6 +607,9 @@
           <button id="update_install_button" type="button" class="update-install-btn" onclick="installUpdateNow()" {% if not us.available or
             us.update_in_progress %}disabled{% endif %}>
             Install Update Now
+          </button>
+          <button id="update_reinstall_button" type="button" onclick="reinstallCurrentVersion()" {% if us.update_in_progress %}disabled{% endif %}>
+            Reinstall Current Version
           </button>
         </div>
         <div id="update_action_status" class="update-action-status"></div>

@@ -28,16 +28,24 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
 STATE_FILE = RUNTIME_DIR / "update_state.json"
+DOWNLOAD_DIR = RUNTIME_DIR / "update_downloads"
 BACKUP_ROOT = PROJECT_ROOT.parent / "mementoframe_backups"
 BACKUP_RETENTION_COUNT = 3
 DEFAULT_UPDATE_TIME = "07:00"
-DEFAULT_PRESERVE = ["config.json", ".env", "resources/userdata", "runtime", "repair_services.sh"]
+DEFAULT_PRESERVE = ["config.json", ".env", "resources/userdata", "runtime"]
 DEFAULT_SERVICES = [
     "mementoframe-config.service",
     "mementoframe-display.service",
     "mementoframe-network.service",
     "mementoframe-kiosk.service",
 ]
+SERVICE_TEMPLATE_UNITS = [
+    "mementoframe-config.service",
+    "mementoframe-display.service",
+    "mementoframe-network.service",
+    "mementoframe-updater.service",
+]
+REFRESH_FROM_RELEASE_AFTER_RESTORE = ["repair_services.sh"]
 
 REQUIRED_SYSTEMD_UNITS = [
     "mementoframe-config.service",
@@ -321,23 +329,61 @@ def systemd_compatibility_state() -> dict[str, Any]:
     """Return whether this install has all expected MementoFrame systemd units."""
     units = {unit: systemd_unit_state(unit) for unit in REQUIRED_SYSTEMD_UNITS}
     missing = [unit for unit, info in units.items() if not info.get("exists")]
+    stale = systemd_units_needing_template_refresh()
+    helper_stale = repair_helper_needs_template_refresh()
     return {
         "required_units": REQUIRED_SYSTEMD_UNITS,
         "units": units,
         "missing_units": missing,
-        "compatible": not missing,
+        "stale_template_units": stale,
+        "compatible": not missing and not stale,
         "repair_helper": str(REPAIR_HELPER),
         "repair_helper_exists": REPAIR_HELPER.exists(),
+        "repair_helper_stale": helper_stale,
     }
 
 
+def repair_helper_needs_template_refresh() -> bool:
+    """Return True when the installed root repair helper still has old unit templates."""
+    try:
+        text = REPAIR_HELPER.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+    return "network-online.target" in text
+
+
+def systemd_units_needing_template_refresh() -> list[str]:
+    """
+    Return installed units whose template has known obsolete boot ordering.
+
+    Older MementoFrame units waited for network-online.target. That prevents the
+    network watchdog from creating AP mode when Wi-Fi is unavailable at boot.
+    """
+    stale: list[str] = []
+    for unit in SERVICE_TEMPLATE_UNITS:
+        unit_path = Path("/etc/systemd/system") / unit
+        try:
+            text = unit_path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+        if "network-online.target" in text:
+            stale.append(unit)
+    return stale
+
+
 def repair_systemd_services_if_needed() -> dict[str, Any]:
-    """Repair missing MementoFrame systemd units through the root helper when needed."""
+    """Repair missing or stale MementoFrame systemd units through the root helper."""
     before = systemd_compatibility_state()
-    if not before["missing_units"]:
+    if not before["missing_units"] and not before["stale_template_units"]:
         state = write_state(
             systemd_compatible=True,
             missing_systemd_units=[],
+            stale_systemd_units=[],
+            repair_helper_stale=before["repair_helper_stale"],
             service_repair_needed=False,
             service_repair_attempted=False,
             service_repair_error=None,
@@ -349,6 +395,24 @@ def repair_systemd_services_if_needed() -> dict[str, Any]:
         state = write_state(
             systemd_compatible=False,
             missing_systemd_units=before["missing_units"],
+            stale_systemd_units=before["stale_template_units"],
+            service_repair_needed=True,
+            service_repair_attempted=False,
+            service_repair_error=msg,
+            last_error=msg,
+        )
+        return {"ok": False, "changed": False, "before": before, "after": before, "error": msg, "state": state}
+
+    if before["repair_helper_stale"]:
+        msg = (
+            "Systemd units need repair, but repair_services.sh is still the preserved old helper. "
+            "Refresh repair_services.sh from the current release or rerun the installer once, then run repair-services."
+        )
+        state = write_state(
+            systemd_compatible=False,
+            missing_systemd_units=before["missing_units"],
+            stale_systemd_units=before["stale_template_units"],
+            repair_helper_stale=True,
             service_repair_needed=True,
             service_repair_attempted=False,
             service_repair_error=msg,
@@ -358,13 +422,14 @@ def repair_systemd_services_if_needed() -> dict[str, Any]:
 
     proc = sudo_cmd(str(REPAIR_HELPER), timeout=60)
     after = systemd_compatibility_state()
-    ok = proc.returncode == 0 and not after["missing_units"]
+    ok = proc.returncode == 0 and not after["missing_units"] and not after["stale_template_units"]
     msg = "" if ok else (proc.stderr.strip() or proc.stdout.strip() or f"repair helper exited with {proc.returncode}")
 
     state = write_state(
         systemd_compatible=ok,
         missing_systemd_units=after["missing_units"],
-        service_repair_needed=bool(after["missing_units"]),
+        stale_systemd_units=after["stale_template_units"],
+        service_repair_needed=bool(after["missing_units"] or after["stale_template_units"]),
         service_repair_attempted=True,
         service_repair_at=now_ts(),
         service_repair_stdout=proc.stdout.strip(),
@@ -436,12 +501,15 @@ def check_for_update() -> dict[str, Any]:
                 last_error=f"Latest release {tag or latest} is marked as broken after a failed update; waiting for a newer release.",
             )
 
-        return replace_state(
+        state = replace_state(
             **common,
             available=available,
             broken_release_skipped=False,
             last_error=None,
         )
+        if available:
+            state = stage_release_download(state)
+        return state
     except Exception as exc:
         return replace_state(
             installed_version=current,
@@ -450,6 +518,107 @@ def check_for_update() -> dict[str, Any]:
             broken_releases=broken_releases,
             last_error=str(exc),
         )
+
+
+def prepare_reinstall_current_release() -> dict[str, Any]:
+    """
+    Prepare the configured channel's latest release for a forced reinstall.
+
+    This intentionally marks the candidate available even when its version is
+    equal to the installed version.
+    """
+    cfg = load_config()
+    updates = cfg.get("updates", {})
+    repo = updates.get("repo", "")
+    channel = updates.get("channel", "stable")
+    current = installed_version()
+    previous_state = read_json(STATE_FILE, {})
+    release = github_latest_release(repo, channel=channel)
+    latest = str(release.get("tag_name") or "").lstrip("v")
+    tag = release.get("tag_name")
+
+    if release_is_marked_broken(latest, str(tag) if tag else None, previous_state):
+        return replace_state(
+            installed_version=current,
+            latest_version=latest or None,
+            latest_tag=tag,
+            available=False,
+            checked_at=now_ts(),
+            last_error=f"Release {tag or latest} is marked as broken after a failed update; reinstall skipped.",
+        )
+
+    state = replace_state(
+        installed_version=current,
+        latest_version=latest or None,
+        latest_tag=tag,
+        release_name=release.get("name"),
+        release_notes=release.get("body") or "",
+        release_url=release.get("html_url"),
+        zipball_url=release.get("zipball_url"),
+        release_assets=release.get("assets") or [],
+        checked_at=now_ts(),
+        available=True,
+        force_reinstall=True,
+        reinstall_requested_at=now_ts(),
+        last_error=None,
+    )
+    return stage_release_download(state)
+
+
+def release_archive_name(state: dict[str, Any]) -> str:
+    """Return a filesystem-safe archive filename for the candidate release."""
+    raw = str(state.get("latest_tag") or state.get("latest_version") or "candidate")
+    clean = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip(".-") or "candidate"
+    return f"{clean}.zip"
+
+
+def cached_archive_for_state(state: dict[str, Any]) -> Path | None:
+    """Return the staged archive path when it matches the current candidate."""
+    path_value = state.get("downloaded_archive")
+    if not path_value:
+        return None
+    path = Path(str(path_value))
+    if not path.exists() or not path.is_file():
+        return None
+    if state.get("downloaded_zipball_url") != state.get("zipball_url"):
+        return None
+    return path
+
+
+def stage_release_download(state: dict[str, Any]) -> dict[str, Any]:
+    """
+    Download the candidate archive as soon as an update is discovered.
+
+    This lets the install window use a cached zip if Wi-Fi is unavailable later.
+    """
+    zipball_url = state.get("zipball_url")
+    if not zipball_url:
+        return state
+
+    cached = cached_archive_for_state(state)
+    if cached:
+        return write_state(
+            download_ready=True,
+            downloaded_archive=str(cached),
+            downloaded_zipball_url=zipball_url,
+            last_error=None,
+        )
+
+    DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    dest = DOWNLOAD_DIR / release_archive_name(state)
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    release_assets: list[dict[str, Any]] = state.get("release_assets") or []
+    expected_sha256 = fetch_release_checksum(release_assets, "release.zip")
+    sha256 = download_file(str(zipball_url), tmp, expected_sha256=expected_sha256)
+    os.replace(tmp, dest)
+    return write_state(
+        download_ready=True,
+        downloaded_archive=str(dest),
+        downloaded_zipball_url=zipball_url,
+        downloaded_at=now_ts(),
+        downloaded_sha256=sha256,
+        last_error=None,
+    )
 
 def should_preserve(rel: str, preserve: list[str]) -> bool:
     rel = rel.strip("/")
@@ -665,6 +834,18 @@ def download_file(url: str, dest: Path, timeout: int = 60, expected_sha256: str 
     return digest
 
 
+def file_sha256(path: Path) -> str:
+    """Return the SHA-256 digest of an existing local file."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(1024 * 256)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def fetch_release_checksum(release_assets: list[dict[str, Any]], filename: str) -> str | None:
     for asset in release_assets:
         name = str(asset.get("name") or "").lower()
@@ -703,6 +884,30 @@ def repair_runtime_permissions() -> list[str]:
     return fixed
 
 
+def refresh_release_managed_files(release_root: Path) -> list[str]:
+    """
+    Copy updater-managed helper files from the release after preserved files are restored.
+
+    Some older installs preserved repair_services.sh. Refreshing it explicitly lets
+    service-template fixes roll out through the updater itself.
+    """
+    refreshed: list[str] = []
+    for rel in REFRESH_FROM_RELEASE_AFTER_RESTORE:
+        src = release_root / rel
+        dest = PROJECT_ROOT / rel
+        if not src.exists():
+            continue
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            dest.chmod(dest.stat().st_mode | 0o755)
+        except Exception as exc:
+            refreshed.append(f"{rel}: refresh failed ({exc})")
+        else:
+            refreshed.append(rel)
+    return refreshed
+
+
 def install_requirements() -> None:
     req = PROJECT_ROOT / "requirements.txt"
     if not req.exists():
@@ -714,14 +919,16 @@ def install_requirements() -> None:
         run([sys.executable, "-m", "pip", "install", "-r", str(req)], check=True, timeout=600)
 
 
-def apply_update() -> dict[str, Any]:
+def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
     cfg = load_config()
     preserve = list(cfg.get("updates", {}).get("preserve") or DEFAULT_PRESERVE)
     state = read_json(STATE_FILE, {})
     if not state.get("zipball_url") or not state.get("available"):
         state = check_for_update()
-    if not state.get("available"):
+    if not state.get("available") and not allow_reinstall:
         return write_state(update_in_progress=False, applied_update=False)
+    if not state.get("zipball_url"):
+        raise RuntimeError("No release archive URL is available for update installation.")
 
     latest = state.get("latest_version") or state.get("latest_tag") or "unknown"
     write_state(
@@ -739,14 +946,27 @@ def apply_update() -> dict[str, Any]:
     restored_preserved: list[str] = []
     fixed_permissions: list[str] = []
     removed_special_files: list[str] = []
+    refreshed_release_files: list[str] = []
+    service_repair: dict[str, Any] | None = None
 
     try:
         with tempfile.TemporaryDirectory(prefix="mementoframe-update-") as td:
             tmp = Path(td)
             archive = tmp / "release.zip"
-            release_assets: list[dict[str, Any]] = state.get("release_assets") or []
-            expected_sha256 = fetch_release_checksum(release_assets, "release.zip")
-            sha256 = download_file(str(state["zipball_url"]), archive, expected_sha256=expected_sha256)
+            cached_archive = cached_archive_for_state(state)
+            if cached_archive:
+                shutil.copy2(cached_archive, archive)
+                sha256 = state.get("downloaded_sha256") or file_sha256(archive)
+            else:
+                state = stage_release_download(state)
+                cached_archive = cached_archive_for_state(state)
+                if cached_archive:
+                    shutil.copy2(cached_archive, archive)
+                    sha256 = state.get("downloaded_sha256") or file_sha256(archive)
+                else:
+                    release_assets: list[dict[str, Any]] = state.get("release_assets") or []
+                    expected_sha256 = fetch_release_checksum(release_assets, "release.zip")
+                    sha256 = download_file(str(state["zipball_url"]), archive, expected_sha256=expected_sha256)
             extract_dir = tmp / "extract"
             extract_dir.mkdir()
             with zipfile.ZipFile(archive) as zf:
@@ -761,8 +981,12 @@ def apply_update() -> dict[str, Any]:
             backup = backup_current()
             copied = copy_tree_contents(release_root, PROJECT_ROOT, preserve)
             restored_preserved = restore_preserved_from_backup(backup, preserve)
+            refreshed_release_files = refresh_release_managed_files(release_root)
             fixed_permissions = repair_runtime_permissions()
             install_requirements()
+            service_repair = repair_systemd_services_if_needed()
+
+        service_repair_ok = service_repair is None or service_repair.get("ok")
 
         return write_state(
             installed_version=installed_version(),
@@ -778,9 +1002,11 @@ def apply_update() -> dict[str, Any]:
             release_root=release_root_str,
             copied_top_level=copied,
             restored_preserved=restored_preserved,
+            refreshed_release_files=refreshed_release_files,
             removed_special_files=removed_special_files,
             fixed_permissions=fixed_permissions,
-            last_error=None,
+            service_repair=service_repair,
+            last_error=None if service_repair_ok else "Update applied, but systemd service repair failed.",
         )
     except Exception as exc:
         write_state(update_in_progress=False, last_error=str(exc))
@@ -848,9 +1074,15 @@ def autoupdate(no_reboot: bool = False) -> dict[str, Any]:
     if current_state.get("update_in_progress"):
         return write_state(auto_update_skipped="update_in_progress", last_autoupdate_check=now_ts())
 
-    state = check_for_update()
     install_window = in_auto_update_window(cfg)
     target_minute = auto_update_target_minute(cfg)
+    cached_state = read_json(STATE_FILE, {})
+
+    if install_window and cached_state.get("available") and cached_archive_for_state(cached_state):
+        state = cached_state
+    else:
+        state = check_for_update()
+
     state = write_state(
         auto_update_skipped=None,
         auto_update_install_window=install_window,
@@ -1078,7 +1310,7 @@ def print_json(data: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MementoFrame updater")
-    parser.add_argument("command", choices=["install", "status", "check", "update", "autoupdate", "post-reboot-check", "reboot", "diagnose", "repair-services", "prune-backups"])
+    parser.add_argument("command", choices=["install", "status", "check", "update", "reinstall", "autoupdate", "post-reboot-check", "reboot", "diagnose", "repair-services", "prune-backups"])
     parser.add_argument("--no-reboot", action="store_true", help="Do not reboot after update/autoupdate")
     args = parser.parse_args()
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -1100,6 +1332,12 @@ def main() -> int:
             print_json(check_for_update())
         elif args.command == "update":
             result = apply_update()
+            print_json(result)
+            if result.get("applied_update") and not args.no_reboot:
+                request_reboot()
+        elif args.command == "reinstall":
+            prepare_reinstall_current_release()
+            result = apply_update(allow_reinstall=True)
             print_json(result)
             if result.get("applied_update") and not args.no_reboot:
                 request_reboot()

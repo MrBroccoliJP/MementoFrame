@@ -1259,6 +1259,12 @@ def update_install():
     return jsonify(run_updater("update", background=True))
 
 
+@app.route("/update/reinstall", methods=["POST"])
+def update_reinstall():
+    """Force reinstall of the configured channel's latest release."""
+    return jsonify(run_updater("reinstall", background=True))
+
+
 @app.route("/save_update_settings", methods=["POST"])
 def save_update_settings():
     """Save software-update preferences from the configuration dashboard."""

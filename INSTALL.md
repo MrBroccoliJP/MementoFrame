@@ -350,7 +350,7 @@ This section documents optional installer controls and the system changes made b
 Install a specific release tag:
 
 ```bash
-sudo INSTALL_TAG=v1.25.22.21.21.13 bash install.sh
+sudo INSTALL_TAG=v5.51.27.28.22.17 bash install.sh
 ```
 
 Install the newest non-draft pre-release or release instead of only the latest stable release:
@@ -374,7 +374,7 @@ sudo INSTALL_REPO=owner/repository bash install.sh
 Use a local checkout instead of downloading a release:
 
 ```bash
-sudo SRC_DIR="$(pwd)" bash install.sh
+sudo SRC_DIR="$(pwd)" bash mementoframe/install.sh
 ```
 
 `SRC_DIR` must point to the repository root containing the inner `mementoframe/` application folder. This override is intended for development.
@@ -401,8 +401,8 @@ sudo SRC_DIR="$(pwd)" bash install.sh
 | `config_portal_service.py` | Configuration dashboard on port `5000`. |
 | `display_service.py` | Local display/frontend API on port `5001`. |
 | `network_manager_service.py` | NetworkManager Wi-Fi/AP fallback watchdog. |
-| `updater.py` | Installation, update, and post-reboot helper. |
-| `version_info.py` | Release and component version metadata. |
+| `updater.py` | Installer, update, autoupdate, and repair helper. |
+| `version_info.py` | Composite release/component version metadata. |
 | `requirements.txt` | Python dependencies. |
 | `config.json` | User configuration. |
 | `.env` | Local secrets and optional GitHub token. |
@@ -612,22 +612,38 @@ Requires=mementoframe-display.service
 
 The kiosk launcher disables X screen saver/DPMS every time X starts. This prevents HDMI from going to “No Signal” after the default 10-minute X timeout. It also hides the cursor with `unclutter`, sets the X root background black, stores Chromium cache in `/dev/shm`, and uses GPU/compositing flags for smoother image fades.
 
-### `mementoframe-post-reboot.service`
+### `mementoframe-updater.service`
 
-Runs the update lifecycle health check after boot.
-
-```text
-/etc/systemd/system/mementoframe-post-reboot.service
-```
-
-It polls:
+Runs automatic update checks/install attempts when triggered by the timer.
 
 ```text
-http://127.0.0.1:5000/health
-http://127.0.0.1:5001/health
+/etc/systemd/system/mementoframe-updater.service
 ```
 
-and clears `pending_restart` in `runtime/update_state.json` once both services respond.
+Important values:
+
+```ini
+User=mementoframe
+WorkingDirectory=/home/mementoframe/mementoframe
+ExecStart=/home/mementoframe/mementoframe/venv/bin/python3 /home/mementoframe/mementoframe/updater.py autoupdate
+```
+
+### `mementoframe-updater.timer`
+
+Runs the updater service periodically.
+
+```text
+/etc/systemd/system/mementoframe-updater.timer
+```
+
+Important values:
+
+```ini
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+Unit=mementoframe-updater.service
+```
 
 ---
 
@@ -649,7 +665,8 @@ systemctl status mementoframe-config.service
 systemctl status mementoframe-display.service
 systemctl status mementoframe-network.service
 systemctl status mementoframe-kiosk.service
-systemctl status mementoframe-post-reboot.service
+systemctl status mementoframe-updater.service
+systemctl status mementoframe-updater.timer
 ```
 
 Useful logs:
@@ -659,6 +676,7 @@ journalctl -u mementoframe-config.service -f
 journalctl -u mementoframe-display.service -f
 journalctl -u mementoframe-network.service -f
 journalctl -u mementoframe-kiosk.service -f
+journalctl -u mementoframe-updater.service -n 80 --no-pager
 ```
 
 ---
@@ -679,6 +697,8 @@ mementoframe ALL=(root) NOPASSWD: \
   /usr/bin/systemctl restart mementoframe-display.service, \
   /usr/bin/systemctl restart mementoframe-network.service, \
   /usr/bin/systemctl restart mementoframe-kiosk.service, \
+  /usr/bin/systemctl restart NetworkManager, \
+  /home/mementoframe/mementoframe/repair_services.sh, \
   /usr/bin/systemctl stop hostapd, \
   /usr/bin/systemctl stop dnsmasq, \
   /usr/bin/nmcli, \
@@ -741,7 +761,7 @@ v<release>.<frontend>.<config>.<display>.<network>.<updater>
 Example:
 
 ```text
-v1.25.22.21.21.13
+v5.51.27.28.22.17
 ```
 
 Manual terminal update:

@@ -508,8 +508,8 @@ fi
 cat > "${CONFIG_SERVICE}" <<EOF_CONFIG_SERVICE
 [Unit]
 Description=MementoFrame Config Portal Service
-After=network-online.target NetworkManager.service
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple
@@ -527,8 +527,8 @@ EOF_CONFIG_SERVICE
 cat > "${DISPLAY_SERVICE}" <<EOF_DISPLAY_SERVICE
 [Unit]
 Description=MementoFrame Display API Service
-After=network-online.target NetworkManager.service
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple
@@ -546,8 +546,8 @@ EOF_DISPLAY_SERVICE
 cat > "${NETWORK_SERVICE}" <<EOF_NETWORK_SERVICE
 [Unit]
 Description=MementoFrame Network Manager Service
-After=NetworkManager.service network-online.target
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple
@@ -566,8 +566,8 @@ EOF_NETWORK_SERVICE
 cat > "${UPDATER_SERVICE}" <<EOF_UPDATER_SERVICE
 [Unit]
 Description=MementoFrame automatic update check/install
-After=network-online.target NetworkManager.service
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=oneshot
@@ -644,7 +644,7 @@ updates = config.setdefault("updates", {})
 updates["auto_update"] = True
 updates["repo"] = os.environ.get("INSTALL_REPO", "MrBroccoliJP/MementoFrame") or "MrBroccoliJP/MementoFrame"
 updates["channel"] = os.environ.get("INSTALL_CHANNEL", "stable") or "stable"
-updates["preserve"] = ["config.json", ".env", "resources/userdata", "runtime", "repair_services.sh"]
+updates["preserve"] = ["config.json", ".env", "resources/userdata", "runtime"]
 updates["service_names"] = [
     "mementoframe-config.service",
     "mementoframe-display.service",
@@ -679,8 +679,8 @@ log "Writing systemd service: mementoframe-config.service"
 cat > "${CONFIG_SERVICE}" <<EOF_CONFIG_SERVICE
 [Unit]
 Description=MementoFrame Config Portal Service
-After=network-online.target NetworkManager.service
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple
@@ -699,8 +699,8 @@ log "Writing systemd service: mementoframe-display.service"
 cat > "${DISPLAY_SERVICE}" <<EOF_DISPLAY_SERVICE
 [Unit]
 Description=MementoFrame Display API Service
-After=network-online.target NetworkManager.service
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple
@@ -719,8 +719,8 @@ log "Writing systemd service: mementoframe-network.service"
 cat > "${NETWORK_SERVICE}" <<EOF_NETWORK_SERVICE
 [Unit]
 Description=MementoFrame Network Manager Service
-After=NetworkManager.service network-online.target
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=simple
@@ -740,8 +740,8 @@ log "Writing systemd service: mementoframe-updater.service"
 cat > "${UPDATER_SERVICE}" <<EOF_UPDATER_SERVICE
 [Unit]
 Description=MementoFrame automatic update check/install
-After=network-online.target NetworkManager.service
-Wants=network-online.target
+After=NetworkManager.service
+Wants=NetworkManager.service
 
 [Service]
 Type=oneshot
