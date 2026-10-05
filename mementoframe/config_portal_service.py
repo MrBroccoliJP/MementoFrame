@@ -25,7 +25,9 @@ Endpoints:
     POST     /save_clock_settings      - Save dashboard clock settings.
     POST     /save_display_settings    - Save brightness/display settings.
     POST     /save_auto_power          - Save automatic screen power schedule.
-    POST     /save_weather_api         - Save WeatherAPI key and region.
+    POST     /save_weather_api         - Save weather provider, credentials, and location.
+    POST     /weather/geocode          - Resolve a weather location to coordinates.
+    POST     /weather/refresh          - Ask the display service for fresh weather data.
     GET      /versions                 - Return installed component versions.
     GET      /spotify/connect          - Begin Spotify OAuth authorization.
     POST     /spotify/manual           - Complete Spotify OAuth using pasted callback URL.
@@ -46,12 +48,14 @@ Flow chart:
 """
 from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
 import subprocess, os, json, socket, threading, time, uuid, shlex, secrets, sys
+import requests
 from pathlib import Path
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from PIL import Image, ImageOps
 import RPi.GPIO as GPIO
 import spotipy
+import requests
 from spotipy.oauth2 import SpotifyOAuth
 from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 
@@ -653,6 +657,16 @@ def get_local_ip():
     except Exception:
         return "192.168.4.1"
 
+def has_internet_connection():
+    """Return whether the frame can reach the public internet without relying on DNS."""
+    for address in (("1.1.1.1", 443), ("8.8.8.8", 53)):
+        try:
+            with socket.create_connection(address, timeout=1.25):
+                return True
+        except OSError:
+            continue
+    return False
+
 def get_mode():
     """Infer whether the frame is in AP mode or Wi-Fi mode."""
     try:
@@ -687,6 +701,7 @@ def get_spotify_oauth():
         client_secret=os.getenv("SPOTIFY_CLIENT_SECRET"),
         redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", "https://httpbin.org/anything"),
         scope="user-read-playback-state user-read-currently-playing user-library-read",
+        show_dialog=True,
         cache_path=SPOTIFY_CACHE
     )
 
@@ -714,8 +729,16 @@ def load_config():
     default = {
         "clock1": {"label": "Lisbon", "timezone": "Europe/Lisbon"},
         "clock2": {"label": "Shanghai", "timezone": "Asia/Shanghai", "enabled": True},
+        "clock_format": "24h",
         "weather_api_key": "",
         "weather_region": "",
+        "weather_provider": "openmeteo",
+        "google_weather_api_key": "",
+        "weather_city": "",
+        "weather_country": "",
+        "weather_latitude": None,
+        "weather_longitude": None,
+        "weather_location_name": "",
         "brightness": 80,
         "auto_power": {"enabled": False, "off_time": "23:00", "on_time": "07:00"},
         "updates": {
@@ -732,6 +755,10 @@ def load_config():
     try:
         with open(CONFIG_FILE, "r") as f:
             cfg = json.load(f)
+        # Existing pre-provider installations with a WeatherAPI key stay on
+        # WeatherAPI; only genuinely new/unconfigured installs default to Open-Meteo.
+        if "weather_provider" not in cfg:
+            cfg["weather_provider"] = "weatherapi" if cfg.get("weather_api_key") else "openmeteo"
         for key, val in default.items():
             cfg.setdefault(key, val)
             if isinstance(val, dict) and isinstance(cfg.get(key), dict):
@@ -854,6 +881,23 @@ def set_screen_on():
     GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.output(SCREEN_PIN, GPIO.HIGH)
 
+
+def refresh_weather_data():
+    """Force the local display service to reload settings and fetch weather."""
+    try:
+        response = requests.post("http://127.0.0.1:5001/weather/refresh", timeout=10)
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+
+        if response.ok:
+            return True, payload.get("message", "Weather information refreshed.")
+
+        return False, payload.get("message", f"Weather refresh failed ({response.status_code}).")
+    except requests.RequestException as e:
+        return False, f"Could not contact the display service: {e}"
+
 # =============================================================================
 # Flask routes: dashboard, assets, photos, settings, versions, and Spotify
 # =============================================================================
@@ -864,10 +908,12 @@ def dashboard():
 
     mode = get_mode()
     ip = get_local_ip()
+    internet_connected = has_internet_connection()
     photos = load_photos()
     networks = scan_networks()
     spotify_user = get_spotify_user()
     spotify_msg = request.args.get("msg")
+    weather_msg = request.args.get("weather_msg")
     spotify_env = read_env_values()
     spotify_configured = bool(
         spotify_env.get("SPOTIFY_CLIENT_ID") and spotify_env.get("SPOTIFY_CLIENT_SECRET")
@@ -884,10 +930,12 @@ def dashboard():
         "config_portal.html",
         mode=mode,
         ip=ip,
+        internet_connected=internet_connected,
         networks=networks,
         photos=photos,
         spotify_user=spotify_user,
         spotify_msg=spotify_msg,
+        weather_msg=weather_msg,
         spotify_env=spotify_env,
         spotify_configured=spotify_configured,
         update_state=load_update_state(),
@@ -1017,6 +1065,8 @@ def save_clock_settings():
     config["clock1"] = make_clock("clock1")
     config["clock2"] = make_clock("clock2")
     config["clock2"]["enabled"] = "enable_clock2" in request.form
+    requested_format = request.form.get("clock_format", "24h")
+    config["clock_format"] = requested_format if requested_format in {"12h", "24h"} else "24h"
 
     save_config(config)
     return redirect(url_for("dashboard"))
@@ -1051,12 +1101,108 @@ def save_auto_power():
 
 @app.route("/save_weather_api", methods=["POST"])
 def save_weather_api():
-    """Save WeatherAPI credentials and region settings."""
+    """Save the selected weather provider after validating its configuration."""
     config = load_config()
-    config["weather_api_key"] = request.form.get("weather_api_key", "")
-    config["weather_region"] = request.form.get("weather_region", "")
+    provider = request.form.get("weather_provider", "openmeteo").strip().lower()
+    if provider not in {"weatherapi", "google", "openmeteo"}:
+        return jsonify({"status": "error", "message": "Unknown weather provider."}), 400
+
+    config["weather_provider"] = provider
+    config["weather_api_key"] = request.form.get("weather_api_key", "").strip()
+    config["google_weather_api_key"] = request.form.get("google_weather_api_key", "").strip()
+
+    if provider == "weatherapi":
+        config["weather_region"] = request.form.get("weather_region", "").strip()
+    else:
+        region = request.form.get("weather_state", "").strip()
+        city = request.form.get("weather_city", "").strip()
+        country = request.form.get("weather_country", "").strip()
+        if not city or not country:
+            return jsonify({"status": "error", "message": "City and country are required for coordinate-based weather providers."}), 400
+
+        try:
+            latitude = float(request.form.get("weather_latitude", ""))
+            longitude = float(request.form.get("weather_longitude", ""))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Parse the location coordinates before saving these weather settings."}), 400
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            return jsonify({"status": "error", "message": "The parsed weather coordinates are invalid."}), 400
+
+        config.update({
+            "weather_region": region,
+            "weather_city": city,
+            "weather_country": country,
+            "weather_latitude": latitude,
+            "weather_longitude": longitude,
+            "weather_location_name": request.form.get("weather_location_name", "").strip()
+                or ", ".join(filter(None, [city, region, country])),
+        })
+
     save_config(config)
-    return redirect(url_for("dashboard"))
+
+    refreshed, message = refresh_weather_data()
+    full_message = "Weather settings saved. " + (message if refreshed else f"Automatic refresh failed: {message}")
+    if request.headers.get("X-Requested-With") == "fetch":
+        return jsonify({"status": "ok", "message": full_message, "refreshed": refreshed})
+    return redirect(url_for("dashboard", weather_msg=full_message))
+
+
+@app.route("/weather/refresh", methods=["POST"])
+def weather_refresh():
+    """Refresh weather on demand from the configuration dashboard."""
+    refreshed, message = refresh_weather_data()
+    if request.headers.get("X-Requested-With") == "fetch":
+        status = 200 if refreshed else 503
+        return jsonify({"status": "ok" if refreshed else "error", "message": message}), status
+    if refreshed:
+        return redirect(url_for("dashboard", weather_msg=message))
+    return redirect(url_for("dashboard", weather_msg=f"Weather refresh failed: {message}"))
+
+
+@app.route("/weather/geocode", methods=["POST"])
+def geocode_weather_location():
+    """Resolve one user-entered weather location through OpenStreetMap Nominatim."""
+    region = request.form.get("weather_state", "").strip()
+    city = request.form.get("weather_city", "").strip()
+    country = request.form.get("weather_country", "").strip()
+    if not city or not country:
+        return jsonify({"status": "error", "message": "Enter a city and country before parsing coordinates."}), 400
+
+    try:
+        response = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "city": city,
+                "state": region,
+                "country": country,
+                "format": "jsonv2",
+                "limit": 1,
+                "addressdetails": 1,
+            },
+            headers={"User-Agent": "MementoFrame/1.0 (https://github.com/MrBroccoliJP/MementoFrame)"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        matches = response.json()
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"status": "error", "message": f"Could not look up that location: {e}"}), 502
+
+    if not matches:
+        return jsonify({"status": "error", "message": "OpenStreetMap could not find that city, region, and country."}), 404
+
+    match = matches[0]
+    try:
+        latitude = float(match["lat"])
+        longitude = float(match["lon"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"status": "error", "message": "OpenStreetMap returned invalid coordinates."}), 502
+
+    return jsonify({
+        "status": "ok",
+        "latitude": latitude,
+        "longitude": longitude,
+        "display_name": match.get("display_name", ", ".join(filter(None, [city, region, country]))),
+    })
 
 
 

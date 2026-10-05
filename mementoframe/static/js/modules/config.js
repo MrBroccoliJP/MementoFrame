@@ -27,6 +27,7 @@
 import { state } from "../state.js";
 import { fetchJson } from "../utils.js";
 import { PATHS } from "../constants.js";
+import { updateWeather } from "./weather.js";
 
 /**
  * Fetch config.json and populate `state` with the parsed values.
@@ -51,6 +52,7 @@ export async function loadConfig() {
   state.clocks.clock2Tz     = cfg?.clock2?.timezone || "UTC";
   state.clocks.clock1Label  = cfg?.clock1?.label    || "Clock 1";
   state.clocks.clock2Label  = cfg?.clock2?.label    || "Clock 2";
+  state.clocks.format       = cfg?.clock_format === "12h" ? "12h" : "24h";
 }
 
 /**
@@ -73,10 +75,14 @@ export async function loadConfig() {
 export function setupConfigWatcher() {
   const es = new EventSource(PATHS.CONFIG_STREAM);
 
-  es.onmessage = (e) => {
+  es.onmessage = async (e) => {
     if (e.data === "reload") {
       // Debounce: avoid reloading multiple times if several files change at once
       setTimeout(() => window.location.reload(), 500);
+    } else if (e.data === "config") {
+      await loadConfig();
+    } else if (e.data === "weather") {
+      await updateWeather();
     }
   };
 

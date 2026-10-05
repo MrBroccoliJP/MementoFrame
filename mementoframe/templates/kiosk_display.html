@@ -86,12 +86,46 @@
         <div id="month-year" class="month-year">09, 2026</div>
       </div>
       <div class="rounded-box weather-box">
-        <div class="weather-icon">
-          <img id="weather-icon" src="/assets/Icons/nocloud.svg" alt="Weather Icon" />
+        <div class="weather-primary">
+          <div class="weather-icon">
+            <img id="weather-icon" src="/assets/Icons/nocloud.svg" alt="Weather Icon" />
+          </div>
+          <div class="weather-info">
+            <div class="weather-temperature">25°C</div>
+            <div class="weather-condition">Sunny</div>
+          </div>
         </div>
-        <div class="weather-info">
-          <div class="weather-temperature">25°C</div>
-          <div class="weather-condition">Sunny</div>
+        <div class="weather-details" aria-label="UV index and today's temperature range">
+          <div class="weather-detail">
+            <span class="weather-detail-label" title="UV index" aria-label="UV index">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5 13 13M13 3l-1.5 1.5M4.5 11.5 3 13"/></svg>
+            </span>
+            <span id="weather-uv" class="weather-detail-value">--</span>
+          </div>
+          <div class="weather-detail">
+            <span class="weather-detail-label" title="Today's high and low" aria-label="Today's high and low">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3v6.2a3 3 0 1 0 4 0V3a2 2 0 0 0-4 0Z"/><path d="M8 5v5"/></svg>
+            </span>
+            <span id="weather-high-low" class="weather-detail-value">--° / --°</span>
+          </div>
+        </div>
+        <div class="weather-details weather-details-secondary" aria-label="Humidity and wind speed">
+          <div class="weather-detail">
+            <span class="weather-detail-label" title="Humidity" aria-label="Humidity">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5S3.5 6.7 3.5 10a4.5 4.5 0 0 0 9 0C12.5 6.7 8 1.5 8 1.5Z"/></svg>
+            </span>
+            <span id="weather-humidity" class="weather-detail-value">--%</span>
+          </div>
+          <div class="weather-detail">
+            <span class="weather-detail-label" title="Wind speed" aria-label="Wind speed">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 5h8.8a2 2 0 1 0-1.7-3M1.5 8h11a2 2 0 1 1-1.7 3M1.5 11h5"/></svg>
+            </span>
+            <span id="weather-wind" class="weather-detail-value">-- km/h</span>
+          </div>
+        </div>
+        <div class="weather-warning-details" role="status" aria-live="polite">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17.5v.5"/></svg>
+          <span id="weather-warning-text">Weather warning</span>
         </div>
       </div>
     </div>

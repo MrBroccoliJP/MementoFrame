@@ -17,7 +17,7 @@
 # GitHub release tags should use:
 #   v{GLOBAL_APP_VERSION}
 
-RELEASE_COUNTER = 6 
+RELEASE_COUNTER = 6
 
 VERSION_ORDER = [
     "frontend",
@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 51, # spotify player improvements, text scroll and extraction of two colors to have a gradient background, and other minor improvements
+        "version": 59, # Animate changing clock digits with a downward transition
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 28, #added reinstall button to the config portal
+        "version": 32, # Improved source settings and added reinstall action
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 28, #added alert filter for portuguese language (my local)
+        "version": 31, # Select the corresponding bundled icon for every UV index
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

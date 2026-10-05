@@ -89,6 +89,131 @@ export function initQR() {
     return `rgb(${r}, ${g}, ${b})`;
   }
 
+  function drawRoundedQr(qr, color) {
+    const matrix = qr?._oQRCode;
+    if (!matrix) return;
+
+    // Render above the displayed resolution for smooth corners, then let CSS
+    // scale the canvas back to the existing 58px QR footprint.
+    const moduleCount = matrix.getModuleCount();
+    const renderSize = moduleCount * 8;
+    const moduleSize = renderSize / moduleCount;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    canvas.width = renderSize;
+    canvas.height = renderSize;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, renderSize, renderSize);
+
+    function roundedRect(x, y, width, height, radius, fill) {
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") {
+        ctx.roundRect(x, y, width, height, radius);
+      } else if (radius > 0) {
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + width - radius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+        ctx.lineTo(x + width, y + height - radius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+      } else {
+        ctx.rect(x, y, width, height);
+      }
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+
+    function connectedModule(row, column) {
+      const x = column * moduleSize;
+      const y = row * moduleSize;
+      const size = moduleSize;
+      const radius = moduleSize * 0.46;
+      const dark = (checkRow, checkColumn) => (
+        checkRow >= 0 && checkRow < moduleCount &&
+        checkColumn >= 0 && checkColumn < moduleCount &&
+        matrix.isDark(checkRow, checkColumn)
+      );
+
+      const top = dark(row - 1, column);
+      const right = dark(row, column + 1);
+      const bottom = dark(row + 1, column);
+      const left = dark(row, column - 1);
+      const topLeftRadius = !top && !left ? radius : 0;
+      const topRightRadius = !top && !right ? radius : 0;
+      const bottomRightRadius = !bottom && !right ? radius : 0;
+      const bottomLeftRadius = !bottom && !left ? radius : 0;
+
+      ctx.beginPath();
+      ctx.moveTo(x + topLeftRadius, y);
+      ctx.lineTo(x + size - topRightRadius, y);
+      if (topRightRadius) ctx.quadraticCurveTo(x + size, y, x + size, y + topRightRadius);
+      else ctx.lineTo(x + size, y);
+      ctx.lineTo(x + size, y + size - bottomRightRadius);
+      if (bottomRightRadius) ctx.quadraticCurveTo(x + size, y + size, x + size - bottomRightRadius, y + size);
+      else ctx.lineTo(x + size, y + size);
+      ctx.lineTo(x + bottomLeftRadius, y + size);
+      if (bottomLeftRadius) ctx.quadraticCurveTo(x, y + size, x, y + size - bottomLeftRadius);
+      else ctx.lineTo(x, y + size);
+      ctx.lineTo(x, y + topLeftRadius);
+      if (topLeftRadius) ctx.quadraticCurveTo(x, y, x + topLeftRadius, y);
+      else ctx.lineTo(x, y);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
+
+    const isFinderModule = (row, column) => (
+      (row < 7 && column < 7) ||
+      (row < 7 && column >= moduleCount - 7) ||
+      (row >= moduleCount - 7 && column < 7)
+    );
+
+    for (let row = 0; row < moduleCount; row += 1) {
+      for (let column = 0; column < moduleCount; column += 1) {
+        if (!matrix.isDark(row, column)) continue;
+        if (isFinderModule(row, column)) continue;
+
+        connectedModule(row, column);
+      }
+    }
+
+    // Draw each finder as three large rounded shapes rather than a grid of
+    // tiny square cells. This creates the clearly rounded "eye" treatment.
+    const drawFinder = (column, row) => {
+      const x = column * moduleSize;
+      const y = row * moduleSize;
+      roundedRect(x, y, moduleSize * 7, moduleSize * 7, moduleSize * 1.65, color);
+      roundedRect(
+        x + moduleSize,
+        y + moduleSize,
+        moduleSize * 5,
+        moduleSize * 5,
+        moduleSize * 1.15,
+        "#000"
+      );
+      roundedRect(
+        x + moduleSize * 2,
+        y + moduleSize * 2,
+        moduleSize * 3,
+        moduleSize * 3,
+        moduleSize * 0.8,
+        color
+      );
+    };
+
+    drawFinder(0, 0);
+    drawFinder(moduleCount - 7, 0);
+    drawFinder(0, moduleCount - 7);
+
+    container.innerHTML = "";
+    container.appendChild(canvas);
+  }
+
   /**
    * Render a QR code for the given URL into the container.
    * Clears any previously rendered code first.
@@ -98,7 +223,7 @@ export function initQR() {
   const generate = (text) => {
     lastAccent = brightenQrAccent();
     container.innerHTML = "";
-    new QRCode(container, {
+    const qr = new QRCode(container, {
       text,
       width:        58,
       height:       58,
@@ -106,6 +231,7 @@ export function initQR() {
       colorLight:   "#000",
       correctLevel: QRCode.CorrectLevel.L,
     });
+    drawRoundedQr(qr, lastAccent);
   };
 
   function regenerateForAccent() {
