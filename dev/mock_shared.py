@@ -67,7 +67,7 @@ SPOTIFY_CACHE = RUNTIME_DIR / ".cache_spotify"
 
 CONFIG_PORTAL_PIN_LENGTH = 6
 CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
-DISPLAY_THEMES = {"classic", "minimal"}
+DISPLAY_THEMES = {"classic", "classic-flat", "minimal"}
 WEATHER_ICON_PACKS = {"fill", "flat", "line", "monochrome"}
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -1365,7 +1365,13 @@ def default_update_state() -> dict[str, Any]:
         "available": False,
         "mock_pending_update": False,
         "pending_restart": False,
+        "reboot_requested": False,
         "update_in_progress": False,
+        "post_reboot_pending": False,
+        "rollback_in_progress": False,
+        "rollback_reboot_requested": False,
+        "post_rollback_pending": False,
+        "applied_update": False,
         "auto_update": False,
         "repo": "",
         "channel": "stable",
@@ -1377,32 +1383,98 @@ def default_update_state() -> dict[str, Any]:
 
 
 MOCK_INSTALL_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_INSTALL_SECONDS", "90"))
+MOCK_REBOOT_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_REBOOT_SECONDS", "3"))
+MOCK_VERIFICATION_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_VERIFY_SECONDS", "5"))
 
 
-def _finalize_expired_mock_install(state: dict[str, Any]) -> dict[str, Any]:
-    """Complete the mock install after a wall-clock deadline, not after reads.
+def _clear_mock_update_lifecycle(state: dict[str, Any], now: float) -> None:
+    """Finish a successful simulated post-reboot health check."""
+    state.update({
+        "update_in_progress": False,
+        "pending_restart": False,
+        "reboot_requested": False,
+        "post_reboot_pending": False,
+        "post_reboot_checked_at": now,
+        "last_successful_boot_version": global_app_version(),
+        "last_error": None,
+    })
+    for key in (
+        "_mock_install_complete_at",
+        "_mock_install_started_at",
+        "_mock_reboot_complete_at",
+        "_mock_verification_complete_at",
+        "_mock_install_reads_remaining",
+        "post_reboot_attempt",
+        "post_reboot_attempts_total",
+    ):
+        state.pop(key, None)
+
+
+def _advance_mock_update_lifecycle(state: dict[str, Any]) -> dict[str, Any]:
+    """Advance the mock through install, reboot, and verification phases.
 
     The real updater writes update_in_progress=True to runtime/update_state.json
-    while it is running, and later writes pending_restart=True when installation
-    completes. Reading /update_status.json does not consume that state. The mock
-    follows that same contract so config-page refreshes cannot clear the overlay
-    before the display frontend polls it.
+    while it is running, requests a reboot after installation, then performs a
+    post-reboot health check before clearing the overlay. The mock follows the
+    same state contract on wall-clock deadlines without rebooting the computer.
     """
-    if not state.get("update_in_progress"):
-        return state
+    now = time.time()
+    changed = False
 
-    complete_at = float(state.get("_mock_install_complete_at") or 0)
-    if complete_at and time.time() >= complete_at:
+    install_complete_at = float(state.get("_mock_install_complete_at") or 0)
+    if state.get("update_in_progress") and install_complete_at and now >= install_complete_at:
         state.update({
-            "update_in_progress": False,
+            "update_in_progress": True,
             "pending_restart": True,
+            "reboot_requested": True,
+            "reboot_requested_at": now,
+            "post_reboot_pending": False,
+            "applied_update": True,
             "available": False,
             "mock_pending_update": False,
-            "last_error": "Mock environment: install completed; reboot is disabled.",
+            "last_error": None,
+            "_mock_reboot_complete_at": now + MOCK_REBOOT_DURATION_SECONDS,
         })
         state.pop("_mock_install_complete_at", None)
         state.pop("_mock_install_started_at", None)
         state.pop("_mock_install_reads_remaining", None)
+        changed = True
+
+    reboot_complete_at = float(state.get("_mock_reboot_complete_at") or 0)
+    if state.get("reboot_requested") and reboot_complete_at and now >= reboot_complete_at:
+        state.update({
+            "post_reboot_pending": True,
+            "post_reboot_attempt": 1,
+            "post_reboot_attempts_total": 1,
+            "post_reboot_checked_at": now,
+            "_mock_verification_complete_at": now + MOCK_VERIFICATION_DURATION_SECONDS,
+        })
+        state.pop("_mock_reboot_complete_at", None)
+        changed = True
+
+    verification_complete_at = float(state.get("_mock_verification_complete_at") or 0)
+    if state.get("post_reboot_pending") and verification_complete_at and now >= verification_complete_at:
+        _clear_mock_update_lifecycle(state, now)
+        changed = True
+
+    # Older mock versions stopped at pending_restart forever. Treat that state
+    # as a completed simulated reboot so opening the mocks is never blocked by
+    # a lifecycle that has no deadline capable of advancing it.
+    active_without_deadline = (
+        (
+            state.get("update_in_progress")
+            or state.get("pending_restart")
+            or state.get("reboot_requested")
+        )
+        and not state.get("_mock_install_complete_at")
+        and not state.get("_mock_reboot_complete_at")
+        and not state.get("_mock_verification_complete_at")
+    )
+    if active_without_deadline:
+        _clear_mock_update_lifecycle(state, now)
+        changed = True
+
+    if changed:
         atomic_write_json(UPDATE_STATE_FILE, state)
 
     return state
@@ -1417,7 +1489,7 @@ def load_update_state() -> dict[str, Any]:
     state["repo"] = cfg.get("repo", state.get("repo", "")) or os.getenv("MEMENTOFRAME_UPDATE_REPO", "")
     state["channel"] = cfg.get("channel", state.get("channel", "stable")) or "stable"
 
-    state = _finalize_expired_mock_install(state)
+    state = _advance_mock_update_lifecycle(state)
 
     if bool(state.get("mock_pending_update")) and not state.get("update_in_progress"):
         state.update({
@@ -1448,7 +1520,9 @@ def set_mock_pending_update(enabled: bool) -> dict[str, Any]:
 def check_for_updates_mock() -> dict[str, Any]:
     state = load_update_state()
     now = time.time()
-    state.update({"checked_at": now, "last_checked": now, "update_in_progress": False, "pending_restart": False, "last_error": None})
+    # Production preserves an active install/reboot lifecycle when a release
+    # check refreshes the rest of the updater state. Do the same in the mocks.
+    state.update({"checked_at": now, "last_checked": now, "last_error": None})
     if state.get("mock_pending_update"):
         save_update_state(state)
         return load_update_state()
@@ -1490,8 +1564,8 @@ def mock_install_update_blocked() -> dict[str, Any]:
     """Simulate the real updater lifecycle without modifying project files.
 
     The mock writes update_in_progress=True immediately, leaves it in place for
-    long enough for the real frontend polling loop to observe it, and then moves
-    to pending_restart=True. Reads are passive, matching the real services.
+    long enough for the real frontend polling loop to observe it, then simulates
+    the production reboot and post-reboot verification phases.
     """
     now = time.time()
     state = load_update_state()
@@ -1500,11 +1574,23 @@ def mock_install_update_blocked() -> dict[str, Any]:
         "mock_pending_update": False,
         "update_in_progress": True,
         "pending_restart": False,
+        "reboot_requested": False,
+        "post_reboot_pending": False,
+        "applied_update": False,
         "last_error": None,
         "_mock_install_started_at": now,
         "_mock_install_complete_at": now + MOCK_INSTALL_DURATION_SECONDS,
     })
-    state.pop("_mock_install_reads_remaining", None)
+    for key in (
+        "_mock_install_reads_remaining",
+        "_mock_reboot_complete_at",
+        "_mock_verification_complete_at",
+        "reboot_requested_at",
+        "post_reboot_attempt",
+        "post_reboot_attempts_total",
+        "post_reboot_checked_at",
+    ):
+        state.pop(key, None)
     save_update_state(state)
     return state
 

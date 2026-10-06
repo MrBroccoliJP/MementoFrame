@@ -725,7 +725,7 @@ def get_spotify_user():
 # =============================================================================
 # Configuration persistence
 # =============================================================================
-DISPLAY_THEMES = {"classic", "minimal"}
+DISPLAY_THEMES = {"classic", "classic-flat", "minimal"}
 WEATHER_ICON_PACKS = {"fill", "flat", "line", "monochrome"}
 
 

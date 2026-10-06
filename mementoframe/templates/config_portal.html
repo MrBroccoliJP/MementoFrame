@@ -336,6 +336,7 @@
         <label for="display_theme">Display Theme</label>
         <select id="display_theme" name="display_theme">
           <option value="classic" {% if (config.display_theme or 'classic') == 'classic' %}selected{% endif %}>Classic</option>
+          <option value="classic-flat" {% if config.display_theme == 'classic-flat' %}selected{% endif %}>Classic flat</option>
           <option value="minimal" {% if config.display_theme == 'minimal' %}selected{% endif %}>Minimal sidebar</option>
         </select>
 

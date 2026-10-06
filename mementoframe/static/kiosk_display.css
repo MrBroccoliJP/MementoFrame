@@ -650,6 +650,18 @@ body {
   background-color: var(--panel-bg);
   transition: var(--panel-transition);
 }
+.dual_clock-box:not(.single-clock)::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background-color: var(--accent-color);
+  pointer-events: none;
+  transition: background-color 1s ease;
+}
 .dual_clock-box > * {
   position: relative;
   z-index: 1;
@@ -663,7 +675,7 @@ body {
   transform: translateY(-5px);
 }
 .clock-box-left {
-  border-right: 1px solid white;
+  border-right: 0 !important;
   padding-bottom: 0;
   justify-content: center;
   width: 50%;
@@ -1560,6 +1572,62 @@ body {
   align-items: center;
   transform: translateY(var(--weather-content-lift));
 }
+/* The compact card has a fixed 70px height. Remove the legacy upward offsets
+   so its icon and temperature/condition stack sit in the visual center. */
+.weather-box:not(.single-clock-weather) .weather-primary {
+  transform: none;
+}
+.weather-box:not(.single-clock-weather) .weather-icon img {
+  margin-top: 0;
+}
+.weather-box:not(.single-clock-weather) .weather-temperature {
+  margin-top: 0;
+}
+/* In the compact dual-clock card an alert replaces the condition text. Keep
+   its two-line label inside the fixed card instead of letting it increase the
+   content block and push the temperature above the panel. */
+.weather-box:not(.single-clock-weather).has-weather-warning .weather-primary {
+  align-self: stretch;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.weather-box:not(.single-clock-weather).has-weather-warning .weather-icon {
+  align-self: stretch;
+  display: flex;
+  flex: 0 0 54px;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+.weather-box:not(.single-clock-weather).has-weather-warning .weather-icon img {
+  width: 54px;
+  height: 54px;
+  margin-top: 0;
+}
+.weather-box:not(.single-clock-weather).has-weather-warning .weather-info {
+  align-self: stretch;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+}
+.weather-box:not(.single-clock-weather).has-weather-warning .weather-temperature {
+  flex: 0 0 auto;
+  margin-top: 0;
+  margin-right: 4px;
+  line-height: 1;
+}
+.weather-box:not(.single-clock-weather).has-weather-warning .weather-condition {
+  flex: 0 1 auto;
+  width: 100%;
+  max-width: 100%;
+  max-height: 29px;
+  font-size: 13px;
+  line-height: 1.05;
+}
 .weather-details {
   display: none;
   align-self: stretch;
@@ -1617,7 +1685,7 @@ body {
   margin-left: 0;
   padding: 5px 7px;
   box-sizing: border-box;
-  border-left: 1px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--accent-color));
   transform: translateY(var(--weather-content-lift));
 }
 .weather-warning-details svg,
@@ -1626,6 +1694,12 @@ body {
   height: 24px;
   flex: 0 0 24px;
   object-fit: contain;
+}
+.weather-box.single-clock-weather.has-weather-warning .weather-warning-details svg,
+.weather-box.single-clock-weather.has-weather-warning .weather-warning-details img {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
 }
 .weather-warning-details svg {
   fill: none;
@@ -2234,18 +2308,15 @@ body:has(.left_panel.swapped) .system-info-box {
   91.01%, 100% { transform: translateY(0); }
 }
 
-/* One immutable height for every compact top-level card. Large Spotify and
-   the monthly calendar intentionally do not match these selectors. */
+/* One immutable height for every compact top-level card. Large Spotify,
+   monthly calendar, and expanded forecasts intentionally do not match these
+   selectors so their content can determine the card height. */
 .dual_clock-box,
 .first-row .date-box,
 .second_row > .date-box,
 .second_row > .weather-box,
 #calendar-box.week-mode.visible,
-#calendar-box.week-mode.widget-visible,
-#forecast-box.visible:has(#forecast-5h-big:not(.hidden)),
-#forecast-box.widget-visible:has(#forecast-5h-big:not(.hidden)),
-#forecast-box.visible:has(#forecast-5d-big:not(.hidden)),
-#forecast-box.widget-visible:has(#forecast-5d-big:not(.hidden)) {
+#calendar-box.week-mode.widget-visible {
   box-sizing: border-box !important;
   height: var(--compact-card-height) !important;
   min-height: var(--compact-card-height) !important;

@@ -6,6 +6,16 @@
  * stay presentational so every theme follows the Classic layout contract.
  */
 
+/* Classic Flat keeps the complete Classic visual system but removes the
+   album-art/accent-colored outlines applied to the main widget cards. */
+body[data-theme="classic-flat"] .dual_clock-box,
+body[data-theme="classic-flat"] .date-box,
+body[data-theme="classic-flat"] .weather-box,
+body[data-theme="classic-flat"] #calendar-box,
+body[data-theme="classic-flat"] #forecast-box {
+  border-color: transparent !important;
+}
+
 body[data-theme="minimal"] {
   --minimal-card: #141414;
   --minimal-card-soft: #1b1b1b;
@@ -47,6 +57,10 @@ body[data-theme="minimal"] #forecast-box::before {
 body[data-theme="minimal"] .clock-box-left,
 body[data-theme="minimal"] .clock-box-right {
   border-color: transparent !important;
+}
+
+body[data-theme="minimal"] .dual_clock-box::after {
+  content: none;
 }
 
 body[data-theme="minimal"] .clock {

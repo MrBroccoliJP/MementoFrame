@@ -29,7 +29,7 @@ import { fetchJson } from "../utils.js";
 import { PATHS } from "../constants.js";
 import { updateWeather } from "./weather.js";
 
-const DISPLAY_THEMES = new Set(["classic", "minimal"]);
+const DISPLAY_THEMES = new Set(["classic", "classic-flat", "minimal"]);
 const WEATHER_ICON_PACKS = new Set(["fill", "flat", "line", "monochrome"]);
 
 function applyDisplayAppearance(config) {

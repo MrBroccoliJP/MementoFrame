@@ -348,7 +348,7 @@ def update_check():
 @app.route("/update/install", methods=["POST"])
 def update_install():
     state = mock_install_update_blocked()
-    return jsonify({"status": "started", "message": "Mock environment: simulated update started; install/reboot are disabled.", "updater": state})
+    return jsonify({"status": "started", "message": "Mock environment: simulated install, reboot, and verification started; project files and the host are unchanged.", "updater": state})
 
 
 @app.route("/config/stream")

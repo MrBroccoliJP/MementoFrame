@@ -97,10 +97,11 @@ status, and configuration QR code continue to appear wherever the selected
 layout has space for them. The interface also swaps sides once per hour to vary
 the presentation and reduce prolonged use of the same screen area.
 
-In both the Classic and Minimal Sidebar themes, interface accent colors cycle
-automatically through a randomized palette. When Spotify is playing, the
-player derives a primary and companion color from the current album art and
-applies that palette across the interface.
+In the Classic, Classic Flat, and Minimal Sidebar themes, interface accent
+colors cycle automatically through a randomized palette. Classic Flat keeps
+the Classic layout and materials while removing the colored panel outlines.
+When Spotify is playing, the player derives a primary and companion color from
+the current album art and applies that palette across the interface.
 
 ### Project Photos
 
@@ -141,7 +142,7 @@ applies that palette across the interface.
 - GPIO brightness pulse control
 - Auto on/off schedules
 - Dual timezone clocks
-- Selectable Classic and Minimal Sidebar display themes
+- Selectable Classic, Classic Flat, and Minimal Sidebar display themes
 - Filled, flat, line, or recolored monochrome forecast icons; current weather and warnings remain filled
 - Weather widget with selectable Open-Meteo, WeatherAPI.com, or Google Weather providers
 - Spotify album art and playback state

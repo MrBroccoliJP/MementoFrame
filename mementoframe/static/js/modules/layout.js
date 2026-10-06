@@ -8,6 +8,8 @@ import { SELECTORS, INTERVALS } from "../constants.js";
 import { $, $$ } from "../utils.js";
 import { updateBurstGrid, stabilizeActiveVerticalPhotoDuringPanelResize } from "./photoslideshow.js";
 
+let layoutTestOverride = null;
+
 // EXPORTED INIT FUNCTION: Safely starts the layout ticker only when called
 export function initLayout() {
   setInterval(() => evaluateLayout(false), INTERVALS.LAYOUT_EVALUATE);
@@ -179,6 +181,11 @@ export function scheduleBigModeCycle(delay = INTERVALS.CALENDAR_CYCLE) {
 // ============================================
 
 export function evaluateLayout(force = false) {
+    // Keep a console-selected layout stable until clearTestLayout() is called.
+    // The normal one-second ticker and data-availability events must not replace
+    // a view while it is being visually tested.
+    if (layoutTestOverride) return;
+
     const currentMinute = new Date().getMinutes();
     const cycleMinute = currentMinute % INTERVALS.LAYOUT_CYCLE_MINUTES;
     const isSpotify = state.panels.spotifyPlaying;
@@ -334,12 +341,43 @@ function applyWidgetVisibility() {
 // TEMPORARY TESTING TOOL
 // ============================================
 window.testLayout = function(spotify, calendar, forecast) {
-    updatePanelState({
+    const forecastAliases = {
+        f5hIcons: '5h-icons',
+        f5hBig: '5h-big',
+        f5dBig: '5d-big'
+    };
+    const normalized = {
         spotifyView: spotify,
         calendarView: calendar,
-        forecastView: forecast
-    });
-    console.log(`Test layout applied! | Spotify: ${spotify} | Calendar: ${calendar} | Forecast: ${forecast}`);
+        forecastView: forecastAliases[forecast] || forecast
+    };
+    const validSpotify = ['hidden', 'shrunk', 'big'];
+    const validCalendar = ['hidden', 'month', 'week'];
+    const validForecast = ['hidden', '5h-icons', '5h-big', '5d-big'];
+
+    if (!validSpotify.includes(normalized.spotifyView) ||
+        !validCalendar.includes(normalized.calendarView) ||
+        !validForecast.includes(normalized.forecastView)) {
+        console.error(
+            'Invalid test layout. Expected Spotify hidden|shrunk|big, ' +
+            'calendar hidden|month|week, and forecast hidden|5h-icons|5h-big|5d-big.'
+        );
+        return;
+    }
+
+    layoutTestOverride = normalized;
+    updatePanelState(normalized);
+    console.log(
+        `Test layout locked | Spotify: ${normalized.spotifyView} | ` +
+        `Calendar: ${normalized.calendarView} | Forecast: ${normalized.forecastView}. ` +
+        'Run clearTestLayout() to resume automatic rotation.'
+    );
+};
+
+window.clearTestLayout = function() {
+    layoutTestOverride = null;
+    evaluateLayout(true);
+    console.log('Test layout cleared; automatic rotation resumed.');
 };
 
 window.swapPanels = swapPanels; // Expose for testing

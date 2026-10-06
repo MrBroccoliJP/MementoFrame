@@ -23,6 +23,11 @@ export function initWeather() {
   if (box) box.style.display = "none";
 
   window.addEventListener("mementoframe:forecast-view-changed", () => {
+    // Expanded weather renders the alert in its own panel, while compact
+    // weather replaces the main condition. Re-render immediately after the
+    // layout class changes so an alert icon can never be paired with stale
+    // current-condition text until the next 15-second alert tick.
+    applyWeatherContainerDisplay();
     scheduleConditionScrollRefresh();
   });
 

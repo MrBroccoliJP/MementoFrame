@@ -167,6 +167,30 @@ The weather API key can also be saved through the mock configuration portal.
 Real integrations require network access and are no longer fully isolated
 tests.
 
+## Testing Layouts from the Browser Console
+
+Use `testLayout(spotify, calendar, forecast)` in the frame page's browser
+console to lock a specific widget combination for visual testing. While the
+test layout is locked, the normal one-second layout rotation will not override
+it.
+
+```javascript
+testLayout('hidden', 'hidden', 'f5dBig');   // Expanded five-day forecast
+testLayout('hidden', 'hidden', 'f5hBig');   // Expanded five-hour forecast
+testLayout('hidden', 'hidden', '5h-icons'); // Compact five-hour forecast
+```
+
+The canonical forecast names are `hidden`, `5h-icons`, `5h-big`, and `5d-big`.
+For convenience, the console helper also accepts `f5hIcons`, `f5hBig`, and
+`f5dBig`. Spotify accepts `hidden`, `shrunk`, or `big`; calendar accepts
+`hidden`, `month`, or `week`.
+
+Resume normal automatic layout rotation when testing is complete:
+
+```javascript
+clearTestLayout();
+```
+
 ## Testing Updates Safely
 
 The mock updater simulates update states but never installs project files or
@@ -184,8 +208,10 @@ python dev/mock_updater.py autoupdate
 python dev/mock_updater.py diagnose
 ```
 
-A simulated installation remains in progress for 90 seconds by default. Change
-the duration for a test session with:
+A simulated installation remains in progress for 90 seconds by default, then
+passes through a short simulated reboot and post-reboot verification before the
+overlay clears, matching the production updater lifecycle. Change the install
+duration for a test session with:
 
 ```bash
 MEMENTOFRAME_MOCK_INSTALL_SECONDS=10 python dev/run_mocks.py
@@ -197,6 +223,10 @@ In PowerShell:
 $env:MEMENTOFRAME_MOCK_INSTALL_SECONDS = "10"
 python dev/run_mocks.py
 ```
+
+The simulated reboot and verification phases default to 3 and 5 seconds. They
+can be adjusted with `MEMENTOFRAME_MOCK_REBOOT_SECONDS` and
+`MEMENTOFRAME_MOCK_VERIFY_SECONDS` when testing those transitions.
 
 ## Troubleshooting
 
