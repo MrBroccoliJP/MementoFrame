@@ -30,7 +30,7 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 66, # Keep pre-reboot update overlay text stable
+        "version": 67, # new theme and some bug fixes
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
