@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 24,  # Keep install/reboot/verification as one continuous lifecycle
+        "version": 25,  # Update Overlay improvements, including post-reboot health checks
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },
