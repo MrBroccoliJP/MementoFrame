@@ -48,7 +48,7 @@ Flow chart:
                                   Spotify auth, brightness, and config persistence
 """
 from flask import Flask, request, render_template, redirect, url_for, jsonify, send_from_directory, session
-import subprocess, os, json, socket, threading, time, uuid, shlex, secrets, sys
+import subprocess, os, json, socket, threading, time, uuid, shlex, secrets, sys, tempfile
 import requests
 from pathlib import Path
 from werkzeug.utils import secure_filename
@@ -58,6 +58,12 @@ import RPi.GPIO as GPIO
 import spotipy
 import requests
 from spotipy.oauth2 import SpotifyOAuth
+from updater import (
+    UPDATER_LOCK_FILE,
+    can_start_background_update,
+    interprocess_file_lock,
+    state_file_lock,
+)
 from version_info import GLOBAL_APP_VERSION, VERSION_INFO
 
 # =============================================================================
@@ -227,10 +233,20 @@ CONFIG_PORTAL_PIN_EXEMPT_ENDPOINTS = {
 
 def _atomic_write_json(path, data):
     """Write JSON through a temporary file and atomically replace the target path."""
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, path)
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
 
 
 
@@ -801,6 +817,7 @@ def load_update_state():
     state.setdefault("installed_version", GLOBAL_APP_VERSION)
     state.setdefault("available", False)
     state.setdefault("pending_restart", False)
+    state.setdefault("download_in_progress", False)
     state.setdefault("update_in_progress", False)
     state["auto_update"] = bool(updates_cfg.get("auto_update", False))
     state["repo"] = updates_cfg.get("repo", "")
@@ -812,19 +829,65 @@ def run_updater(command, background=False):
     """Run updater.py with a controlled command from the config portal."""
     cmd = [sys.executable, "updater.py", command]
     if background:
-        # Mark update_in_progress immediately so the display overlay activates
-        # before updater.py has had a chance to write the file itself.
-        try:
-            state = load_update_state()
-            state["update_in_progress"] = True
-            state["pending_restart"] = False
-            state["reboot_requested"] = False
-            state["update_started_at"] = state.get("update_started_at") or int(time.time())
-            _atomic_write_json(UPDATE_STATE_FILE, state)
-        except Exception as e:
-            print(f"⚠️ Could not pre-set update_in_progress: {e}")
-        subprocess.Popen(cmd, cwd=os.getcwd(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return {"status": "started", "command": command}
+        # Hold the operation slot through Popen when it is free. The child will
+        # wait for this short hand-off, closing the duplicate-click race.
+        with interprocess_file_lock(UPDATER_LOCK_FILE, blocking=False) as operation_slot_available:
+            state = {}
+            try:
+                with state_file_lock():
+                    state = load_update_state()
+                    if not can_start_background_update(
+                        state,
+                        operation_slot_available=operation_slot_available,
+                    ):
+                        return {"status": "already_running", "command": command}
+
+                    try:
+                        revision = int(state.get("state_revision") or 0)
+                    except (TypeError, ValueError):
+                        revision = 0
+                    state["download_in_progress"] = True
+                    state["update_in_progress"] = False
+                    state["update_phase"] = "downloading"
+                    state["update_session_id"] = uuid.uuid4().hex
+                    state["pending_restart"] = False
+                    state["reboot_requested"] = False
+                    state["download_started_at"] = int(time.time())
+                    state["update_started_at"] = None
+                    state["update_completed_at"] = None
+                    state["update_failed_at"] = None
+                    state["post_reboot_pending"] = False
+                    state["post_reboot_attempt"] = None
+                    state["post_reboot_checked_at"] = None
+                    state["post_rollback_pending"] = False
+                    state["rollback_post_reboot_attempt"] = None
+                    state["post_rollback_checked_at"] = None
+                    state["state_revision"] = revision + 1
+                    state["state_updated_at"] = int(time.time())
+                    state["last_error"] = None
+                    _atomic_write_json(UPDATE_STATE_FILE, state)
+            except Exception as e:
+                print(f"WARNING: Could not pre-set updater download state: {e}")
+
+            try:
+                subprocess.Popen(cmd, cwd=os.getcwd(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                try:
+                    with state_file_lock():
+                        current_state = load_update_state()
+                        if current_state.get("update_session_id") == state.get("update_session_id"):
+                            current_state["download_in_progress"] = False
+                            current_state["update_in_progress"] = False
+                            current_state["update_phase"] = "failed"
+                            current_state["update_failed_at"] = int(time.time())
+                            current_state["last_error"] = f"Could not start updater: {e}"
+                            current_state["state_revision"] = int(current_state.get("state_revision") or 0) + 1
+                            current_state["state_updated_at"] = int(time.time())
+                            _atomic_write_json(UPDATE_STATE_FILE, current_state)
+                except Exception:
+                    pass
+                return {"status": "error", "command": command, "message": str(e)}
+            return {"status": "started", "command": command}
 
     proc = subprocess.run(cmd, cwd=os.getcwd(), capture_output=True, text=True, timeout=90)
     payload = {"status": "ok" if proc.returncode == 0 else "error", "returncode": proc.returncode}

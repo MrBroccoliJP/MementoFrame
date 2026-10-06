@@ -208,18 +208,20 @@ python dev/mock_updater.py autoupdate
 python dev/mock_updater.py diagnose
 ```
 
-A simulated installation remains in progress for 90 seconds by default, then
-passes through a short simulated reboot and post-reboot verification before the
-overlay clears, matching the production updater lifecycle. Change the install
-duration for a test session with:
+A simulated update first spends 3 seconds downloading with no display overlay.
+The overlay appears only when the 90-second installation begins, then remains
+through the simulated reboot and post-reboot verification. This matches the
+production updater lifecycle. Change the download or install duration for a
+test session with:
 
 ```bash
-MEMENTOFRAME_MOCK_INSTALL_SECONDS=10 python dev/run_mocks.py
+MEMENTOFRAME_MOCK_DOWNLOAD_SECONDS=1 MEMENTOFRAME_MOCK_INSTALL_SECONDS=10 python dev/run_mocks.py
 ```
 
 In PowerShell:
 
 ```powershell
+$env:MEMENTOFRAME_MOCK_DOWNLOAD_SECONDS = "1"
 $env:MEMENTOFRAME_MOCK_INSTALL_SECONDS = "10"
 python dev/run_mocks.py
 ```

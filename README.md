@@ -518,7 +518,7 @@ MementoFrame uses separate services so each part can be logged, restarted, and d
 | `mementoframe-display.service` | `display_service.py` | `5001` | Display frontend server and local widget API. |
 | `mementoframe-network.service` | `network_manager_service.py` | — | Wi-Fi/AP fallback watchdog. |
 | `mementoframe-kiosk.service` | Chromium | — | Fullscreen display browser. |
-| `mementoframe-post-reboot.service` | `updater.py post-reboot-check` | — | Clears update pending-restart state after health checks pass. |
+| `mementoframe-updater.service` + `.timer` | `updater.py autoupdate` | — | Runs startup/hourly update work and clears pending-restart state only after post-reboot health checks pass. |
 
 ### Project Structure
 

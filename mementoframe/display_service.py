@@ -72,6 +72,12 @@ GOOGLE_WEATHER_CACHE_FILE = os.path.join(USERDATA_DIR, "cache/google_weather.jso
 RUNTIME_DIR = "runtime"
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
 UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
+UPDATE_ACTIVE_PHASES = {
+    "applying", "awaiting_reboot", "verifying", "rolling_back",
+    "awaiting_rollback_reboot", "verifying_rollback",
+}
+_update_state_cache = {}
+_update_state_cache_lock = threading.Lock()
 
 # =============================================================================
 # Configuration loading
@@ -91,19 +97,42 @@ def load_config():
 def load_update_state():
     """Return updater runtime state merged with config/update defaults for display UI."""
     state = {}
+    state_valid = True
+    state_read_error = None
     try:
         with open(UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
             state = json.load(f)
+        if not isinstance(state, dict):
+            raise ValueError("update state must be a JSON object")
     except FileNotFoundError:
-        state = {}
+        state_valid = False
+        state_read_error = "Update state file is temporarily unavailable."
     except Exception as e:
-        state = {"last_error": f"Unable to read update state: {e}"}
+        state_valid = False
+        state_read_error = f"Unable to read update state: {e}"
+
+    with _update_state_cache_lock:
+        if state_valid:
+            _update_state_cache.clear()
+            _update_state_cache.update(state)
+        elif (
+            _update_state_cache.get("update_in_progress")
+            or _update_state_cache.get("pending_restart")
+            or _update_state_cache.get("reboot_requested")
+            or _update_state_cache.get("rollback_in_progress")
+            or _update_state_cache.get("rollback_reboot_requested")
+            or _update_state_cache.get("update_phase") in UPDATE_ACTIVE_PHASES
+        ):
+            # A missing/corrupt sample is not authoritative while an update is
+            # active. Keep the last valid lifecycle instead of flashing idle.
+            state = dict(_update_state_cache)
 
     cfg = load_config()
     updates_cfg = cfg.get("updates", {}) if isinstance(cfg, dict) else {}
     state.setdefault("available", False)
     state.setdefault("pending_restart", False)
     state.setdefault("update_in_progress", False)
+    state.setdefault("update_phase", "idle")
     state.setdefault("reboot_requested", False)
     state.setdefault("post_reboot_pending", False)
     state.setdefault("rollback_in_progress", False)
@@ -111,23 +140,36 @@ def load_update_state():
     state.setdefault("post_rollback_pending", False)
     state.setdefault("installed_version", GLOBAL_APP_VERSION)
     if state.get("pending_restart") or state.get("reboot_requested"):
-        boot_time = system_boot_time()
-        reboot_requested_at = state.get("reboot_requested_at")
-        try:
-            state["post_reboot_pending"] = bool(
-                boot_time and reboot_requested_at and boot_time >= float(reboot_requested_at)
-            )
-        except (TypeError, ValueError):
-            state["post_reboot_pending"] = False
+        applied_boot_id = state.get("update_applied_boot_id") or state.get("reboot_requested_boot_id")
+        current_boot_id = system_boot_id()
+        if applied_boot_id and current_boot_id:
+            state["post_reboot_pending"] = applied_boot_id != current_boot_id
+        else:
+            boot_time = system_boot_time()
+            reboot_requested_at = state.get("reboot_requested_at")
+            try:
+                state["post_reboot_pending"] = bool(
+                    boot_time and reboot_requested_at and boot_time >= float(reboot_requested_at)
+                )
+            except (TypeError, ValueError):
+                state["post_reboot_pending"] = False
     if state.get("rollback_reboot_requested"):
-        boot_time = system_boot_time()
-        rollback_reboot_requested_at = state.get("rollback_reboot_requested_at")
-        try:
-            state["post_rollback_pending"] = bool(
-                boot_time and rollback_reboot_requested_at and boot_time >= float(rollback_reboot_requested_at)
-            )
-        except (TypeError, ValueError):
-            state["post_rollback_pending"] = False
+        applied_boot_id = state.get("rollback_applied_boot_id") or state.get("rollback_reboot_requested_boot_id")
+        current_boot_id = system_boot_id()
+        if applied_boot_id and current_boot_id:
+            state["post_rollback_pending"] = applied_boot_id != current_boot_id
+        else:
+            boot_time = system_boot_time()
+            rollback_reboot_requested_at = state.get("rollback_reboot_requested_at")
+            try:
+                state["post_rollback_pending"] = bool(
+                    boot_time and rollback_reboot_requested_at and boot_time >= float(rollback_reboot_requested_at)
+                )
+            except (TypeError, ValueError):
+                state["post_rollback_pending"] = False
+    state["state_valid"] = state_valid
+    if state_read_error:
+        state["state_read_error"] = state_read_error
     state["auto_update"] = bool(updates_cfg.get("auto_update", False))
     return state
 
@@ -142,6 +184,15 @@ def system_boot_time():
     except Exception:
         return None
     return None
+
+
+def system_boot_id():
+    """Return the current Linux boot ID when available."""
+    try:
+        with open("/proc/sys/kernel/random/boot_id", "r", encoding="utf-8") as boot_id_file:
+            return boot_id_file.read().strip() or None
+    except Exception:
+        return None
 
 config = load_config()
 

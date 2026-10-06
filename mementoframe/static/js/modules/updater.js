@@ -11,6 +11,43 @@ let overlayEl = null;
 let lastState = null;
 let updateStream = null;
 
+const ACTIVE_UPDATE_PHASES = new Set([
+  "applying",
+  "awaiting_reboot",
+  "verifying",
+  "rolling_back",
+  "awaiting_rollback_reboot",
+  "verifying_rollback",
+]);
+
+function stateRevision(state) {
+  const revision = Number(state?.state_revision);
+  return Number.isFinite(revision) ? revision : null;
+}
+
+export function isUpdateStateActive(state) {
+  return !!(
+    state?.update_in_progress ||
+    state?.pending_restart ||
+    state?.reboot_requested ||
+    state?.post_reboot_pending ||
+    state?.rollback_in_progress ||
+    state?.rollback_reboot_requested ||
+    state?.post_rollback_pending ||
+    ACTIVE_UPDATE_PHASES.has(state?.update_phase)
+  );
+}
+
+export function shouldAcceptUpdateState(previousState, nextState) {
+  const previousRevision = stateRevision(previousState);
+  const nextRevision = stateRevision(nextState);
+  if (previousRevision !== null && (nextRevision === null || nextRevision < previousRevision)) return false;
+  if (nextState?.state_valid === false && isUpdateStateActive(previousState) && !isUpdateStateActive(nextState)) {
+    return false;
+  }
+  return true;
+}
+
 function ensureIndicator() {
   if (indicatorEl) return indicatorEl;
 
@@ -80,7 +117,13 @@ export function ensureOverlay() {
 }
 
 export function applyUpdateState(state) {
-  lastState = state || {};
+  const nextState = state || {};
+
+  // Polling and SSE run independently. Never let a delayed pre-update poll or
+  // an invalid read override a newer active lifecycle.
+  if (!shouldAcceptUpdateState(lastState, nextState)) return;
+
+  lastState = nextState;
 
   const indicator = ensureIndicator();
   const overlay = ensureOverlay();
@@ -91,17 +134,16 @@ export function applyUpdateState(state) {
     lastState.rollback_in_progress ||
     lastState.rollback_reboot_requested ||
     lastState.post_rollback_pending ||
-    lastState.rollback_post_reboot_attempt
+    ["rolling_back", "awaiting_rollback_reboot", "verifying_rollback"].includes(lastState.update_phase)
   );
-  const updating = !!(
-    lastState.update_in_progress ||
-    lastState.pending_restart ||
-    lastState.reboot_requested ||
-    rollbackActive
+  const updating = isUpdateStateActive(lastState) || rollbackActive;
+  const downloadBusy = !!(
+    lastState.download_in_progress ||
+    ["downloading", "preparing"].includes(lastState.update_phase)
   );
 
-  indicator.classList.toggle("hidden", !available || updating);
-  indicator.classList.toggle("visible", available && !updating);
+  indicator.classList.toggle("hidden", !available || updating || downloadBusy);
+  indicator.classList.toggle("visible", available && !updating && !downloadBusy);
   indicator.title = lastState.latest_version
     ? `Software update available: ${lastState.latest_version}`
     : "Software update available";
@@ -112,12 +154,13 @@ export function applyUpdateState(state) {
   if (statusText) {
     const rollbackVerifying = !!(
       lastState.post_rollback_pending ||
-      lastState.rollback_post_reboot_attempt
+      lastState.update_phase === "verifying_rollback" ||
+      (rollbackActive && lastState.rollback_post_reboot_attempt)
     );
     const verifying = !!(
       lastState.post_reboot_pending ||
-      lastState.post_reboot_checked_at ||
-      lastState.post_reboot_attempt
+      lastState.update_phase === "verifying" ||
+      (updating && lastState.post_reboot_attempt)
     );
     if (rollbackVerifying) {
       statusText.textContent = "Restoring previous version - verifying frame";
@@ -164,9 +207,10 @@ function setupUpdateStream() {
 export function initUpdater() {
   ensureIndicator();
   ensureOverlay();
-  refreshUpdateStatus();
   setupUpdateStream();
+  const initialStatus = refreshUpdateStatus();
   setInterval(refreshUpdateStatus, INTERVALS.UPDATE_STATUS || 60000);
+  return initialStatus;
 }
 
 export function getLastUpdateState() {
@@ -174,16 +218,18 @@ export function getLastUpdateState() {
 }
 
 /* Console helpers */
-window.showUpdateOverlay = () => {
-  const overlay = ensureOverlay();
-  overlay.classList.add("is-updating");
-  overlay.setAttribute("aria-hidden", "false");
-};
+if (typeof window !== "undefined") {
+  window.showUpdateOverlay = () => {
+    const overlay = ensureOverlay();
+    overlay.classList.add("is-updating");
+    overlay.setAttribute("aria-hidden", "false");
+  };
 
-window.hideUpdateOverlay = () => {
-  const overlay = ensureOverlay();
-  overlay.classList.remove("is-updating");
-  overlay.setAttribute("aria-hidden", "true");
-};
+  window.hideUpdateOverlay = () => {
+    const overlay = ensureOverlay();
+    overlay.classList.remove("is-updating");
+    overlay.setAttribute("aria-hidden", "true");
+  };
 
-window.applyUpdateState = applyUpdateState;
+  window.applyUpdateState = applyUpdateState;
+}

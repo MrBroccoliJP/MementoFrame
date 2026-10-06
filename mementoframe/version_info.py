@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 67, # new theme and some bug fixes
+        "version": 68, # Keep update overlay ordered and continuous across reboot
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 33, # Preserve update overlay state when starting installs
+        "version": 34, # Serialize update lifecycle state when starting installs
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 34, # Detect post-rollback update verification state
+        "version": 35, # Preserve active update state across transient read failures
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },
@@ -53,7 +53,7 @@ COMPONENTS = {
     },
     "updater": {
         "label": "Updater",
-        "version": 23,  # Preserve active update state across status refreshes
+        "version": 24,  # Keep install/reboot/verification as one continuous lifecycle
         "file": "updater.py",
         "description": "Install, update, backup, and post-reboot health logic",
     },

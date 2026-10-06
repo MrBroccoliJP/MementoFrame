@@ -108,9 +108,11 @@
         }
 
         if (statusValue) {
-          statusValue.textContent = state.update_in_progress
-            ? 'Updating'
-            : state.pending_restart
+          statusValue.textContent = state.download_in_progress
+            ? 'Downloading'
+            : state.update_in_progress
+              ? 'Updating'
+              : state.pending_restart
               ? 'Restart pending'
               : state.download_ready
                 ? 'Downloaded'
@@ -120,11 +122,11 @@
         }
 
         if (installButton) {
-          installButton.disabled = !state.available || state.update_in_progress;
+          installButton.disabled = !state.available || state.download_in_progress || state.update_in_progress;
         }
 
         if (reinstallButton) {
-          reinstallButton.disabled = state.update_in_progress;
+          reinstallButton.disabled = state.download_in_progress || state.update_in_progress;
         }
       } catch (_e) {
         // Keep the existing rendered state if the endpoint is unavailable.
@@ -570,7 +572,9 @@
       </div>
       {% endif %}
 
-      {% if us.update_in_progress %}
+      {% if us.download_in_progress %}
+      <div class="message">The update is being downloaded. The frame remains available while this finishes.</div>
+      {% elif us.update_in_progress %}
       <div class="message">An update is currently being applied. The frame may restart automatically.</div>
       {% elif us.pending_restart %}
       <div class="message">An update was installed and a restart is pending.</div>
@@ -592,7 +596,8 @@
         <div class="update-status-item">
           <span>Status</span>
           <strong id="update_status_value">
-            {% if us.update_in_progress %}Updating
+            {% if us.download_in_progress %}Downloading
+            {% elif us.update_in_progress %}Updating
             {% elif us.pending_restart %}Restart pending
             {% elif us.download_ready %}Downloaded
             {% elif us.available %}Available
@@ -630,10 +635,10 @@
         <div class="update-actions">
           <button type="button" onclick="checkForUpdates()">Check for Updates</button>
           <button id="update_install_button" type="button" class="update-install-btn" onclick="installUpdateNow()" {% if not us.available or
-            us.update_in_progress %}disabled{% endif %}>
+            us.download_in_progress or us.update_in_progress %}disabled{% endif %}>
             Install Update Now
           </button>
-          <button id="update_reinstall_button" type="button" onclick="reinstallCurrentVersion()" {% if us.update_in_progress %}disabled{% endif %}>
+          <button id="update_reinstall_button" type="button" onclick="reinstallCurrentVersion()" {% if us.download_in_progress or us.update_in_progress %}disabled{% endif %}>
             Reinstall Current Version
           </button>
         </div>

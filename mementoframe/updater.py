@@ -15,19 +15,23 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import zipfile
 from datetime import datetime
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-UPDATER_BUILD = "2026-05-16-backup-retention-v1"
+UPDATER_BUILD = "2026-10-06-install-only-overlay-v3"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = PROJECT_ROOT / "config.json"
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
 STATE_FILE = RUNTIME_DIR / "update_state.json"
+STATE_LOCK_FILE = RUNTIME_DIR / "update_state.lock"
+UPDATER_LOCK_FILE = RUNTIME_DIR / "updater.lock"
 DOWNLOAD_DIR = RUNTIME_DIR / "update_downloads"
 BACKUP_ROOT = PROJECT_ROOT.parent / "mementoframe_backups"
 BACKUP_RETENTION_COUNT = 3
@@ -63,6 +67,8 @@ HEALTH_CHECK_SECONDS = 90
 HEALTH_POLL_SECONDS = 3
 APP_SUBDIR = "mementoframe"
 
+_LOCAL_STATE_LOCK = threading.RLock()
+
 EXCLUDE_DURING_COPY = {
     ".git",
     "venv",
@@ -84,11 +90,118 @@ def now_ts() -> int:
     return int(time.time())
 
 
+def system_boot_id() -> str | None:
+    """Return the Linux boot ID, which changes exactly once per reboot."""
+    try:
+        value = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+        return value or None
+    except Exception:
+        return None
+
+
+def system_boot_time() -> float | None:
+    """Return the Linux system boot timestamp when available."""
+    try:
+        for line in Path("/proc/stat").read_text(encoding="utf-8").splitlines():
+            if line.startswith("btime "):
+                return float(line.split()[1])
+    except Exception:
+        return None
+    return None
+
+
+def boot_changed_since_update(state: dict[str, Any], *, rollback: bool = False) -> bool:
+    """Prove that the system rebooted after applying an update or rollback."""
+    if rollback:
+        saved_boot_id = state.get("rollback_applied_boot_id") or state.get("rollback_reboot_requested_boot_id")
+        marker = state.get("rollback_reboot_requested_at") or state.get("rollback_at") or state.get("updated_at")
+    else:
+        saved_boot_id = state.get("update_applied_boot_id") or state.get("reboot_requested_boot_id")
+        marker = state.get("reboot_requested_at") or state.get("updated_at")
+
+    current_boot_id = system_boot_id()
+    if saved_boot_id and current_boot_id:
+        return saved_boot_id != current_boot_id
+
+    boot_time = system_boot_time()
+    try:
+        return bool(boot_time and marker and boot_time >= float(marker))
+    except (TypeError, ValueError):
+        return False
+
+
+@contextmanager
+def interprocess_file_lock(path: Path, *, blocking: bool = True):
+    """Hold a small cross-process lock file on Linux and Windows."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    acquired = False
+    platform_lock = None
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            mode = msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK
+            try:
+                msvcrt.locking(handle.fileno(), mode, 1)
+                acquired = True
+                platform_lock = msvcrt
+            except OSError:
+                acquired = False
+        else:
+            import fcntl
+
+            flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+            try:
+                fcntl.flock(handle.fileno(), flags)
+                acquired = True
+                platform_lock = fcntl
+            except BlockingIOError:
+                acquired = False
+        yield acquired
+    finally:
+        if acquired and platform_lock is not None:
+            try:
+                if os.name == "nt":
+                    handle.seek(0)
+                    platform_lock.locking(handle.fileno(), platform_lock.LK_UNLCK, 1)
+                else:
+                    platform_lock.flock(handle.fileno(), platform_lock.LOCK_UN)
+            except OSError:
+                pass
+        handle.close()
+
+
+@contextmanager
+def state_file_lock():
+    """Serialize update-state read/modify/write operations across services."""
+    with _LOCAL_STATE_LOCK:
+        with interprocess_file_lock(STATE_LOCK_FILE) as acquired:
+            if not acquired:
+                raise RuntimeError("Could not lock update state")
+            yield
+
+
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2, sort_keys=True))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def read_json(path: Path, fallback: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -176,7 +289,9 @@ def base_state(**updates: Any) -> dict[str, Any]:
         "checked_at": None,
         "pending_restart": False,
         "reboot_requested": False,
+        "download_in_progress": False,
         "update_in_progress": False,
+        "update_phase": "idle",
         "applied_update": False,
         "rollback_in_progress": False,
         "rollback_reboot_requested": False,
@@ -188,13 +303,26 @@ def base_state(**updates: Any) -> dict[str, Any]:
 
 
 ACTIVE_UPDATE_STATE_FIELDS = [
+    "download_in_progress",
+    "download_started_at",
     "update_in_progress",
+    "update_phase",
+    "update_session_id",
     "update_started_at",
+    "update_completed_at",
+    "update_failed_at",
     "update_candidate_version",
     "update_candidate_tag",
     "pending_restart",
     "reboot_requested",
     "reboot_requested_at",
+    "reboot_requested_boot_id",
+    "update_applied_boot_id",
+    "post_reboot_pending",
+    "post_reboot_waiting_for_restart",
+    "post_reboot_attempt",
+    "post_reboot_attempts_total",
+    "post_reboot_checked_at",
     "applied_update",
     "updated_at",
     "backup_path",
@@ -209,20 +337,77 @@ ACTIVE_UPDATE_STATE_FIELDS = [
     "rollback_in_progress",
     "rollback_reboot_requested",
     "rollback_reboot_requested_at",
+    "rollback_reboot_requested_boot_id",
+    "rollback_applied_boot_id",
+    "post_rollback_pending",
+    "rollback_post_reboot_attempt",
+    "rollback_post_reboot_attempts_total",
+    "post_rollback_checked_at",
     "rollback_backup_path",
     "broken_releases",
 ]
 
 
+ACTIVE_UPDATE_PHASES = {
+    "downloading",
+    "preparing",
+    "applying",
+    "awaiting_reboot",
+    "verifying",
+    "rolling_back",
+    "awaiting_rollback_reboot",
+    "verifying_rollback",
+}
+
+
 def active_update_state(state: dict[str, Any]) -> bool:
     """Return True while an update/rollback still needs its reboot flow."""
     return bool(
-        state.get("update_in_progress")
+        state.get("download_in_progress")
+        or state.get("update_in_progress")
         or state.get("pending_restart")
         or state.get("reboot_requested")
         or state.get("rollback_in_progress")
         or state.get("rollback_reboot_requested")
+        or state.get("post_reboot_pending")
+        or state.get("post_rollback_pending")
+        or state.get("update_phase") in ACTIVE_UPDATE_PHASES
     )
+
+
+def can_start_background_update(
+    state: dict[str, Any],
+    *,
+    operation_slot_available: bool,
+    current_time: float | None = None,
+    startup_grace_seconds: int = 30,
+) -> bool:
+    """Allow a new request unless a live/non-recoverable lifecycle is active."""
+    if not active_update_state(state):
+        return True
+
+    applying_only = bool(
+        (
+            state.get("download_in_progress")
+            or state.get("update_in_progress")
+            or state.get("update_phase") in {"downloading", "preparing", "applying"}
+        )
+        and not state.get("pending_restart")
+        and not state.get("reboot_requested")
+        and not state.get("rollback_in_progress")
+        and not state.get("rollback_reboot_requested")
+        and not state.get("post_reboot_pending")
+        and not state.get("post_rollback_pending")
+    )
+    if not applying_only or not operation_slot_available:
+        return False
+
+    try:
+        last_activity = float(state.get("state_updated_at") or state.get("update_started_at") or 0)
+    except (TypeError, ValueError):
+        last_activity = 0
+    now = time.time() if current_time is None else current_time
+    return now - last_activity >= startup_grace_seconds
 
 
 def preserved_active_update_fields(previous: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -242,29 +427,46 @@ def preserved_active_update_fields(previous: dict[str, Any], updates: dict[str, 
 
 
 def replace_state(*, preserve_active_update: bool = True, **updates: Any) -> dict[str, Any]:
-    previous = read_json(STATE_FILE, {}) if preserve_active_update else {}
-    state = base_state(**updates)
-    state.update(preserved_active_update_fields(previous, updates))
-    atomic_write_json(STATE_FILE, state)
-    return state
+    with state_file_lock():
+        previous = read_json(STATE_FILE, {})
+        state = base_state(**updates)
+        if preserve_active_update:
+            state.update(preserved_active_update_fields(previous, updates))
+        try:
+            previous_revision = int(previous.get("state_revision") or 0)
+        except (TypeError, ValueError):
+            previous_revision = 0
+        state["state_revision"] = previous_revision + 1
+        state["state_updated_at"] = now_ts()
+        atomic_write_json(STATE_FILE, state)
+        return state
 
 
 def write_state(**updates: Any) -> dict[str, Any]:
-    state = read_json(STATE_FILE, {})
-    state.update({"updater_build": UPDATER_BUILD, "installed_version": installed_version()})
-    state.update(updates)
-    state.setdefault("latest_version", None)
-    state.setdefault("available", False)
-    state.setdefault("pending_restart", False)
-    state.setdefault("reboot_requested", False)
-    state.setdefault("update_in_progress", False)
-    state.setdefault("applied_update", False)
-    state.setdefault("rollback_in_progress", False)
-    state.setdefault("rollback_reboot_requested", False)
-    state.setdefault("last_error", None)
-    state.setdefault("broken_releases", [])
-    atomic_write_json(STATE_FILE, state)
-    return state
+    with state_file_lock():
+        state = read_json(STATE_FILE, {})
+        try:
+            previous_revision = int(state.get("state_revision") or 0)
+        except (TypeError, ValueError):
+            previous_revision = 0
+        state.update({"updater_build": UPDATER_BUILD, "installed_version": installed_version()})
+        state.update(updates)
+        state["state_revision"] = previous_revision + 1
+        state["state_updated_at"] = now_ts()
+        state.setdefault("latest_version", None)
+        state.setdefault("available", False)
+        state.setdefault("pending_restart", False)
+        state.setdefault("reboot_requested", False)
+        state.setdefault("download_in_progress", False)
+        state.setdefault("update_in_progress", False)
+        state.setdefault("update_phase", "idle")
+        state.setdefault("applied_update", False)
+        state.setdefault("rollback_in_progress", False)
+        state.setdefault("rollback_reboot_requested", False)
+        state.setdefault("last_error", None)
+        state.setdefault("broken_releases", [])
+        atomic_write_json(STATE_FILE, state)
+        return state
 
 
 def load_config() -> dict[str, Any]:
@@ -549,7 +751,7 @@ def reusable_download_fields(previous_state: dict[str, Any], zipball_url: str | 
     return fields
 
 
-def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
+def check_for_update(*, stage_download: bool = True) -> dict[str, Any]:
     cfg = load_config()
     updates = cfg.get("updates", {})
     repo = updates.get("repo", "")
@@ -557,15 +759,6 @@ def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
     current = installed_version()
     previous_state = read_json(STATE_FILE, {})
     broken_releases = previous_state.get("broken_releases") or []
-    active_update_fields = {}
-    if keep_update_in_progress:
-        active_update_fields = {
-            "update_in_progress": True,
-            "pending_restart": False,
-            "reboot_requested": False,
-            "update_started_at": previous_state.get("update_started_at") or now_ts(),
-        }
-
     try:
         release = github_latest_release(repo, channel=channel)
         latest = str(release.get("tag_name") or "").lstrip("v")
@@ -592,7 +785,6 @@ def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
         if is_broken:
             return replace_state(
                 **common,
-                **active_update_fields,
                 available=False,
                 broken_release_skipped=True,
                 last_error=f"Latest release {tag or latest} is marked as broken after a failed update; waiting for a newer release.",
@@ -600,12 +792,11 @@ def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
 
         state = replace_state(
             **common,
-            **active_update_fields,
             available=available,
             broken_release_skipped=False,
             last_error=None,
         )
-        if available:
+        if available and stage_download:
             state = stage_release_download(state)
         return state
     except Exception as exc:
@@ -614,7 +805,6 @@ def check_for_update(keep_update_in_progress: bool = False) -> dict[str, Any]:
             checked_at=now_ts(),
             available=False,
             broken_releases=broken_releases,
-            **active_update_fields,
             last_error=str(exc),
         )
 
@@ -657,8 +847,6 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
             latest_tag=tag,
             available=False,
             update_in_progress=bool(previous_state.get("update_in_progress")),
-            pending_restart=False,
-            reboot_requested=False,
             checked_at=now_ts(),
             last_error=f"Release {tag or latest} is marked as broken after a failed update; reinstall skipped.",
         )
@@ -677,8 +865,7 @@ def prepare_reinstall_current_release() -> dict[str, Any]:
         force_reinstall=True,
         reinstall_requested_at=now_ts(),
         update_in_progress=bool(previous_state.get("update_in_progress")),
-        pending_restart=False,
-        reboot_requested=False,
+        update_phase="applying" if previous_state.get("update_in_progress") else previous_state.get("update_phase", "idle"),
         update_started_at=previous_state.get("update_started_at") or now_ts(),
         **download_fields,
         last_error=None,
@@ -812,25 +999,41 @@ def copy_tree_contents(src: Path, dst: Path, preserve: list[str]) -> list[str]:
     return sorted(copied_top)
 
 
-def backup_ignore(directory: str, names: list[str]) -> set[str]:
+def backup_ignore(directory: str, names: list[str], preserve: list[str] | None = None) -> set[str]:
     ignored = set(shutil.ignore_patterns(
-        "venv", "__pycache__", ".git", ".pytest_cache", "node_modules", "runtime/update_state.json",
+        "venv", "__pycache__", ".git", ".pytest_cache", "node_modules",
     )(directory, names))
+    preserve = preserve or []
     for name in names:
         if name in ignored:
             continue
         path = Path(directory) / name
+        try:
+            rel = path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+        except ValueError:
+            rel = ""
+        # Preserved data remains live throughout both update and rollback, so
+        # copying it into the code backup only wastes time and risks restoring
+        # stale runtime state later.
+        if rel and should_preserve(rel, preserve):
+            ignored.add(name)
+            continue
         if is_special_file(path):
             ignored.add(name)
     return ignored
 
 
-def backup_current() -> Path:
+def backup_current(preserve: list[str] | None = None) -> Path:
     cleanup_special_files(PROJECT_ROOT)
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = BACKUP_ROOT / f"mementoframe-{installed_version()}-{stamp}"
-    shutil.copytree(PROJECT_ROOT, dest, ignore=backup_ignore, ignore_dangling_symlinks=True)
+    shutil.copytree(
+        PROJECT_ROOT,
+        dest,
+        ignore=lambda directory, names: backup_ignore(directory, names, preserve),
+        ignore_dangling_symlinks=True,
+    )
     return dest
 
 
@@ -876,30 +1079,6 @@ def prune_old_backups(keep: int = BACKUP_RETENTION_COUNT) -> dict[str, Any]:
         "backups_deleted": deleted,
         "backup_prune_failed": failed,
     }
-
-
-def restore_preserved_from_backup(backup: Path, preserve: list[str]) -> list[str]:
-    restored: list[str] = []
-    for rel in preserve:
-        rel = rel.strip("/")
-        if not rel:
-            continue
-        src = backup / rel
-        dst = PROJECT_ROOT / rel
-        if not src.exists() and not src.is_symlink():
-            continue
-        if dst.exists() or dst.is_symlink():
-            if dst.is_dir() and not dst.is_symlink():
-                shutil.rmtree(dst)
-            else:
-                dst.unlink()
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if src.is_dir() and not src.is_symlink():
-            shutil.copytree(src, dst, symlinks=True, ignore_dangling_symlinks=True)
-        else:
-            shutil.copy2(src, dst, follow_symlinks=False)
-        restored.append(rel)
-    return restored
 
 
 def find_release_app_root(extract_dir: Path) -> Path:
@@ -1044,25 +1223,45 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
     cfg = load_config()
     preserve = list(cfg.get("updates", {}).get("preserve") or DEFAULT_PRESERVE)
     state = read_json(STATE_FILE, {})
-    has_reinstall_archive = allow_reinstall and bool(cached_archive_for_state(state))
-    if not has_reinstall_archive and (not state.get("zipball_url") or not state.get("available")):
-        state = check_for_update(keep_update_in_progress=True)
-    if has_reinstall_archive:
-        state = write_state(available=True, force_reinstall=True, last_error=None)
-    if not state.get("available") and not allow_reinstall:
-        return write_state(update_in_progress=False, applied_update=False)
-    if not state.get("zipball_url"):
-        raise RuntimeError("No release archive URL is available for update installation.")
+    if state.get("pending_restart") or state.get("reboot_requested"):
+        return state
 
-    latest = state.get("latest_version") or state.get("latest_tag") or "unknown"
-    write_state(
-        update_in_progress=True,
-        update_started_at=now_ts(),
-        update_candidate_version=str(state.get("latest_version") or "").lstrip("vV") or None,
-        update_candidate_tag=state.get("latest_tag"),
+    # Track release discovery, download, and preparation without activating the
+    # display overlay. update_in_progress is latched only immediately before we
+    # begin changing the installed application files below.
+    state = write_state(
+        download_in_progress=True,
+        update_in_progress=False,
+        update_phase="downloading",
+        update_session_id=state.get("update_session_id") or f"{now_ts()}-{os.getpid()}",
+        download_started_at=state.get("download_started_at") or now_ts(),
+        update_started_at=None,
+        update_completed_at=None,
+        update_failed_at=None,
+        pending_restart=False,
+        reboot_requested=False,
+        reboot_requested_at=None,
+        reboot_requested_boot_id=None,
+        update_applied_boot_id=None,
+        applied_update=False,
+        post_reboot_pending=False,
+        post_reboot_waiting_for_restart=False,
+        post_reboot_attempt=None,
+        post_reboot_attempts_total=None,
+        post_reboot_checked_at=None,
+        rollback_required=False,
+        rollback_applied=False,
+        rollback_in_progress=False,
+        rollback_reboot_requested=False,
+        rollback_reboot_requested_at=None,
+        rollback_reboot_requested_boot_id=None,
+        rollback_applied_boot_id=None,
+        post_rollback_pending=False,
+        rollback_post_reboot_attempt=None,
+        rollback_post_reboot_attempts_total=None,
+        post_rollback_checked_at=None,
         last_error=None,
     )
-
     backup: Path | None = None
     sha256 = ""
     release_root_str = None
@@ -1074,23 +1273,42 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
     service_repair: dict[str, Any] | None = None
 
     try:
+        has_reinstall_archive = allow_reinstall and bool(cached_archive_for_state(state))
+        if not has_reinstall_archive and (not state.get("zipball_url") or not state.get("available")):
+            state = check_for_update(stage_download=False)
+        if has_reinstall_archive:
+            state = write_state(available=True, force_reinstall=True, last_error=None)
+        if not state.get("available") and not allow_reinstall:
+            return write_state(
+                download_in_progress=False,
+                update_in_progress=False,
+                update_phase="idle",
+                update_completed_at=now_ts(),
+                applied_update=False,
+            )
+        if not state.get("zipball_url"):
+            raise RuntimeError("No release archive URL is available for update installation.")
+
+        latest = state.get("latest_version") or state.get("latest_tag") or "unknown"
+        state = write_state(
+            download_in_progress=True,
+            update_in_progress=False,
+            update_phase="downloading",
+            update_candidate_version=str(state.get("latest_version") or "").lstrip("vV") or None,
+            update_candidate_tag=state.get("latest_tag"),
+            last_error=None,
+        )
+        state = stage_release_download(state)
+        cached_archive = cached_archive_for_state(state)
+        if not cached_archive:
+            raise RuntimeError("The release archive was not staged successfully.")
+
         with tempfile.TemporaryDirectory(prefix="mementoframe-update-") as td:
             tmp = Path(td)
             archive = tmp / "release.zip"
-            cached_archive = cached_archive_for_state(state)
-            if cached_archive:
-                shutil.copy2(cached_archive, archive)
-                sha256 = state.get("downloaded_sha256") or file_sha256(archive)
-            else:
-                state = stage_release_download(state)
-                cached_archive = cached_archive_for_state(state)
-                if cached_archive:
-                    shutil.copy2(cached_archive, archive)
-                    sha256 = state.get("downloaded_sha256") or file_sha256(archive)
-                else:
-                    release_assets: list[dict[str, Any]] = state.get("release_assets") or []
-                    expected_sha256 = fetch_release_checksum(release_assets, "release.zip")
-                    sha256 = download_file(str(state["zipball_url"]), archive, expected_sha256=expected_sha256)
+            state = write_state(update_phase="preparing")
+            shutil.copy2(cached_archive, archive)
+            sha256 = state.get("downloaded_sha256") or file_sha256(archive)
             extract_dir = tmp / "extract"
             extract_dir.mkdir()
             with zipfile.ZipFile(archive) as zf:
@@ -1101,10 +1319,22 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
 
             release_root = find_release_app_root(extract_dir)
             release_root_str = str(release_root)
+
+            # Everything needed for the update is now local and validated.
+            # From this write onward the overlay remains visible through the
+            # reboot and post-reboot health verification lifecycle.
+            state = write_state(
+                download_in_progress=False,
+                update_in_progress=True,
+                update_phase="applying",
+                update_started_at=now_ts(),
+                update_candidate_version=str(state.get("latest_version") or "").lstrip("vV") or None,
+                update_candidate_tag=state.get("latest_tag"),
+                last_error=None,
+            )
             removed_special_files = cleanup_special_files(PROJECT_ROOT)
-            backup = backup_current()
+            backup = backup_current(preserve)
             copied = copy_tree_contents(release_root, PROJECT_ROOT, preserve)
-            restored_preserved = restore_preserved_from_backup(backup, preserve)
             refreshed_release_files = refresh_release_managed_files(release_root)
             fixed_permissions = repair_runtime_permissions()
             install_requirements()
@@ -1116,9 +1346,12 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
             installed_version=installed_version(),
             latest_version=str(latest).lstrip("v"),
             available=False,
+            download_in_progress=False,
             update_in_progress=True,
+            update_phase="awaiting_reboot",
             pending_restart=True,
-            reboot_requested=True,
+            reboot_requested=False,
+            update_applied_boot_id=system_boot_id(),
             applied_update=True,
             updated_at=now_ts(),
             downloaded_sha256=sha256,
@@ -1133,15 +1366,40 @@ def apply_update(allow_reinstall: bool = False) -> dict[str, Any]:
             last_error=None if service_repair_ok else "Update applied, but systemd service repair failed.",
         )
     except Exception as exc:
-        write_state(update_in_progress=False, last_error=str(exc))
+        write_state(
+            download_in_progress=False,
+            update_in_progress=False,
+            update_phase="failed",
+            update_failed_at=now_ts(),
+            last_error=str(exc),
+        )
         raise
 
 
-def request_reboot() -> None:
-    write_state(pending_restart=True, reboot_requested=True, reboot_requested_at=now_ts())
+def request_reboot() -> dict[str, Any]:
+    state = write_state(
+        download_in_progress=False,
+        update_in_progress=True,
+        update_phase="awaiting_reboot",
+        pending_restart=True,
+        reboot_requested=True,
+        reboot_requested_at=now_ts(),
+        reboot_requested_boot_id=system_boot_id(),
+        reboot_failed_at=None,
+    )
     proc = sudo_cmd("reboot", timeout=10)
     if proc.returncode != 0:
-        print(f"⚠️ reboot failed: {proc.stderr.strip() or proc.stdout.strip()}")
+        message = proc.stderr.strip() or proc.stdout.strip() or f"reboot exited with {proc.returncode}"
+        state = write_state(
+            update_in_progress=True,
+            update_phase="awaiting_reboot",
+            pending_restart=True,
+            reboot_requested=True,
+            reboot_failed_at=now_ts(),
+            last_error=f"Update installed, but reboot failed: {message}",
+        )
+        print(f"WARNING: reboot failed: {message}")
+    return state
 
 
 def parse_hm(value: str) -> tuple[int, int]:
@@ -1175,14 +1433,10 @@ def in_auto_update_window(cfg: dict[str, Any], window_minutes: int = 60) -> bool
 def autoupdate(no_reboot: bool = False) -> dict[str, Any]:
     """Run updater startup workflow, then hourly auto-update behavior.
 
-    Every time the updater service starts it first repairs missing systemd units
-    if possible and validates a pending post-update reboot if one exists. If
-    health is OK it then continues with normal auto-update behavior.
+    Every time the updater service starts it first validates any pending reboot.
+    Once that lifecycle is complete it repairs systemd units and continues with
+    normal auto-update behavior.
     """
-    repair = repair_systemd_services_if_needed()
-    if not repair.get("ok"):
-        return write_state(auto_update_skipped="service_repair_failed", last_autoupdate_check=now_ts())
-
     current_state = read_json(STATE_FILE, {})
     if current_state.get("rollback_reboot_requested"):
         rollback_check = post_rollback_check()
@@ -1197,13 +1451,30 @@ def autoupdate(no_reboot: bool = False) -> dict[str, Any]:
             return check_result
         # Health is OK, so continue with normal check/update behavior below.
 
+    current_state = read_json(STATE_FILE, {})
+    if (
+        current_state.get("download_in_progress")
+        or current_state.get("update_in_progress")
+        or current_state.get("update_phase") in {"downloading", "preparing", "applying"}
+    ):
+        if can_start_background_update(current_state, operation_slot_available=True):
+            write_state(
+                download_in_progress=False,
+                update_in_progress=False,
+                update_phase="interrupted",
+                update_interrupted_at=now_ts(),
+                last_error="Previous update process stopped before requesting a reboot; retrying safely.",
+            )
+        else:
+            return write_state(auto_update_skipped="update_in_progress", last_autoupdate_check=now_ts())
+
+    repair = repair_systemd_services_if_needed()
+    if not repair.get("ok"):
+        return write_state(auto_update_skipped="service_repair_failed", last_autoupdate_check=now_ts())
+
     cfg = load_config()
     if not cfg.get("updates", {}).get("auto_update"):
         return write_state(auto_update_skipped="disabled", last_autoupdate_check=now_ts())
-
-    current_state = read_json(STATE_FILE, {})
-    if current_state.get("update_in_progress"):
-        return write_state(auto_update_skipped="update_in_progress", last_autoupdate_check=now_ts())
 
     install_window = in_auto_update_window(cfg)
     target_minute = auto_update_target_minute(cfg)
@@ -1212,7 +1483,9 @@ def autoupdate(no_reboot: bool = False) -> dict[str, Any]:
     if install_window and cached_state.get("available") and cached_archive_for_state(cached_state):
         state = cached_state
     else:
-        state = check_for_update()
+        # Downloads are intentionally silent. apply_update() activates the
+        # overlay only after the archive is local, validated, and extracted.
+        state = check_for_update(stage_download=not install_window)
 
     state = write_state(
         auto_update_skipped=None,
@@ -1243,6 +1516,9 @@ def url_ok(url: str, timeout: int = 8) -> bool:
 def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> dict[str, Any]:
     """Restore the previous app files and mark the failed release as broken."""
     write_state(
+        update_phase="rolling_back",
+        post_reboot_pending=False,
+        post_reboot_waiting_for_restart=False,
         rollback_in_progress=True,
         rollback_required=True,
         rollback_started_at=now_ts(),
@@ -1254,11 +1530,14 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
     if not backup_value:
         return write_state(
             broken_releases=broken_releases,
+            download_in_progress=False,
             rollback_required=True,
             rollback_applied=False,
             rollback_in_progress=False,
             rollback_reboot_requested=False,
             update_in_progress=False,
+            update_phase="failed",
+            update_failed_at=now_ts(),
             pending_restart=False,
             reboot_requested=False,
             last_error=f"{reason}; rollback failed because no backup_path was recorded.",
@@ -1268,11 +1547,14 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
     if not backup.exists() or not backup.is_dir():
         return write_state(
             broken_releases=broken_releases,
+            download_in_progress=False,
             rollback_required=True,
             rollback_applied=False,
             rollback_in_progress=False,
             rollback_reboot_requested=False,
             update_in_progress=False,
+            update_phase="failed",
+            update_failed_at=now_ts(),
             pending_restart=False,
             reboot_requested=False,
             last_error=f"{reason}; rollback failed because backup path does not exist: {backup}",
@@ -1294,9 +1576,12 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
         return write_state(
             installed_version=installed_version(),
             available=False,
+            download_in_progress=False,
             update_in_progress=True,
+            update_phase="awaiting_rollback_reboot",
             pending_restart=True,
-            reboot_requested=True,
+            reboot_requested=False,
+            rollback_applied_boot_id=system_boot_id(),
             applied_update=False,
             rollback_required=False,
             rollback_applied=True,
@@ -1313,11 +1598,14 @@ def restore_backup_after_failed_update(state: dict[str, Any], reason: str) -> di
     except Exception as exc:
         return write_state(
             broken_releases=broken_releases,
+            download_in_progress=False,
             rollback_required=True,
             rollback_applied=False,
             rollback_in_progress=False,
             rollback_reboot_requested=False,
             update_in_progress=False,
+            update_phase="failed",
+            update_failed_at=now_ts(),
             pending_restart=False,
             reboot_requested=False,
             last_error=f"{reason}; rollback failed: {exc}",
@@ -1329,9 +1617,22 @@ def post_reboot_check() -> dict[str, Any]:
     if not state.get("pending_restart") and not state.get("reboot_requested"):
         return write_state(post_reboot_checked_at=now_ts())
 
+    if not boot_changed_since_update(state):
+        return write_state(
+            update_in_progress=True,
+            update_phase="awaiting_reboot",
+            pending_restart=True,
+            post_reboot_pending=False,
+            post_reboot_waiting_for_restart=True,
+        )
+
     last_failed_urls: list[str] = []
     for attempt in range(1, HEALTH_CHECK_ATTEMPTS + 1):
         write_state(
+            update_in_progress=True,
+            update_phase="verifying",
+            post_reboot_pending=True,
+            post_reboot_waiting_for_restart=False,
             post_reboot_attempt=attempt,
             post_reboot_attempts_total=HEALTH_CHECK_ATTEMPTS,
             post_reboot_checked_at=now_ts(),
@@ -1344,9 +1645,14 @@ def post_reboot_check() -> dict[str, Any]:
             if not failed_urls:
                 prune_result = prune_old_backups()
                 return write_state(
+                    download_in_progress=False,
                     update_in_progress=False,
+                    update_phase="complete",
+                    update_completed_at=now_ts(),
                     pending_restart=False,
                     reboot_requested=False,
+                    post_reboot_pending=False,
+                    post_reboot_waiting_for_restart=False,
                     rollback_required=False,
                     rollback_applied=False,
                     post_reboot_attempt=attempt,
@@ -1369,7 +1675,9 @@ def post_reboot_check() -> dict[str, Any]:
             rollback_in_progress=True,
             rollback_reboot_requested=True,
             rollback_reboot_requested_at=now_ts(),
+            rollback_reboot_requested_boot_id=system_boot_id(),
             update_in_progress=True,
+            update_phase="awaiting_rollback_reboot",
             pending_restart=True,
             reboot_requested=True,
             last_error=f"{result.get('last_error')}; rebooting into restored version.",
@@ -1377,8 +1685,10 @@ def post_reboot_check() -> dict[str, Any]:
         proc = sudo_cmd("reboot", timeout=10)
         if proc.returncode != 0:
             return write_state(
-                rollback_in_progress=False,
-                rollback_reboot_requested=False,
+                update_phase="awaiting_rollback_reboot",
+                rollback_in_progress=True,
+                rollback_reboot_requested=True,
+                reboot_failed_at=now_ts(),
                 last_error=f"{result.get('last_error')}; reboot after rollback failed: {proc.stderr.strip() or proc.stdout.strip()}",
             )
         return write_state(rollback_reboot_requested=True)
@@ -1392,10 +1702,23 @@ def post_rollback_check() -> dict[str, Any]:
     if not state.get("rollback_reboot_requested"):
         return write_state(post_rollback_checked_at=now_ts())
 
+    if not boot_changed_since_update(state, rollback=True):
+        return write_state(
+            update_in_progress=True,
+            update_phase="awaiting_rollback_reboot",
+            pending_restart=True,
+            rollback_in_progress=True,
+            rollback_reboot_requested=True,
+            post_rollback_pending=False,
+        )
+
     last_failed_urls: list[str] = []
     for attempt in range(1, HEALTH_CHECK_ATTEMPTS + 1):
         write_state(
+            update_in_progress=True,
+            update_phase="verifying_rollback",
             rollback_in_progress=True,
+            post_rollback_pending=True,
             rollback_post_reboot_attempt=attempt,
             rollback_post_reboot_attempts_total=HEALTH_CHECK_ATTEMPTS,
             post_rollback_checked_at=now_ts(),
@@ -1407,12 +1730,20 @@ def post_rollback_check() -> dict[str, Any]:
             failed_urls = [u for u in HEALTH_URLS if not url_ok(u)]
             if not failed_urls:
                 return write_state(
+                    download_in_progress=False,
                     update_in_progress=False,
+                    update_phase="complete",
+                    update_completed_at=now_ts(),
                     pending_restart=False,
                     reboot_requested=False,
+                    post_reboot_pending=False,
+                    post_reboot_waiting_for_restart=False,
                     rollback_required=False,
                     rollback_in_progress=False,
                     rollback_reboot_requested=False,
+                    post_rollback_pending=False,
+                    rollback_post_reboot_attempt=None,
+                    rollback_post_reboot_attempts_total=None,
                     rollback_verified_at=now_ts(),
                     rollback_verified_version=installed_version(),
                     last_successful_boot_version=installed_version(),
@@ -1422,9 +1753,18 @@ def post_rollback_check() -> dict[str, Any]:
             time.sleep(HEALTH_POLL_SECONDS)
 
     return write_state(
+        download_in_progress=False,
+        update_in_progress=False,
+        update_phase="failed",
+        update_failed_at=now_ts(),
+        post_reboot_pending=False,
+        post_reboot_waiting_for_restart=False,
         rollback_in_progress=False,
         rollback_reboot_requested=False,
         rollback_required=True,
+        post_rollback_pending=False,
+        rollback_post_reboot_attempt=None,
+        rollback_post_reboot_attempts_total=None,
         post_rollback_checked_at=now_ts(),
         last_error=(
             "Rollback verification failed after "
@@ -1519,7 +1859,25 @@ def main() -> int:
     parser.add_argument("--no-reboot", action="store_true", help="Do not reboot after update/autoupdate")
     args = parser.parse_args()
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    operation_lock = None
     try:
+        locked_commands = {
+            "install", "check", "update", "reinstall", "autoupdate",
+            "post-reboot-check", "post-rollback-check", "reboot",
+            "repair-services", "prune-backups",
+        }
+        if args.command in locked_commands:
+            operation_lock = interprocess_file_lock(
+                UPDATER_LOCK_FILE,
+                blocking=args.command != "autoupdate",
+            )
+            acquired = operation_lock.__enter__()
+            if not acquired:
+                state = read_json(STATE_FILE, {})
+                state["auto_update_skipped"] = "updater_busy"
+                print_json(state)
+                return 0
+
         if args.command == "install":
             print_json(install())
         elif args.command == "status":
@@ -1557,10 +1915,28 @@ def main() -> int:
             print_json(read_json(STATE_FILE, {}))
         return 0
     except Exception as exc:
-        write_state(update_in_progress=False, last_error=str(exc))
+        current_state = read_json(STATE_FILE, {})
+        if active_update_state(current_state) and (
+            current_state.get("pending_restart")
+            or current_state.get("reboot_requested")
+            or current_state.get("rollback_in_progress")
+            or current_state.get("rollback_reboot_requested")
+        ):
+            write_state(last_error=str(exc))
+        else:
+            write_state(
+                download_in_progress=False,
+                update_in_progress=False,
+                update_phase="failed",
+                update_failed_at=now_ts(),
+                last_error=str(exc),
+            )
         print_json(read_json(STATE_FILE, {}))
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if operation_lock is not None:
+            operation_lock.__exit__(None, None, None)
 
 
 if __name__ == "__main__":

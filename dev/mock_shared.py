@@ -1366,7 +1366,9 @@ def default_update_state() -> dict[str, Any]:
         "mock_pending_update": False,
         "pending_restart": False,
         "reboot_requested": False,
+        "download_in_progress": False,
         "update_in_progress": False,
+        "update_phase": "idle",
         "post_reboot_pending": False,
         "rollback_in_progress": False,
         "rollback_reboot_requested": False,
@@ -1378,10 +1380,12 @@ def default_update_state() -> dict[str, Any]:
         "checked_at": None,
         "last_checked": None,
         "last_error": None,
+        "state_revision": 0,
         "mock": True,
     }
 
 
+MOCK_DOWNLOAD_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_DOWNLOAD_SECONDS", "3"))
 MOCK_INSTALL_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_INSTALL_SECONDS", "90"))
 MOCK_REBOOT_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_REBOOT_SECONDS", "3"))
 MOCK_VERIFICATION_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_VERIFY_SECONDS", "5"))
@@ -1390,7 +1394,9 @@ MOCK_VERIFICATION_DURATION_SECONDS = int(os.getenv("MEMENTOFRAME_MOCK_VERIFY_SEC
 def _clear_mock_update_lifecycle(state: dict[str, Any], now: float) -> None:
     """Finish a successful simulated post-reboot health check."""
     state.update({
+        "download_in_progress": False,
         "update_in_progress": False,
+        "update_phase": "complete",
         "pending_restart": False,
         "reboot_requested": False,
         "post_reboot_pending": False,
@@ -1399,6 +1405,8 @@ def _clear_mock_update_lifecycle(state: dict[str, Any], now: float) -> None:
         "last_error": None,
     })
     for key in (
+        "_mock_download_complete_at",
+        "_mock_download_started_at",
         "_mock_install_complete_at",
         "_mock_install_started_at",
         "_mock_reboot_complete_at",
@@ -1413,18 +1421,32 @@ def _clear_mock_update_lifecycle(state: dict[str, Any], now: float) -> None:
 def _advance_mock_update_lifecycle(state: dict[str, Any]) -> dict[str, Any]:
     """Advance the mock through install, reboot, and verification phases.
 
-    The real updater writes update_in_progress=True to runtime/update_state.json
-    while it is running, requests a reboot after installation, then performs a
-    post-reboot health check before clearing the overlay. The mock follows the
-    same state contract on wall-clock deadlines without rebooting the computer.
+    The real updater keeps downloads hidden, writes update_in_progress=True
+    when installation begins, requests a reboot after installation, then runs
+    a post-reboot health check before clearing the overlay. The mock follows
+    the same state contract on wall-clock deadlines without rebooting.
     """
     now = time.time()
     changed = False
+
+    download_complete_at = float(state.get("_mock_download_complete_at") or 0)
+    if state.get("download_in_progress") and download_complete_at and now >= download_complete_at:
+        state.update({
+            "download_in_progress": False,
+            "update_in_progress": True,
+            "update_phase": "applying",
+            "_mock_install_started_at": now,
+            "_mock_install_complete_at": now + MOCK_INSTALL_DURATION_SECONDS,
+        })
+        state.pop("_mock_download_complete_at", None)
+        state.pop("_mock_download_started_at", None)
+        changed = True
 
     install_complete_at = float(state.get("_mock_install_complete_at") or 0)
     if state.get("update_in_progress") and install_complete_at and now >= install_complete_at:
         state.update({
             "update_in_progress": True,
+            "update_phase": "awaiting_reboot",
             "pending_restart": True,
             "reboot_requested": True,
             "reboot_requested_at": now,
@@ -1443,6 +1465,7 @@ def _advance_mock_update_lifecycle(state: dict[str, Any]) -> dict[str, Any]:
     reboot_complete_at = float(state.get("_mock_reboot_complete_at") or 0)
     if state.get("reboot_requested") and reboot_complete_at and now >= reboot_complete_at:
         state.update({
+            "update_phase": "verifying",
             "post_reboot_pending": True,
             "post_reboot_attempt": 1,
             "post_reboot_attempts_total": 1,
@@ -1463,9 +1486,11 @@ def _advance_mock_update_lifecycle(state: dict[str, Any]) -> dict[str, Any]:
     active_without_deadline = (
         (
             state.get("update_in_progress")
+            or state.get("download_in_progress")
             or state.get("pending_restart")
             or state.get("reboot_requested")
         )
+        and not state.get("_mock_download_complete_at")
         and not state.get("_mock_install_complete_at")
         and not state.get("_mock_reboot_complete_at")
         and not state.get("_mock_verification_complete_at")
@@ -1475,7 +1500,7 @@ def _advance_mock_update_lifecycle(state: dict[str, Any]) -> dict[str, Any]:
         changed = True
 
     if changed:
-        atomic_write_json(UPDATE_STATE_FILE, state)
+        save_update_state(state)
 
     return state
 
@@ -1491,7 +1516,11 @@ def load_update_state() -> dict[str, Any]:
 
     state = _advance_mock_update_lifecycle(state)
 
-    if bool(state.get("mock_pending_update")) and not state.get("update_in_progress"):
+    if (
+        bool(state.get("mock_pending_update"))
+        and not state.get("download_in_progress")
+        and not state.get("update_in_progress")
+    ):
         state.update({
             "available": True,
             "latest_version": state.get("latest_version") or "9.9.9-mock",
@@ -1503,6 +1532,12 @@ def load_update_state() -> dict[str, Any]:
 
 
 def save_update_state(state: dict[str, Any]) -> None:
+    try:
+        revision = int(state.get("state_revision") or 0)
+    except (TypeError, ValueError):
+        revision = 0
+    state["state_revision"] = revision + 1
+    state["state_updated_at"] = time.time()
     atomic_write_json(UPDATE_STATE_FILE, state)
 
 
@@ -1563,26 +1598,30 @@ def check_for_updates_mock() -> dict[str, Any]:
 def mock_install_update_blocked() -> dict[str, Any]:
     """Simulate the real updater lifecycle without modifying project files.
 
-    The mock writes update_in_progress=True immediately, leaves it in place for
-    long enough for the real frontend polling loop to observe it, then simulates
-    the production reboot and post-reboot verification phases.
+    The mock first simulates an invisible download. It activates the overlay
+    only when the install begins, then follows the production reboot and
+    post-reboot verification phases.
     """
     now = time.time()
     state = load_update_state()
     state.update({
         "available": False,
         "mock_pending_update": False,
-        "update_in_progress": True,
+        "download_in_progress": True,
+        "update_in_progress": False,
+        "update_phase": "downloading",
         "pending_restart": False,
         "reboot_requested": False,
         "post_reboot_pending": False,
         "applied_update": False,
         "last_error": None,
-        "_mock_install_started_at": now,
-        "_mock_install_complete_at": now + MOCK_INSTALL_DURATION_SECONDS,
+        "_mock_download_started_at": now,
+        "_mock_download_complete_at": now + MOCK_DOWNLOAD_DURATION_SECONDS,
     })
     for key in (
         "_mock_install_reads_remaining",
+        "_mock_install_started_at",
+        "_mock_install_complete_at",
         "_mock_reboot_complete_at",
         "_mock_verification_complete_at",
         "reboot_requested_at",
@@ -1613,5 +1652,5 @@ def mock_autoupdate() -> dict[str, Any]:
         })
         save_update_state(state)
 
-    # Delegate to the install simulator (sets update_in_progress + auto-clears).
+    # Delegate to the simulator (hidden download, install overlay, auto-clear).
     return mock_install_update_blocked()

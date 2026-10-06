@@ -14,6 +14,10 @@ import { initUpdater } from "./modules/updater.js";
 
 window.addEventListener("DOMContentLoaded", async () => {
 
+  // Update state is safety-critical UI. Start it before any awaited startup
+  // work so post-reboot verification cannot flash the normal frame first.
+  await initUpdater();
+
   setLoadingStatus("Loading config");
   await loadConfig();
 
@@ -30,7 +34,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   initWiFi();
   initPower();
   initQR();
-  initUpdater();
 
   initLayout();
 
