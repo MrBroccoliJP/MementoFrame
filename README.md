@@ -133,6 +133,11 @@ the current album art and applies that palette across the interface.
 - SSID: `MementoFrame`
 - AP gateway: `192.168.4.1`
 - Automatic reconnect probing
+- AP startup failures are retried; recovery reboots require over one hour of
+  continuous AP failure, rather than loss of client Wi-Fi. When auto power is
+  enabled, recovery waits for the scheduled screen-on period in clock 1's
+  timezone; when disabled, recovery may reboot at any time. A persistent guard
+  permits only one reboot until AP mode or client Wi-Fi restores access.
 - Runtime-only configuration PIN protection
 
 ### Display Features

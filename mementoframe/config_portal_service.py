@@ -216,7 +216,7 @@ os.makedirs(RUNTIME_DIR, exist_ok=True)
 
 CONFIG_PORTAL_PIN_FILE = os.path.join(RUNTIME_DIR, "config_portal_pin.json")
 CONFIG_PORTAL_ACTIVITY_FILE = os.path.join(RUNTIME_DIR, "config_portal_activity.json")
-WIFI_REBOOT_FLAG_FILE = os.path.join(RUNTIME_DIR, "rebooted_for_wifi_failure.flag")
+AP_FAILURE_REBOOT_FLAG_FILE = os.path.join(RUNTIME_DIR, "rebooted_for_ap_failure.flag")
 UPDATE_STATE_FILE = os.path.join(RUNTIME_DIR, "update_state.json")
 CONFIG_PORTAL_PIN_LENGTH = 6
 CONFIG_PORTAL_PIN_TTL_SECONDS = 10 * 60
@@ -267,14 +267,14 @@ def mark_config_portal_active(reason="dashboard"):
         print(f"⚠️ Could not write config portal activity marker: {e}")
 
 
-def clear_wifi_reboot_flag():
-    """Allow a future one-shot Wi-Fi recovery reboot after Wi-Fi is healthy."""
+def clear_ap_reboot_flag():
+    """Clear the AP failure reboot guard when client Wi-Fi restores access."""
     try:
-        os.remove(WIFI_REBOOT_FLAG_FILE)
+        os.remove(AP_FAILURE_REBOOT_FLAG_FILE)
     except FileNotFoundError:
         pass
     except Exception as e:
-        print(f"⚠️ Could not clear Wi-Fi reboot flag: {e}")
+        print(f"⚠️ Could not clear AP reboot flag: {e}")
 
 
 def remove_config_portal_pin():
@@ -652,7 +652,7 @@ def connect_wifi_sudo(ssid, psk, ifname="wlan0", stop_ap=True, timeout=45):
                 parts = line.split(":")
                 if len(parts) >= 4 and parts[0] == ifname and parts[1] == "wifi" and parts[2] == "connected":
                     if parts[3] != "MementoAP":
-                        clear_wifi_reboot_flag()
+                        clear_ap_reboot_flag()
                         return True, f"Connected to {ssid}"
             time.sleep(2)
 

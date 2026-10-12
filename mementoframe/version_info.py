@@ -47,7 +47,7 @@ COMPONENTS = {
     },
     "network_manager": {
         "label": "Network Manager",
-        "version": 23, #Wi-Fi/AP fallback watchdog improvements
+        "version": 24, #Wi-Fi/AP fallback watchdog improvements
         "file": "network_manager_service.py",
         "description": "NetworkManager Wi-Fi/AP fallback watchdog",
     },
