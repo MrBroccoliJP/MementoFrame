@@ -26,14 +26,18 @@ Endpoints:
     GET  /get_ip                   - Return detected local IP address.
     GET  /versions                 - Return installed component versions.
     GET  /config/stream            - Server-Sent Events stream for config/photo reloads.
-    POST /screen/on                - Turn the display output on.
-    POST /screen/off               - Turn the display output off.
+    POST /screen/on                - Request a five-minute manual wake.
+    POST /screen/off               - Request a five-minute off override.
+    POST /kiosk/heartbeat          - Report initialized local frontend liveness.
 
 """
 import sys
 import threading
 
-from flask import Flask, jsonify, render_template, send_from_directory, Response
+from flask import Flask, jsonify, render_template, send_from_directory, Response, request
+import secrets
+import logging
+from zoneinfo import ZoneInfo
 from flask_cors import CORS
 import os, json, time, socket, threading, subprocess, requests, datetime
 from dotenv import load_dotenv
@@ -42,6 +46,160 @@ from spotipy.oauth2 import SpotifyOAuth
 import RPi.GPIO as GPIO
 from updater import PROJECT_ROOT
 from version_info import GLOBAL_APP_VERSION, VERSION_INFO
+
+
+# =============================================================================
+# Backend screen scheduling and kiosk watchdog
+# =============================================================================
+log = logging.getLogger(__name__)
+HEARTBEAT_TIMEOUT = 60
+STARTUP_GRACE = 120
+BOOT_HEALTHY_SECONDS = 120
+MANUAL_WAKE_SECONDS = 300
+GPIO_CHECK_SECONDS = 30
+
+
+def scheduled_on(config, now=None):
+    """Match the frontend's former schedule, using clock 1's timezone."""
+    schedule = config.get("auto_power") or {}
+    if not schedule.get("enabled", False):
+        return True
+    try:
+        def minutes(value):
+            hour, minute = map(int, value.split(":"))
+            if not (0 <= hour < 24 and 0 <= minute < 60):
+                raise ValueError("Invalid screen schedule")
+            return hour * 60 + minute
+
+        on = minutes(schedule["on_time"])
+        off = minutes(schedule["off_time"])
+        zone = ZoneInfo((config.get("clock1") or {}).get("timezone") or "UTC")
+        current = datetime.datetime.now(zone) if now is None else now.astimezone(zone)
+        minute = current.hour * 60 + current.minute
+        return on <= minute < off if on < off else (on != off and (minute >= on or minute < off))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        log.exception("Invalid power schedule; keeping the screen available")
+        return True
+
+
+class DisplayPower:
+    def __init__(self, load_config, write_screen, restart_kiosk, clock=time.monotonic, read_screen=None):
+        self.load_config = load_config
+        self.write_screen = write_screen
+        self.restart_kiosk = restart_kiosk
+        self.read_screen = read_screen
+        self.clock = clock
+        self.lock = threading.RLock()
+        self.started = clock()
+        self.next_gpio_check = self.started + GPIO_CHECK_SECONDS
+        self.last_heartbeat = None
+        self.healthy_seconds = 0
+        self.boot_complete = False
+        self.manual_until = 0
+        self.manual_off = False
+        self.screen = None
+        self.recovering = False
+        self.awaiting_recovery = False
+        self.next_restart = self.started + STARTUP_GRACE + HEARTBEAT_TIMEOUT
+        self.retry_delay = 60
+
+    def _screen(self, enabled):
+        now = self.clock()
+        if self.screen != enabled:
+            self.write_screen(enabled)
+            self.screen = enabled
+            self.next_gpio_check = now + GPIO_CHECK_SECONDS
+            log.info("Screen %s", "on" if enabled else "off")
+        elif self.read_screen is not None and now >= self.next_gpio_check:
+            self.next_gpio_check = now + GPIO_CHECK_SECONDS
+            try:
+                actual = bool(self.read_screen())
+            except Exception:
+                # Readback failure must not prevent a scheduled change or kiosk recovery.
+                log.exception("Could not read screen GPIO; will retry in 30 seconds")
+                return
+            if actual != enabled:
+                log.warning("Screen GPIO mismatch: read %s, expected %s; restoring output", actual, enabled)
+                self.write_screen(enabled)
+
+    def heartbeat(self):
+        with self.lock:
+            if self.recovering:
+                return
+            now = self.clock()
+            if self.last_heartbeat is not None:
+                gap = now - self.last_heartbeat
+                if gap < HEARTBEAT_TIMEOUT:
+                    self.healthy_seconds += gap
+                elif not self.boot_complete:
+                    self.healthy_seconds = 0
+            self.last_heartbeat = now
+            self.awaiting_recovery = False
+            if self.healthy_seconds >= BOOT_HEALTHY_SECONDS:
+                self.boot_complete = True
+                self.retry_delay = 60
+
+    def manual(self, enabled):
+        with self.lock:
+            self.manual_off = not enabled
+            self.manual_until = self.clock() + MANUAL_WAKE_SECONDS
+            # A manual wake must not expose a known-crashed kiosk.
+            if not self.awaiting_recovery and not self.recovering:
+                self._screen(enabled if self.boot_complete else True)
+
+    def tick(self):
+        with self.lock:
+            now = self.clock()
+            # The missing-heartbeat timer cannot begin before startup grace ends.
+            reference = max(self.last_heartbeat or self.started, self.started + STARTUP_GRACE)
+            stale = now - reference >= HEARTBEAT_TIMEOUT
+            if stale or self.awaiting_recovery:
+                self.awaiting_recovery = True
+                self._screen(False)
+                if self.recovering or now < self.next_restart:
+                    return
+                self.recovering = True
+                self.last_heartbeat = None
+                self.healthy_seconds = 0
+                self.next_restart = now + max(STARTUP_GRACE, self.retry_delay)
+                self.retry_delay = min(self.retry_delay * 2, 900)
+            else:
+                enabled = (True if not self.boot_complete else
+                           not self.manual_off if now < self.manual_until else
+                           scheduled_on(self.load_config()))
+                self._screen(enabled)
+                return
+
+        # Never hold the heartbeat lock while waiting for systemd.
+        try:
+            log.warning("Kiosk heartbeat missing; restarting kiosk with screen off")
+            self.restart_kiosk()
+        except Exception:
+            log.exception("Could not restart kiosk; watchdog will retry")
+        finally:
+            with self.lock:
+                self.recovering = False
+
+    def run(self):
+        while True:
+            try:
+                self.tick()
+            except Exception:
+                log.exception("Screen watchdog check failed")
+            time.sleep(2)
+
+    def status(self):
+        """Expose watchdog state without issuing a heartbeat or revealing its token."""
+        with self.lock:
+            now = self.clock()
+            return {
+                "screen_on": self.screen,
+                "heartbeat_age_seconds": None if self.last_heartbeat is None else round(now - self.last_heartbeat, 1),
+                "boot_complete": self.boot_complete,
+                "healthy_seconds": round(self.healthy_seconds, 1),
+                "startup_grace_remaining_seconds": max(0, round(self.started + STARTUP_GRACE - now, 1)),
+                "recovering": self.recovering or self.awaiting_recovery,
+            }
 
 
 # =============================================================================
@@ -92,6 +250,22 @@ def load_config():
     except Exception as e:
         print(f"Error loading config.json: {e}")
         return {}
+
+
+def restart_kiosk():
+    subprocess.run(
+        ["sudo", "-n", "/usr/bin/systemctl", "restart", "mementoframe-kiosk.service"],
+        check=True, timeout=30,
+    )
+
+
+power = DisplayPower(
+    load_config,
+    lambda enabled: GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH if enabled else GPIO.LOW),
+    restart_kiosk,
+    read_screen=lambda: GPIO.input(SCREEN_PIN),
+)
+KIOSK_HEARTBEAT_TOKEN = secrets.token_urlsafe(32)
 
 
 def load_update_state():
@@ -1176,7 +1350,10 @@ def get_local_ip():
 @app.route("/")
 def home():
     """Render the main photo-frame frontend."""
-    return render_template("kiosk_display.html")
+    return render_template(
+        "kiosk_display.html",
+        kiosk_heartbeat_token=KIOSK_HEARTBEAT_TOKEN if request.remote_addr in ("127.0.0.1", "::1") else "",
+    )
 
 @app.route("/assets/<path:filename>")
 def serve_assets(filename):
@@ -1327,8 +1504,8 @@ def system_status():
 
 @app.route("/health")
 def health_check():
-    """Return a basic health-check response."""
-    return jsonify({"status": "ok", "timestamp": time.time()})
+    """Return backend health and read-only kiosk-watchdog diagnostics."""
+    return jsonify({"status": "ok", "timestamp": time.time(), "kiosk": power.status()})
 
 @app.route("/get_ip")
 def get_ip():
@@ -1405,17 +1582,29 @@ def config_stream():
 
 @app.route("/screen/on", methods=["POST"])
 def screen_on():
-    """Set the display GPIO pin high."""
-    GPIO.output(SCREEN_PIN, GPIO.HIGH)
-    return jsonify({"status": "on"})
+    """Request a five-minute manual wake, subject to kiosk health."""
+    power.manual(True)
+    return jsonify({"status": "on" if power.screen else "off", "wake_seconds": 300})
 
 @app.route("/screen/off", methods=["POST"])
 def screen_off():
-    """Set the display GPIO pin low."""
-    GPIO.output(SCREEN_PIN, GPIO.LOW)
-    return jsonify({"status": "off"})
+    """Request a temporary off override, after the boot visibility window."""
+    power.manual(False)
+    return jsonify({"status": "on" if power.screen else "off"})
+
+
+@app.route("/kiosk/heartbeat", methods=["POST"])
+def kiosk_heartbeat():
+    """Only the local kiosk page may keep the hardware watchdog healthy."""
+    token = request.headers.get("X-Kiosk-Token", "")
+    if request.remote_addr not in ("127.0.0.1", "::1") or not secrets.compare_digest(token, KIOSK_HEARTBEAT_TOKEN):
+        return jsonify({"error": "Local kiosk heartbeat required"}), 403
+    power.heartbeat()
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    threading.Thread(target=power.run, name="display-power", daemon=True).start()
     if sp is None:
         print("⚠️  Spotify credentials missing or invalid — Spotify endpoint will return disconnected state.")
     else:

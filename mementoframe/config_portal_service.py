@@ -196,14 +196,12 @@ for d in [USERDATA_DIR, PHOTO_DIR, FULL_DIR, THUMB_DIR, PHOTO_TMP_DIR, CACHE_DIR
 # =============================================================================
 # GPIO display and brightness controls
 # =============================================================================
-SCREEN_PIN = 26
 BRIGHTNESS_DOWN = 21
 BRIGHTNESS_UP = 20
 PRESS_DURATION = 5.5
 STEP_DELAY = 0.5
 
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(BRIGHTNESS_DOWN, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(BRIGHTNESS_UP, GPIO.OUT, initial=GPIO.HIGH)
 gpio_lock = threading.Lock()
@@ -344,10 +342,9 @@ def config_portal_pin_gate_required():
 
 
 def wake_screen():
-    """Set the screen GPIO pin high so the user can see the PIN prompt."""
+    """Request a backend wake so the user can see the PIN prompt."""
     try:
-        GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
-        GPIO.output(SCREEN_PIN, GPIO.HIGH)
+        set_screen_on()
     except Exception as e:
         print(f"⚠️ Could not wake screen: {e}")
 
@@ -953,9 +950,9 @@ def restart_frame_services():
 
 
 def set_screen_on():
-    """Wake the display using the same GPIO line as the display service."""
-    GPIO.setup(SCREEN_PIN, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.output(SCREEN_PIN, GPIO.HIGH)
+    """Keep display GPIO ownership and manual-wake policy in the display service."""
+    response = requests.post("http://127.0.0.1:5001/screen/on", timeout=5)
+    response.raise_for_status()
 
 
 def refresh_weather_data():
@@ -981,6 +978,7 @@ def refresh_weather_data():
 def dashboard():
     """Render the configuration dashboard and handle Wi-Fi connection submissions."""
     mark_config_portal_active("dashboard")
+    wake_screen()
 
     mode = get_mode()
     ip = get_local_ip()

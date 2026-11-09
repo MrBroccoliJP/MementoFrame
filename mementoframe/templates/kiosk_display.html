@@ -2,6 +2,7 @@
 <html lang="en">
 
 <head>
+  <meta name="kiosk-heartbeat-token" content="{{ kiosk_heartbeat_token | default('') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='kiosk_display.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='kiosk_themes.css') }}">
   <meta charset="UTF-8" />

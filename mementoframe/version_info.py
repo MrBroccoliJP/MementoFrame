@@ -30,18 +30,18 @@ VERSION_ORDER = [
 COMPONENTS = {
     "frontend": {
         "label": "Frontend",
-        "version": 68, # Keep update overlay ordered and continuous across reboot
+        "version": 69, # Report initialized kiosk heartbeats
         "description": "HTML, CSS, JavaScript, templates, and display UI assets",
     },
     "config_portal": {
         "label": "Config Portal",
-        "version": 34, # Serialize update lifecycle state when starting installs
+        "version": 35, # Route manual screen wakes through display service
         "file": "config_portal_service.py",
         "description": "Admin dashboard and configuration portal",
     },
     "display_service": {
         "label": "Display Service",
-        "version": 35, # Preserve active update state across transient read failures
+        "version": 37, # Reconcile screen GPIO readback with backend power policy
         "file": "display_service.py",
         "description": "Local display API, widget data, and hardware endpoints",
     },

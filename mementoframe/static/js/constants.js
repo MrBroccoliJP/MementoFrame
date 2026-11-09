@@ -31,8 +31,7 @@
  * @property {string} WEATHER             - Current weather JSON endpoint.
  * @property {string} SPOTIFY             - Spotify playback JSON endpoint.
  * @property {string} STATUS              - System network status JSON endpoint.
- * @property {string} SCREEN_ON           - POST to turn the screen on via GPIO.
- * @property {string} SCREEN_OFF          - POST to turn the screen off via GPIO.
+ * @property {string} KIOSK_HEARTBEAT     - POST local frontend liveness to the backend.
  * @property {string} CONFIG_STREAM       - SSE endpoint for live config/photo change events.
  * @property {string} PHOTOS_FULL         - Base URL for full-size WebP photos (trailing slash).
  * @property {string} PHOTOS_THUMBS       - Base URL for thumbnail WebP photos (trailing slash).
@@ -43,8 +42,7 @@ export const PATHS = {
   WEATHER:             "/weather.json",
   SPOTIFY:             "/spotify.json",
   STATUS:              "/status.json",
-  SCREEN_ON:           "/screen/on",
-  SCREEN_OFF:          "/screen/off",
+  KIOSK_HEARTBEAT:     "/kiosk/heartbeat",
   CONFIG_STREAM:       "/config/stream",
   UPDATE_STATUS:       "/update_status.json",
   UPDATE_STREAM:       "/update/stream",
@@ -68,7 +66,7 @@ export const PATHS = {
  * @property {number} WEATHER              - Weather data poll rate (1 h).
  * @property {number} PHOTOS               - Time each photo is displayed (20 s).
  * @property {number} QR                   - QR code IP refresh rate (30 s).
- * @property {number} HOURLY_CHECK         - Rate at which the auto power schedule is evaluated (1 min).
+ * @property {number} KIOSK_HEARTBEAT      - Frontend liveness interval (10 s).
  * @property {number} SWAP_PANELS          - How often the panels swap sides (1 h).
  * @property {number} CALENDAR_CYCLE       - How often the calendar full-opacity window repeats (30 min).
  * @property {number} CALENDAR_FULL_TIMEOUT- How long the calendar stays at full opacity per cycle (10 min).
@@ -83,7 +81,7 @@ export const INTERVALS = {
   PHOTOS:                20000,
   QR:                    30000,
   UPDATE_STATUS:         60000,
-  HOURLY_CHECK:          60000,           // 1 minute (power schedule only)
+  KIOSK_HEARTBEAT:        10000,
   SWAP_PANELS:           60 * 60 * 1000,  // 1 hour
   CALENDAR_CYCLE:        30 * 60 * 1000,  // 30 minutes
   CALENDAR_FULL_TIMEOUT: 10 * 60 * 1000,  // 10 minutes

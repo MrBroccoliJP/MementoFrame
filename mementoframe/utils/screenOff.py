@@ -1,22 +1,6 @@
-import RPi.GPIO as GPIO
-import time
+"""Request screen power through the sole GPIO owner: the display service."""
+import urllib.request
 
-# Use BCM numbering
-GPIO.setmode(GPIO.BCM)
-GPIO_PIN = 26
-
-# Setup
-GPIO.setup(GPIO_PIN, GPIO.OUT)
-
-# Turn on
-#GPIO.output(GPIO_PIN, GPIO.HIGH)
-#print(f"GPIO{GPIO_PIN} set HIGH")
-
-# Keep it on for 5 seconds
-#time.sleep(5)
-
-# Optional: turn off
-GPIO.output(GPIO_PIN, GPIO.LOW)
-print(f"GPIO{GPIO_PIN} set LOW")
-
-#GPIO.cleanup()
+request = urllib.request.Request("http://127.0.0.1:5001/screen/off", method="POST")
+with urllib.request.urlopen(request, timeout=5) as response:
+    print(response.read().decode())

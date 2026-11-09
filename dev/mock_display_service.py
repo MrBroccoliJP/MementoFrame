@@ -57,7 +57,7 @@ def frame_html() -> str:
     template_name = "kiosk_display.html" if (TEMPLATES_DIR / "kiosk_display.html").exists() else "index.html"
     if not (TEMPLATES_DIR / template_name).exists():
         return redirect(url_for("mock_management")).get_data(as_text=True)
-    html = render_template(template_name)
+    html = render_template(template_name, kiosk_heartbeat_token="development-mock")
     tag = '<script src="/mock/time-override.js"></script>\n'
     if "</head>" in html:
         return html.replace("</head>", tag + "</head>", 1)
@@ -382,6 +382,12 @@ def config_stream():
 def screen_on():
     state = load_state(); state["screen"] = "on"; save_state(state)
     return jsonify({"status": "on"})
+
+
+@app.route("/kiosk/heartbeat", methods=["POST"])
+def kiosk_heartbeat():
+    """Acknowledge the development UI without restarting host services."""
+    return jsonify({"status": "ok"})
 
 
 @app.route("/screen/off", methods=["POST"])

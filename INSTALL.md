@@ -114,7 +114,7 @@ The dashboard QR code is always shown while the display is on, except when the s
 
 #### Dashboard Security PIN
 
-Opening the configuration dashboard from a new browser or device requires a six-digit PIN. The PIN-entry page causes the frame's display to wake so the code can be read, including during night mode. If the screen does not wake or the PIN does not appear, refresh the PIN-entry page and check the display again. Note: The display takes a few seconds to power on.
+Opening the configuration dashboard from a new browser or device requires a six-digit PIN. Opening the PIN-entry page or dashboard requests a five-minute wake through the display service, including during night mode. The screen-on button uses the same policy. A failed kiosk stays hidden until it resumes heartbeats; a manual wake does not cancel recovery. The display takes a few seconds to power on.
 
 The PIN-entry page and the matching code on the frame look like this:
 

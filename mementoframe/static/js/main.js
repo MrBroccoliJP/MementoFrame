@@ -32,7 +32,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   initSpotify();
   initWeather();
   initWiFi();
-  initPower();
   initQR();
 
   initLayout();
@@ -43,4 +42,5 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   await delay(2000);
   hideLoadingScreen();
+  initPower();
 });

@@ -146,6 +146,18 @@ the current album art and applies that palette across the interface.
 - GPIO-controlled display power
 - GPIO brightness pulse control
 - Auto on/off schedules
+- Backend screen scheduling in clock 1's timezone, independent of Chromium
+- GPIO 26 readback every 30 seconds corrects unexpected pin-level changes,
+  respecting startup visibility, manual overrides, and kiosk recovery.
+- Local kiosk heartbeat every 10 seconds; after a two-minute startup grace,
+  60 seconds without heartbeats turns the screen off and restarts the kiosk.
+  Retries back off to at most one every 15 minutes. The screen returns only
+  after a fresh heartbeat, subject to the schedule.
+- At startup, the screen stays on until two minutes of continuing frontend
+  heartbeats have been received. Watchdog recovery can still hide a failed kiosk
+  after the startup grace and heartbeat timeout.
+- Opening the configuration dashboard or PIN page, or using its screen-on
+  button, requests a five-minute wake. Kiosk failure takes priority over wakes.
 - Dual timezone clocks
 - Selectable Classic, Classic Flat, and Minimal Sidebar display themes
 - Filled, flat, line, or recolored monochrome forecast icons; current weather and warnings remain filled
@@ -605,11 +617,12 @@ MementoFrame/
 | `/weather.json` | Current weather |
 | `/status.json` | Network mode and IP |
 | `/config/stream` | SSE reload stream |
-| `/screen/on` | Enable screen GPIO |
-| `/screen/off` | Disable screen GPIO |
+| `/screen/on` | Request a five-minute wake through the backend power controller |
+| `/screen/off` | Request five minutes off (startup visibility and recovery take priority) |
+| `/kiosk/heartbeat` | Local, token-protected POST confirming frontend liveness |
 | `/update_status.json` | Read-only update state for display UI |
 | `/versions` | Return version metadata |
-| `/health` | Display service health check |
+| `/health` | Display service health and read-only kiosk watchdog state |
 
 ### Runtime Data
 
